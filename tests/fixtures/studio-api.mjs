@@ -61,9 +61,14 @@ createServer(async (req, res) => {
     body = {};
   }
   if (url.pathname === "/__reset") {
+    profile.role = "user";
     jobs = [];
     reports = {};
     requests = [];
+    return send({});
+  }
+  if (url.pathname === "/__admin") {
+    profile.role = "admin";
     return send({});
   }
   if (url.pathname === "/__requests") return send(requests);

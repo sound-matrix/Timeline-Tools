@@ -4,8 +4,8 @@ import { signOut } from "@/app/auth/actions";
 const userLinks = [
   ["/dashboard", "Dashboard"],
   ["/cleanup", "Clean-up"],
-  ["/master", "Mastering"],
-  ["/subs", "Subtitles"],
+  ["/master", "Master"],
+  ["/subs", "Subs"],
   ["/studio", "Audio Studio"],
   ["/plans", "Plans & billing"],
 ];
@@ -24,11 +24,13 @@ export default function Shell({
   admin = false,
   isAdmin = false,
   name,
+  minutes,
 }: {
   children: React.ReactNode;
   admin?: boolean;
   isAdmin?: boolean;
   name: string;
+  minutes?: number;
 }) {
   return (
     <>
@@ -48,7 +50,11 @@ export default function Shell({
         </form>
       </header>
       <div className="layout">
-        <Sidebar items={admin ? adminLinks : userLinks} />
+        <Sidebar
+          minutes={minutes}
+          name={name}
+          items={admin ? adminLinks : userLinks}
+        />
         <main className="main">{children}</main>
       </div>
     </>
