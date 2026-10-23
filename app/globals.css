@@ -1536,3 +1536,74 @@ input[type="file"] {
   white-space: nowrap;
   border: 0;
 }
+
+/* User-selected processing desk; no animation is required to operate controls. */
+.desk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.desk-section {
+  min-width: 0;
+  border-top: 3px solid #c7d2fe;
+}
+.desk-section > .muted {
+  line-height: 1.6;
+}
+.desk-fields {
+  margin-top: 16px;
+}
+.desk-fields:disabled,
+.eq-band fieldset:disabled {
+  opacity: 0.5;
+}
+.desk-number input {
+  margin: 6px 0;
+  min-height: 44px;
+}
+.desk-number > span {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  color: #4f46e5;
+}
+.desk-segment {
+  margin: 16px 0;
+}
+.desk-segment legend {
+  font-size: 13px;
+  color: #374151;
+}
+.desk-segment label {
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.desk-segment label:has(:checked) {
+  background: #eef2ff;
+  border-color: #4f46e5;
+}
+.desk-segment input {
+  width: auto;
+  margin-right: 8px;
+  accent-color: #4f46e5;
+}
+.desk-presets {
+  margin-top: 12px;
+}
+.desk-presets button {
+  min-height: 44px;
+}
+.eq-bands {
+  display: grid;
+  gap: 12px;
+}
+.eq-band {
+  border-bottom: 1px solid #eef2ff;
+  padding-bottom: 12px;
+}
+button:disabled {
+  cursor: not-allowed;
+}

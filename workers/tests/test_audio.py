@@ -11,7 +11,44 @@ from unittest.mock import patch
 from workers.audio import validate, duration, process, write_subtitles, timestamp, MediaError
 
 
+FIXTURE = json.loads((Path(__file__).resolve().parents[2] / 'tests/fixtures/processing-settings.json').read_text())
+
+
+def master_settings():
+    import copy
+    return copy.deepcopy(FIXTURE['master'])
+
+
+def fixture_cases():
+    for case in FIXTURE['cases']:
+        if case['type'] != 'master':
+            yield case
+            continue
+        settings = master_settings()
+        for patch in case['patch']:
+            parts = patch['path'].split('.')
+            parent = settings
+            for key in parts[:-1]: parent = parent[key]
+            if patch.get('remove'): del parent[parts[-1]]
+            else: parent[parts[-1]] = patch['value']
+        yield {**case, 'settings': settings}
+
+
 class Settings(unittest.TestCase):
+    def test_shared_schema_cases(self):
+        for case in fixture_cases():
+            with self.subTest(case=case['name']):
+                if case['valid']:
+                    validate(case['type'], case['settings'])
+                else:
+                    with self.assertRaisesRegex(ValueError, 'invalid_settings'):
+                        validate(case['type'], case['settings'])
+
+    def test_nonfinite_numbers(self):
+        for value in [math.nan, math.inf, -math.inf]:
+            s = master_settings(); s['loudness']['lufs'] = value
+            with self.assertRaises(ValueError): validate('master', s)
+
     def test_schema_rejects_bool_gains_nonfinite_unknown_fields_and_bad_formats(self):
         for settings in [dict(eq=[True]*5, threshold=-24, ratio=3, ceiling='-1', lufs='-14'),
                          dict(eq=[math.nan]*5, threshold=-24, ratio=3, ceiling='-1', lufs='-14')]:
@@ -52,14 +89,55 @@ class Pipelines(unittest.TestCase):
         self.assertEqual(outputs[0].name,'clean.wav')
         self.assertAlmostEqual(duration(outputs[0]),5,places=1)
     def test_master_measured_target_and_ceiling(self):
-        for lufs,ceiling in [('-14','-1'),('-16','-2'),('-23','-0.3')]:
-            outputs=process(self.source,self.folder,'master',dict(eq=[1,-1,0,2,0],threshold=-24,ratio=3,ceiling=ceiling,lufs=lufs))
+        for lufs, ceiling, knee in [(-18.5, -1.5, 'soft'), (-24, -2.3, 'hard')]:
+            s = master_settings()
+            s['loudness']['lufs'] = lufs
+            s['limiter'].update(ceiling=ceiling, knee=knee)
+            outputs=process(self.source,self.folder,'master',s)
             report=json.loads(outputs[1].read_text())
-            self.assertLessEqual(report['true_peak_dbtp'],float(ceiling)+.05)
-            self.assertAlmostEqual(report['integrated_lufs'],float(lufs),delta=.5)
+            self.assertLessEqual(report['true_peak_dbtp'],ceiling+.05)
+            self.assertAlmostEqual(report['integrated_lufs'],lufs,delta=.5)
+            self.assertEqual(report['target_lufs'], lufs)
+            self.assertEqual(report['ceiling_dbtp'], ceiling)
+
+    def test_only_selected_stages_run_and_report_disabled_targets_as_null(self):
+        from workers.audio import ffmpeg as real_ffmpeg
+        s = master_settings()
+        for stage in ['eq', 'compressor', 'loudness']: s[stage] = {'enabled': False}
+        with patch('workers.audio.ffmpeg', wraps=real_ffmpeg) as calls:
+            outputs = process(self.source, self.folder, 'master', s)
+        filters = ','.join(str(call.args[2:]) for call in calls.call_args_list)
+        self.assertNotIn('equalizer=', filters)
+        self.assertNotIn('loudnorm=', filters)
+        report = json.loads(outputs[1].read_text())
+        self.assertIsNone(report['target_lufs'])
+        self.assertLessEqual(report['true_peak_dbtp'], -1.45)
+
+    def test_eq_only_does_not_compress_normalize_or_limit(self):
+        from workers.audio import ffmpeg as real_ffmpeg
+        s = master_settings()
+        for stage in ['compressor', 'loudness', 'limiter']: s[stage] = {'enabled': False}
+        with patch('workers.audio.ffmpeg', wraps=real_ffmpeg) as calls:
+            outputs = process(self.source, self.folder, 'master', s)
+        filters = ','.join(str(call.args[2:]) for call in calls.call_args_list)
+        self.assertEqual(filters.count('equalizer='), 1)
+        for name in ['acompressor=', 'loudnorm=', 'alimiter=']: self.assertNotIn(name, filters)
+        report = json.loads(outputs[1].read_text())
+        self.assertIsNone(report['target_lufs'])
+        self.assertIsNone(report['ceiling_dbtp'])
+
+    def test_limiter_catches_hot_peaks_for_both_knees(self):
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',
+                        'sine=frequency=9000:duration=3','-af','volume=7',str(self.source)],check=True)
+        for knee in ['soft', 'hard']:
+            s = {key: {'enabled': False} for key in ['eq', 'compressor', 'loudness', 'limiter']}
+            s['limiter'] = {'enabled': True, 'ceiling': -5.5, 'knee': knee, 'release': 75}
+            outputs = process(self.source, self.folder, 'master', s)
+            self.assertLessEqual(json.loads(outputs[1].read_text())['true_peak_dbtp'], -5.45)
+
     def test_silence_report_is_json_safe(self):
         subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','anullsrc=r=48000:cl=stereo','-t','2',str(self.source)],check=True)
-        outputs=process(self.source,self.folder,'master',dict(eq=[0]*5,threshold=-24,ratio=3,ceiling='-1',lufs='-14'))
+        outputs=process(self.source,self.folder,'master',master_settings())
         self.assertIsNone(json.loads(outputs[1].read_text())['integrated_lufs'])
     def test_invalid_media_has_safe_error(self):
         self.source.write_text('not media')

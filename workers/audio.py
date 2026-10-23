@@ -40,28 +40,55 @@ def duration(source):
 
 
 def validate(kind, s):
-    """Mirror lib/settings.ts even for jobs inserted directly through the Data API."""
-    if not isinstance(s, dict):
-        raise ValueError('Invalid settings')
+    """Strict mirror of lib/settings.ts, including disabled stage shapes."""
+    def shape(value, keys):
+        return isinstance(value, dict) and set(value) == set(keys)
+
     def number(v, lo, hi):
         return type(v) in (int, float) and math.isfinite(v) and lo <= v <= hi
+
+    def band(v):
+        return shape(v, ['enabled']) and v['enabled'] is False or (
+            shape(v, ['enabled', 'gain']) and v['enabled'] is True and number(v['gain'], -12, 12))
+
+    def stage(name, v):
+        if shape(v, ['enabled']) and v['enabled'] is False:
+            return True
+        if not isinstance(v, dict) or v.get('enabled') is not True:
+            return False
+        if name == 'loudness':
+            return shape(v, ['enabled', 'lufs']) and number(v['lufs'], -70, -5)
+        if name == 'limiter':
+            return (shape(v, ['enabled', 'ceiling', 'knee', 'release']) and number(v['ceiling'], -6, 0)
+                    and v['knee'] in ('soft', 'hard') and number(v['release'], 50, 1000))
+        if name == 'compressor':
+            if not shape(v, ['enabled', 'threshold', 'ratio', 'attack', 'release', 'knee', 'makeup']):
+                return False
+            m = v['makeup']
+            makeup = (shape(m, ['mode']) and m['mode'] == 'auto' or
+                      shape(m, ['mode', 'gain']) and m['mode'] == 'manual' and number(m['gain'], -24, 24))
+            return (number(v['threshold'], -60, 0) and number(v['ratio'], 1, 20)
+                    and number(v['attack'], 0.01, 2000) and number(v['release'], 0.01, 9000)
+                    and v['knee'] in ('soft', 'hard') and makeup)
+        return (shape(v, ['enabled', 'bands']) and isinstance(v['bands'], list) and len(v['bands']) == 5
+                and all(band(b) for b in v['bands']) and any(b['enabled'] for b in v['bands']))
+
     if kind == 'clean':
-        valid = set(s) == {'noise', 'hum', 'reverb', 'voice', 'strength'} and all(
-            type(s[k]) is bool for k in ('noise', 'hum', 'reverb', 'voice')) and type(s['strength']) is int and 0 <= s['strength'] <= 100
+        keys = ('noise', 'hum', 'reverb', 'voice')
+        valid = (shape(s, [*keys, 'strength']) and all(type(s[k]) is bool for k in keys)
+                 and any(s[k] for k in keys) and number(s['strength'], 0, 100) and s['strength'] % 1 == 0)
     elif kind == 'master':
-        valid = (set(s) == {'eq', 'threshold', 'ratio', 'ceiling', 'lufs'}
-                 and isinstance(s['eq'], list) and len(s['eq']) == 5
-                 and all(number(v, -12, 12) for v in s['eq'])
-                 and number(s['threshold'], -40, 0) and number(s['ratio'], 1, 10)
-                 and s['ceiling'] in ('-1', '-2', '-0.3') and s['lufs'] in ('-14', '-16', '-23'))
+        keys = ('eq', 'compressor', 'loudness', 'limiter')
+        valid = (shape(s, keys) and all(stage(k, s[k]) for k in keys)
+                 and any(s[k]['enabled'] for k in keys))
     elif kind == 'subtitles':
-        valid = (set(s) == {'language', 'formats'} and s['language'] in ('English', 'Hindi', 'Telugu', 'Tamil')
+        valid = (shape(s, ['language', 'formats']) and s['language'] in ('English', 'Hindi', 'Telugu', 'Tamil')
                  and isinstance(s['formats'], list) and 1 <= len(s['formats']) <= 2
                  and all(v in ('srt', 'vtt') for v in s['formats']))
     else:
         valid = False
     if not valid:
-        raise ValueError('Invalid settings')
+        raise ValueError('invalid_settings: Select your processing options again.')
 
 
 def clean(source, folder, s):
@@ -108,36 +135,70 @@ def measure(source, target, peak):
 
 
 def master(source, folder, s):
-    prepared = folder / 'eq-compressed.wav'
-    filters = [f'equalizer=f={freq}:t=q:w=1:g={gain}' for freq, gain in zip((60, 250, 1000, 4000, 12000), s['eq'])]
-    filters += [f'acompressor=threshold={10 ** (s["threshold"] / 20)}:ratio={s["ratio"]}:attack=20:release=250:makeup=1']
-    ffmpeg(source, prepared, ','.join(filters))
-    m = measure(prepared, s['lufs'], s['ceiling'])
+    # The signal path is strictly EQ -> compressor -> loudness -> limiter.
+    current = source
+    filters = []
+    if s['eq']['enabled']:
+        filters += [f'equalizer=f={freq}:t=q:w=1:g={b["gain"]}'
+                    for freq, b in zip((60, 250, 1000, 4000, 12000), s['eq']['bands']) if b['enabled']]
+    c = s['compressor']
+    if c['enabled']:
+        makeup = (-c['threshold'] * (1 - 1 / c['ratio']) / 2
+                  if c['makeup']['mode'] == 'auto' else c['makeup']['gain'])
+        filters += [f'acompressor=threshold={10 ** (c["threshold"] / 20)}:ratio={c["ratio"]}'
+                    f':attack={c["attack"]}:release={c["release"]}:knee={2.828427 if c["knee"] == "soft" else 1}'
+                    ':makeup=1', f'volume={makeup}dB']
+    if filters:
+        current = folder / 'eq-compressed.wav'
+        ffmpeg(source, current, ','.join(filters))
+
+    loudness, limiter = s['loudness'], s['limiter']
+    # These fallback values configure analysis only, never an enabled target.
+    target = loudness['lufs'] if loudness['enabled'] else -24
+    peak_target = limiter['ceiling'] if limiter['enabled'] else 0
+    if loudness['enabled']:
+        m = measure(current, target, peak_target)
+        fields = ('input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset')
+        if all(math.isfinite(float(m[k])) for k in fields):
+            norm = (f'loudnorm=I={target}:TP={peak_target}:LRA=11:measured_I={m["input_i"]}'
+                    f':measured_TP={m["input_tp"]}:measured_LRA={m["input_lra"]}'
+                    f':measured_thresh={m["input_thresh"]}:offset={m["target_offset"]}:linear=true')
+            normalized = folder / 'normalized.wav'
+            ffmpeg(current, normalized, norm)
+            current = normalized
+        # Silence cannot be normalized to finite LUFS; preserve it.
+
     output = folder / 'master.wav'
-    fields = ('input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset')
-    if all(math.isfinite(float(m[k])) for k in fields):
-        norm = (f'loudnorm=I={s["lufs"]}:TP={s["ceiling"]}:LRA=11:measured_I={m["input_i"]}'
-                f':measured_TP={m["input_tp"]}:measured_LRA={m["input_lra"]}'
-                f':measured_thresh={m["input_thresh"]}:offset={m["target_offset"]}:linear=true')
-        ffmpeg(prepared, output, norm)
+    if limiter['enabled']:
+        ceiling = 10 ** (limiter['ceiling'] / 20)
+        # Oversampling exposes inter-sample peaks. A high-ratio compressor supplies
+        # the selected knee; alimiter catches residual peaks with auto-level OFF.
+        limit = (f'aresample=192000,acompressor=threshold={ceiling}:ratio=20:attack=0.01'
+                 f':release={limiter["release"]}:knee={2.828427 if limiter["knee"] == "soft" else 1}:makeup=1,'
+                 f'alimiter=limit={ceiling}:attack=0.1:release={limiter["release"]}:level=false:latency=true,'
+                 'aresample=48000')
+        ffmpeg(current, output, limit)
     else:
-        # Silence has no finite integrated loudness. Preserve silence, report null.
-        ffmpeg(prepared, output)
-    measured = measure(output, s['lufs'], s['ceiling'])
+        ffmpeg(current, output)
+    measured = measure(output, target, peak_target)
     peak = float(measured['input_tp'])
-    if math.isfinite(peak) and peak > float(s['ceiling']) + 0.05:
-        # Resampling/PCM rounding can introduce small overshoots. Attenuate then remeasure.
+    if limiter['enabled'] and math.isfinite(peak) and peak > limiter['ceiling'] + 0.05:
+        # Output resampling can overshoot; enforce the chosen true-peak ceiling.
         adjusted = folder / 'adjusted.wav'
-        ffmpeg(output, adjusted, f'volume={float(s["ceiling"]) - peak - 0.1}dB')
+        ffmpeg(output, adjusted, f'volume={limiter["ceiling"] - peak - 0.1}dB')
         adjusted.replace(output)
-        measured = measure(output, s['lufs'], s['ceiling'])
+        measured = measure(output, target, peak_target)
+
     def finite(key):
         n = float(measured[key])
         return n if math.isfinite(n) else None
     report = folder / 'loudness-report.json'
     report.write_text(json.dumps({'integrated_lufs': finite('input_i'), 'true_peak_dbtp': finite('input_tp'),
-        'target_lufs': float(s['lufs']), 'ceiling_dbtp': float(s['ceiling']),
-        'note': 'Measured output; loudness target may be limited by dynamics or silence.'}, indent=2))
+        'target_lufs': target if loudness['enabled'] else None,
+        'ceiling_dbtp': peak_target if limiter['enabled'] else None,
+        'settings': s,
+        'note': 'Measured output; dynamics, peak limiting or silence may prevent the loudness target. '
+                'Loudness normalization has its own 0 dBTP safety bound when the limiter is disabled.'}, indent=2))
     return [output, report]
 
 

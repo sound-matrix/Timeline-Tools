@@ -31,11 +31,24 @@ test("sign in, queue each tool, preserve settings UI, responsive layout, sign ou
   wave.writeUInt32LE(16, 40);
   for (const route of ["cleanup", "master", "subs"]) {
     await page.goto("/" + route);
-    if (route === "cleanup") await page.getByLabel("De-reverb").check();
-    if (route === "master")
-      await page.getByLabel("Target", { exact: true }).selectOption("-16");
-    if (route === "subs")
-      await page.getByLabel("Language").selectOption("Telugu");
+    await expect(
+      page.getByRole("button", { name: "Upload & queue job" }),
+    ).toBeDisabled();
+    await expect(page.getByText("Select your options above.")).toBeVisible();
+    if (route === "cleanup") {
+      await page.getByLabel("De-reverb").check();
+      await page.getByLabel("Strength", { exact: true }).fill("45");
+    }
+    if (route === "master") {
+      await page.getByLabel("Apply loudness", { exact: true }).check();
+      await page
+        .getByLabel("Target integrated loudness (LUFS)", { exact: true })
+        .fill("-18.5");
+    }
+    if (route === "subs") {
+      await page.getByLabel("Language", { exact: true }).selectOption("Telugu");
+      await page.getByLabel("SRT", { exact: true }).check();
+    }
     await page.getByLabel("Choose audio or video").setInputFiles({
       name: `browser-${route}.wav`,
       mimeType: "audio/wav",

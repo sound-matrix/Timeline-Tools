@@ -27,8 +27,8 @@ export default async function Page() {
           <span>jobs submitted</span>
         </div>
         <div className="card stat">
-          <b>-14 LUFS</b>
-          <span>default mastering target</span>
+          <b>Your sound</b>
+          <span>choose your processing settings</span>
         </div>
       </div>
       <p className="muted">

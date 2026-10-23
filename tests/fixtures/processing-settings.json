@@ -1,0 +1,1492 @@
+{
+  "master": {
+    "eq": {
+      "enabled": true,
+      "bands": [
+        {
+          "enabled": true,
+          "gain": 1.5
+        },
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false
+        }
+      ]
+    },
+    "compressor": {
+      "enabled": true,
+      "threshold": -26.5,
+      "ratio": 2.5,
+      "attack": 15,
+      "release": 210,
+      "knee": "soft",
+      "makeup": {
+        "mode": "auto"
+      }
+    },
+    "loudness": {
+      "enabled": true,
+      "lufs": -18.5
+    },
+    "limiter": {
+      "enabled": true,
+      "ceiling": -1.5,
+      "knee": "soft",
+      "release": 150
+    }
+  },
+  "cases": [
+    {
+      "name": "custom full master",
+      "type": "master",
+      "valid": true,
+      "patch": []
+    },
+    {
+      "name": "eq only",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "limiter.enabled",
+          "value": false
+        },
+        {
+          "path": "limiter.ceiling",
+          "remove": true
+        },
+        {
+          "path": "limiter.knee",
+          "remove": true
+        },
+        {
+          "path": "limiter.release",
+          "remove": true
+        },
+        {
+          "path": "compressor.ratio",
+          "remove": true
+        },
+        {
+          "path": "compressor.enabled",
+          "value": false
+        },
+        {
+          "path": "compressor.makeup",
+          "remove": true
+        },
+        {
+          "path": "compressor.attack",
+          "remove": true
+        },
+        {
+          "path": "compressor.knee",
+          "remove": true
+        },
+        {
+          "path": "compressor.threshold",
+          "remove": true
+        },
+        {
+          "path": "compressor.release",
+          "remove": true
+        },
+        {
+          "path": "loudness.enabled",
+          "value": false
+        },
+        {
+          "path": "loudness.lufs",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "eq missing enabled",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "eq.enabled",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "eq missing bands",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "eq.bands",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "compressor only",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "limiter.enabled",
+          "value": false
+        },
+        {
+          "path": "limiter.ceiling",
+          "remove": true
+        },
+        {
+          "path": "limiter.knee",
+          "remove": true
+        },
+        {
+          "path": "limiter.release",
+          "remove": true
+        },
+        {
+          "path": "eq.enabled",
+          "value": false
+        },
+        {
+          "path": "eq.bands",
+          "remove": true
+        },
+        {
+          "path": "loudness.enabled",
+          "value": false
+        },
+        {
+          "path": "loudness.lufs",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "compressor missing enabled",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.enabled",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "compressor missing threshold",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.threshold",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "compressor missing ratio",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.ratio",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "compressor missing attack",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.attack",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "compressor missing release",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.release",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "compressor missing knee",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.knee",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "compressor missing makeup",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.makeup",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "loudness only",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "limiter.enabled",
+          "value": false
+        },
+        {
+          "path": "limiter.ceiling",
+          "remove": true
+        },
+        {
+          "path": "limiter.knee",
+          "remove": true
+        },
+        {
+          "path": "limiter.release",
+          "remove": true
+        },
+        {
+          "path": "eq.enabled",
+          "value": false
+        },
+        {
+          "path": "eq.bands",
+          "remove": true
+        },
+        {
+          "path": "compressor.ratio",
+          "remove": true
+        },
+        {
+          "path": "compressor.enabled",
+          "value": false
+        },
+        {
+          "path": "compressor.makeup",
+          "remove": true
+        },
+        {
+          "path": "compressor.attack",
+          "remove": true
+        },
+        {
+          "path": "compressor.knee",
+          "remove": true
+        },
+        {
+          "path": "compressor.threshold",
+          "remove": true
+        },
+        {
+          "path": "compressor.release",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "loudness missing enabled",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "loudness.enabled",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "loudness missing lufs",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "loudness.lufs",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "limiter only",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "eq.enabled",
+          "value": false
+        },
+        {
+          "path": "eq.bands",
+          "remove": true
+        },
+        {
+          "path": "compressor.ratio",
+          "remove": true
+        },
+        {
+          "path": "compressor.enabled",
+          "value": false
+        },
+        {
+          "path": "compressor.makeup",
+          "remove": true
+        },
+        {
+          "path": "compressor.attack",
+          "remove": true
+        },
+        {
+          "path": "compressor.knee",
+          "remove": true
+        },
+        {
+          "path": "compressor.threshold",
+          "remove": true
+        },
+        {
+          "path": "compressor.release",
+          "remove": true
+        },
+        {
+          "path": "loudness.enabled",
+          "value": false
+        },
+        {
+          "path": "loudness.lufs",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "limiter missing enabled",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.enabled",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "limiter missing ceiling",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.ceiling",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "limiter missing knee",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.knee",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "limiter missing release",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.release",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "no master stages",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.enabled",
+          "value": false
+        },
+        {
+          "path": "limiter.ceiling",
+          "remove": true
+        },
+        {
+          "path": "limiter.knee",
+          "remove": true
+        },
+        {
+          "path": "limiter.release",
+          "remove": true
+        },
+        {
+          "path": "eq.enabled",
+          "value": false
+        },
+        {
+          "path": "eq.bands",
+          "remove": true
+        },
+        {
+          "path": "compressor.ratio",
+          "remove": true
+        },
+        {
+          "path": "compressor.enabled",
+          "value": false
+        },
+        {
+          "path": "compressor.makeup",
+          "remove": true
+        },
+        {
+          "path": "compressor.attack",
+          "remove": true
+        },
+        {
+          "path": "compressor.knee",
+          "remove": true
+        },
+        {
+          "path": "compressor.threshold",
+          "remove": true
+        },
+        {
+          "path": "compressor.release",
+          "remove": true
+        },
+        {
+          "path": "loudness.enabled",
+          "value": false
+        },
+        {
+          "path": "loudness.lufs",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "no EQ bands",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "eq.bands",
+          "value": [
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "boolean EQ gain",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "eq.bands",
+          "value": [
+            {
+              "enabled": true,
+              "gain": true
+            },
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "EQ gain overflow",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "eq.bands",
+          "value": [
+            {
+              "enabled": true,
+              "gain": 12.01
+            },
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            },
+            {
+              "enabled": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "disabled EQ extra fields",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "eq.enabled",
+          "value": false
+        },
+        {
+          "path": "eq.bands",
+          "value": []
+        }
+      ]
+    },
+    {
+      "name": "loudness lufs -70",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "loudness.lufs",
+          "value": -70
+        }
+      ]
+    },
+    {
+      "name": "loudness lufs -5",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "loudness.lufs",
+          "value": -5
+        }
+      ]
+    },
+    {
+      "name": "loudness lufs -70.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "loudness.lufs",
+          "value": -70.01
+        }
+      ]
+    },
+    {
+      "name": "loudness lufs -4.99",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "loudness.lufs",
+          "value": -4.99
+        }
+      ]
+    },
+    {
+      "name": "loudness lufs -70",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "loudness.lufs",
+          "value": "-70"
+        }
+      ]
+    },
+    {
+      "name": "loudness lufs True",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "loudness.lufs",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "loudness lufs None",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "loudness.lufs",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "limiter ceiling -6",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "limiter.ceiling",
+          "value": -6
+        }
+      ]
+    },
+    {
+      "name": "limiter ceiling 0",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "limiter.ceiling",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "limiter ceiling -6.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.ceiling",
+          "value": -6.01
+        }
+      ]
+    },
+    {
+      "name": "limiter ceiling 0.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.ceiling",
+          "value": 0.01
+        }
+      ]
+    },
+    {
+      "name": "limiter ceiling -6",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.ceiling",
+          "value": "-6"
+        }
+      ]
+    },
+    {
+      "name": "limiter ceiling True",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.ceiling",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "limiter ceiling None",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.ceiling",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "limiter release 50",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "limiter.release",
+          "value": 50
+        }
+      ]
+    },
+    {
+      "name": "limiter release 1000",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "limiter.release",
+          "value": 1000
+        }
+      ]
+    },
+    {
+      "name": "limiter release 49.99",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.release",
+          "value": 49.99
+        }
+      ]
+    },
+    {
+      "name": "limiter release 1000.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.release",
+          "value": 1000.01
+        }
+      ]
+    },
+    {
+      "name": "limiter release 50",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.release",
+          "value": "50"
+        }
+      ]
+    },
+    {
+      "name": "limiter release True",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.release",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "limiter release None",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.release",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "compressor threshold -60",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.threshold",
+          "value": -60
+        }
+      ]
+    },
+    {
+      "name": "compressor threshold 0",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.threshold",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "compressor threshold -60.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.threshold",
+          "value": -60.01
+        }
+      ]
+    },
+    {
+      "name": "compressor threshold 0.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.threshold",
+          "value": 0.01
+        }
+      ]
+    },
+    {
+      "name": "compressor threshold -60",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.threshold",
+          "value": "-60"
+        }
+      ]
+    },
+    {
+      "name": "compressor threshold True",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.threshold",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "compressor threshold None",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.threshold",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "compressor ratio 1",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.ratio",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "compressor ratio 20",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.ratio",
+          "value": 20
+        }
+      ]
+    },
+    {
+      "name": "compressor ratio 0.99",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.ratio",
+          "value": 0.99
+        }
+      ]
+    },
+    {
+      "name": "compressor ratio 20.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.ratio",
+          "value": 20.01
+        }
+      ]
+    },
+    {
+      "name": "compressor ratio 1",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.ratio",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "name": "compressor ratio True",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.ratio",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "compressor ratio None",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.ratio",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "compressor attack 0.01",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.attack",
+          "value": 0.01
+        }
+      ]
+    },
+    {
+      "name": "compressor attack 2000",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.attack",
+          "value": 2000
+        }
+      ]
+    },
+    {
+      "name": "compressor attack 0.0",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.attack",
+          "value": 0.0
+        }
+      ]
+    },
+    {
+      "name": "compressor attack 2000.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.attack",
+          "value": 2000.01
+        }
+      ]
+    },
+    {
+      "name": "compressor attack 0.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.attack",
+          "value": "0.01"
+        }
+      ]
+    },
+    {
+      "name": "compressor attack True",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.attack",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "compressor attack None",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.attack",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "compressor release 0.01",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.release",
+          "value": 0.01
+        }
+      ]
+    },
+    {
+      "name": "compressor release 9000",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.release",
+          "value": 9000
+        }
+      ]
+    },
+    {
+      "name": "compressor release 0.0",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.release",
+          "value": 0.0
+        }
+      ]
+    },
+    {
+      "name": "compressor release 9000.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.release",
+          "value": 9000.01
+        }
+      ]
+    },
+    {
+      "name": "compressor release 0.01",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.release",
+          "value": "0.01"
+        }
+      ]
+    },
+    {
+      "name": "compressor release True",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.release",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "compressor release None",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.release",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "limiter knee hard",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "limiter.knee",
+          "value": "hard"
+        }
+      ]
+    },
+    {
+      "name": "limiter knee soft",
+      "type": "master",
+      "valid": true,
+      "patch": []
+    },
+    {
+      "name": "limiter knee ",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.knee",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "limiter knee None",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.knee",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "limiter knee medium",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "limiter.knee",
+          "value": "medium"
+        }
+      ]
+    },
+    {
+      "name": "compressor knee hard",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.knee",
+          "value": "hard"
+        }
+      ]
+    },
+    {
+      "name": "compressor knee soft",
+      "type": "master",
+      "valid": true,
+      "patch": []
+    },
+    {
+      "name": "compressor knee ",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.knee",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "compressor knee None",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.knee",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "compressor knee medium",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.knee",
+          "value": "medium"
+        }
+      ]
+    },
+    {
+      "name": "makeup {'mode': 'auto'}",
+      "type": "master",
+      "valid": true,
+      "patch": []
+    },
+    {
+      "name": "makeup {'mode': 'manual', 'gain': -24}",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.makeup.mode",
+          "value": "manual"
+        },
+        {
+          "path": "compressor.makeup.gain",
+          "value": -24
+        }
+      ]
+    },
+    {
+      "name": "makeup {'mode': 'manual', 'gain': 24}",
+      "type": "master",
+      "valid": true,
+      "patch": [
+        {
+          "path": "compressor.makeup.mode",
+          "value": "manual"
+        },
+        {
+          "path": "compressor.makeup.gain",
+          "value": 24
+        }
+      ]
+    },
+    {
+      "name": "makeup {'mode': 'manual'}",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.makeup.mode",
+          "value": "manual"
+        }
+      ]
+    },
+    {
+      "name": "makeup {'mode': 'manual', 'gain': 24.1}",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.makeup.mode",
+          "value": "manual"
+        },
+        {
+          "path": "compressor.makeup.gain",
+          "value": 24.1
+        }
+      ]
+    },
+    {
+      "name": "makeup {'mode': 'auto', 'gain': 0}",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.makeup.gain",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "makeup {}",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "compressor.makeup.mode",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "name": "old master",
+      "type": "master",
+      "valid": false,
+      "patch": [
+        {
+          "path": "ratio",
+          "value": 3
+        },
+        {
+          "path": "limiter",
+          "remove": true
+        },
+        {
+          "path": "threshold",
+          "value": -24
+        },
+        {
+          "path": "eq",
+          "value": [0, 0, 0, 0, 0]
+        },
+        {
+          "path": "loudness",
+          "remove": true
+        },
+        {
+          "path": "lufs",
+          "value": "-14"
+        },
+        {
+          "path": "compressor",
+          "remove": true
+        },
+        {
+          "path": "ceiling",
+          "value": "-1"
+        }
+      ]
+    },
+    {
+      "name": "cleanup []None",
+      "type": "clean",
+      "settings": {
+        "noise": false,
+        "hum": false,
+        "reverb": false,
+        "voice": false,
+        "strength": null
+      },
+      "valid": false
+    },
+    {
+      "name": "cleanup []70",
+      "type": "clean",
+      "settings": {
+        "noise": false,
+        "hum": false,
+        "reverb": false,
+        "voice": false,
+        "strength": 70
+      },
+      "valid": false
+    },
+    {
+      "name": "cleanup ['noise']None",
+      "type": "clean",
+      "settings": {
+        "noise": true,
+        "hum": false,
+        "reverb": false,
+        "voice": false,
+        "strength": null
+      },
+      "valid": false
+    },
+    {
+      "name": "cleanup ['noise']0",
+      "type": "clean",
+      "settings": {
+        "noise": true,
+        "hum": false,
+        "reverb": false,
+        "voice": false,
+        "strength": 0
+      },
+      "valid": true
+    },
+    {
+      "name": "cleanup ['hum']100",
+      "type": "clean",
+      "settings": {
+        "noise": false,
+        "hum": true,
+        "reverb": false,
+        "voice": false,
+        "strength": 100
+      },
+      "valid": true
+    },
+    {
+      "name": "cleanup ['reverb']50.5",
+      "type": "clean",
+      "settings": {
+        "noise": false,
+        "hum": false,
+        "reverb": true,
+        "voice": false,
+        "strength": 50.5
+      },
+      "valid": false
+    },
+    {
+      "name": "cleanup ['voice']101",
+      "type": "clean",
+      "settings": {
+        "noise": false,
+        "hum": false,
+        "reverb": false,
+        "voice": true,
+        "strength": 101
+      },
+      "valid": false
+    },
+    {
+      "name": "subs []",
+      "type": "subtitles",
+      "settings": {
+        "language": "",
+        "formats": []
+      },
+      "valid": false
+    },
+    {
+      "name": "subs Telugu[]",
+      "type": "subtitles",
+      "settings": {
+        "language": "Telugu",
+        "formats": []
+      },
+      "valid": false
+    },
+    {
+      "name": "subs ['srt']",
+      "type": "subtitles",
+      "settings": {
+        "language": "",
+        "formats": ["srt"]
+      },
+      "valid": false
+    },
+    {
+      "name": "subs Telugu['vtt']",
+      "type": "subtitles",
+      "settings": {
+        "language": "Telugu",
+        "formats": ["vtt"]
+      },
+      "valid": true
+    },
+    {
+      "name": "subs English['srt', 'vtt']",
+      "type": "subtitles",
+      "settings": {
+        "language": "English",
+        "formats": ["srt", "vtt"]
+      },
+      "valid": true
+    },
+    {
+      "name": "subs Tamil['txt']",
+      "type": "subtitles",
+      "settings": {
+        "language": "Tamil",
+        "formats": ["txt"]
+      },
+      "valid": false
+    }
+  ]
+}

@@ -19,16 +19,85 @@ export const cleanSchema = z
     voice: z.boolean(),
     strength: z.number().int().min(0).max(100),
   })
-  .strict();
+  .strict()
+  .refine(
+    (s) => s.noise || s.hum || s.reverb || s.voice,
+    "Select at least one processing option.",
+  );
+const disabled = z.object({ enabled: z.literal(false) }).strict();
+const knee = z.enum(["soft", "hard"]);
+const band = z.discriminatedUnion("enabled", [
+  disabled,
+  z
+    .object({ enabled: z.literal(true), gain: z.number().min(-12).max(12) })
+    .strict(),
+]);
 export const masterSchema = z
   .object({
-    eq: z.array(z.number().min(-12).max(12)).length(5),
-    threshold: z.number().min(-40).max(0),
-    ratio: z.number().min(1).max(10),
-    ceiling: z.enum(["-1", "-2", "-0.3"]),
-    lufs: z.enum(["-14", "-16", "-23"]),
+    loudness: z.discriminatedUnion("enabled", [
+      disabled,
+      z
+        .object({ enabled: z.literal(true), lufs: z.number().min(-70).max(-5) })
+        .strict(),
+    ]),
+    limiter: z.discriminatedUnion("enabled", [
+      disabled,
+      z
+        .object({
+          enabled: z.literal(true),
+          ceiling: z.number().min(-6).max(0),
+          knee,
+          release: z.number().min(50).max(1000),
+        })
+        .strict(),
+    ]),
+    compressor: z.discriminatedUnion("enabled", [
+      disabled,
+      z
+        .object({
+          enabled: z.literal(true),
+          threshold: z.number().min(-60).max(0),
+          ratio: z.number().min(1).max(20),
+          attack: z.number().min(0.01).max(2000),
+          release: z.number().min(0.01).max(9000),
+          knee,
+          makeup: z.discriminatedUnion("mode", [
+            z.object({ mode: z.literal("auto") }).strict(),
+            z
+              .object({
+                mode: z.literal("manual"),
+                gain: z.number().min(-24).max(24),
+              })
+              .strict(),
+          ]),
+        })
+        .strict(),
+    ]),
+    eq: z.discriminatedUnion("enabled", [
+      disabled,
+      z
+        .object({
+          enabled: z.literal(true),
+          bands: z
+            .array(band)
+            .length(5)
+            .refine(
+              (bands) => bands.some((b) => b.enabled),
+              "Enable at least one EQ band.",
+            ),
+        })
+        .strict(),
+    ]),
   })
-  .strict();
+  .strict()
+  .refine(
+    (s) =>
+      s.loudness.enabled ||
+      s.limiter.enabled ||
+      s.compressor.enabled ||
+      s.eq.enabled,
+    "Enable at least one mastering stage.",
+  );
 export const subtitlesSchema = z
   .object({
     language: z.enum(["English", "Hindi", "Telugu", "Tamil"]),
