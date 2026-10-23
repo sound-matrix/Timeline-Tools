@@ -13,6 +13,30 @@ export default function ProcessingControls({
 }) {
   const set = (key: string, value: string | boolean) =>
     setValues({ ...values, [key]: value });
+  const dropdown = (
+    key: string,
+    label: string,
+    options: [string, string][],
+  ) => (
+    <label className="desk-select">
+      {label}
+      <select
+        aria-label={label}
+        required
+        value={String(values[key] ?? "")}
+        onChange={(e) => set(key, e.target.value)}
+      >
+        <option value="" disabled>
+          Choose…
+        </option>
+        {options.map(([value, text]) => (
+          <option key={value} value={value}>
+            {text}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
   const toggle = (key: string, label: string) => (
     <label className="tog">
       <b>{label}</b>
@@ -89,23 +113,58 @@ export default function ProcessingControls({
   );
   if (type === "clean")
     return (
-      <section className="card desk-section">
-        <h3>Clean-up options</h3>
-        <p className="muted">
-          Choose one or more processes, then set the strength yourself.
-        </p>
-        {toggle("noise", "Noise removal")}
-        {toggle("hum", "De-hum")}
-        {toggle("reverb", "De-reverb")}
-        {toggle("voice", "Voice enhance")}
-        <fieldset
-          disabled={
-            !["noise", "hum", "reverb", "voice"].some((k) => values[k] === true)
-          }
-        >
-          {numeric("strength", "Strength", 0, 100, "%", 1)}
-        </fieldset>
-      </section>
+      <div className="cleanup-desk">
+        {(
+          [
+            [
+              "noise",
+              "Noise removal",
+              "Reduce background noise while keeping what matters in your recording.",
+            ],
+            [
+              "hum",
+              "De-hum",
+              "Reduce mains hum at 50 / 60 Hz and their first harmonics.",
+            ],
+            [
+              "reverb",
+              "De-reverb",
+              "Reduce room tails with a downward gate. Preview the result before publishing.",
+            ],
+          ] as const
+        ).map(([key, title, help]) => (
+          <section className="card desk-section" key={key}>
+            {toggle(key, title)}
+            <p className="muted">{help}</p>
+            {values[key] === true && (
+              <div className="desk-grid">
+                {key === "noise" &&
+                  dropdown("noiseMethod", "Denoising method", [
+                    ["speech_music", "Speech+music keep"],
+                    ["speech", "Speech focus"],
+                    ["aggressive", "Aggressive"],
+                  ])}
+                {dropdown(
+                  `${key}Amount`,
+                  key === "noise" ? "Remove noise" : `${title} amount`,
+                  [
+                    ["0", "Off"],
+                    ["30", "Light · 30%"],
+                    ["60", "Medium · 60%"],
+                    ["100", "Full · 100%"],
+                  ],
+                )}
+              </div>
+            )}
+          </section>
+        ))}
+        <section className="card desk-section">
+          {toggle("voice", "Voice enhance")}
+          <p className="muted">
+            Apply a gentle high-pass and presence lift for speech.
+          </p>
+        </section>
+      </div>
     );
   if (type === "subtitles")
     return (

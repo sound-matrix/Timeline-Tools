@@ -35,7 +35,7 @@ export default async function Page() {
         Private uploads, processed in the cloud. Minutes are charged only on
         success, rounded up per file.
       </p>
-      <JobForm maxMb={plan.max_file_mb} userId={user.id} controls={false} />
+      <JobForm maxMb={plan.max_file_mb} userId={user.id} />
       <JobsTable jobs={jobs ?? []} />
       <p className="muted">Showing your latest 100 jobs.</p>
     </>

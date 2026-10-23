@@ -12,16 +12,12 @@ export default function InputPreview({ file }: { file: File | null }) {
     return () => URL.revokeObjectURL(value);
   }, [file]);
   return (
-    <div className="card">
-      <h3>Before / After player</h3>
+    <div className="input-preview">
+      <h3>Original preview</h3>
       <p className="muted">
-        Preview your original file. The processed version will be available
-        after Phase 1B processing.
+        Listen to your original file before processing. Your downloads will
+        appear in the live panel.
       </p>
-      <div className="row">
-        <span className="tag">A: Before</span>
-        <span className="tag y">B: After · not available yet</span>
-      </div>
       {url ? (
         file?.type.startsWith("video/") ? (
           <video

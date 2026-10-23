@@ -6,14 +6,25 @@ export function processingSettings(type: JobType, values: Choices) {
     typeof values[key] === "string" && String(values[key]).trim() !== ""
       ? Number(values[key])
       : undefined;
-  if (type === "clean")
-    return {
-      noise: values.noise === true,
-      hum: values.hum === true,
-      reverb: values.reverb === true,
-      voice: values.voice === true,
-      strength: n("strength"),
+  if (type === "clean") {
+    const stage = (key: string) => {
+      if (values[key] !== true) return { enabled: false };
+      const amount = n(`${key}Amount`);
+      // A checked toggle alone never supplies an amount or a method.
+      if (key === "noise" && !values.noiseMethod)
+        return { enabled: true, amount, method: undefined };
+      if (amount === 0) return { enabled: false };
+      return key === "noise"
+        ? { enabled: true, amount, method: values.noiseMethod }
+        : { enabled: true, amount };
     };
+    return {
+      noise: stage("noise"),
+      hum: stage("hum"),
+      reverb: stage("reverb"),
+      voice: values.voice === true,
+    };
+  }
   if (type === "subtitles")
     return {
       language: values.language || undefined,

@@ -211,14 +211,54 @@ Master settings are strict nested objects: `loudness`, `limiter`, `compressor`, 
 - EQ: exactly five `bands` at 60/250/1000/4000/12000 Hz, each disabled or enabled with `gain` −12…12 dB (Q=1). Enabling EQ requires at least one enabled band.
 - Worker order: enabled EQ bands → optional compressor → optional measured two-pass loudnorm → optional four-times oversampled limiter. Compressor knee maps to ffmpeg `acompressor` knee 2.828427 (soft) / 1 (hard). The limiter combines the same knee-controlled high-ratio compressor with `alimiter` (auto-level off), measures the final 48 kHz PCM true peak, and attenuates any overshoot. With loudness enabled and the limiter off, loudnorm still has its inherent 0 dBTP safety bound.
 - Every master returns measured LUFS/true peak, submitted settings, and requested targets (`null` for disabled stages). Silence reports null measurements. Peak limiting can prevent reaching the requested LUFS; measured results are authoritative.
-- Clean-up requires at least one feature and integer strength 0…100. Subtitles require a language and at least one of SRT/VTT.
+- Legacy Phase 1C clean jobs use at least one feature and integer strength 0…100; the Phase 1D desk below supersedes this form. Subtitles require a language and at least one of SRT/VTT.
 
 Run `npm test`, `npm run typecheck`, `npm run build`, and `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m unittest discover -s workers/tests -v`. Schema cases are shared between Zod and Python in `tests/fixtures/processing-settings.json`; Python tests also exercise real ffmpeg custom targets, both knees, stage bypass, hot peaks, and silence. The thread limits keep numerical libraries from exhausting shared test-host resources; they do not change processing settings.
 
 After review/merge, the operator must redeploy the Modal worker to accept the new JSON schema. This PR does not deploy it. Until then, the old worker cannot process new-format master jobs.
 
-#### Phase 1C verification follow-up
+## Phase 1D: processing desk and live session
 
-Whitespace-only numeric fields remain unselected, including strength and true-peak ceilings where zero would otherwise be a valid choice. The language select and job progress message have explicit accessible labels. Browser smoke coverage checks file-first submission blocking, preset editing, custom −18.5 LUFS/−1.5 dBTP with both soft knees and one EQ band, and the actual queued JSON payload.
+All tools use file → original preview → processing options → **Start Processing**.
+Dashboard uses the same Clean-up desk. Options begin disabled and each dropdown
+begins at **Choose…**. Turning on a stage requires its choices; Off bypasses it.
+At least one actual process must be enabled. Voice enhance needs only its toggle.
+Mastering and subtitle settings retain the Phase 1C explicit-choice rules.
 
-Loudness analysis and two-pass normalization use LRA 50 (FFmpeg's upper bound) so linear normalization preserves source dynamics where the selected LUFS/peak targets permit it. The previous internal LRA 11 could force dynamic normalization on a source with a wider loudness range even with the compressor disabled. A real 40-second loud/quiet fixture verifies that loudness-only processing preserves that contrast. Peak safety still applies, and the measured report remains authoritative. Additional worker tests cover LUFS/ceiling endpoints and legacy-job `invalid_settings` failure before storage access or charging.
+Clean-up now submits nested stage settings (not a shared strength):
+
+| Choice | Worker mapping |
+| --- | --- |
+| Light / Medium / Full | Per-stage `amount`: 30 / 60 / 100, scaled to 0.3 / 0.6 / 1 |
+| Off or disabled toggle | `{enabled: false}`; process is bypassed |
+| Speech+music keep | Adaptive spectral gating (`stationary=False`), full bandwidth |
+| Speech focus | Adaptive spectral gating plus 100 Hz high-pass and 8 kHz low-pass |
+| Aggressive | Stationary spectral gating (`stationary=True`) |
+| De-hum | 50/60/100/120 Hz notches; attenuation scaled independently by its amount |
+| De-reverb | Downward gate scaled independently by its amount; reduces room tails, not neural dereverberation |
+| Voice enhance | Toggle applies the speech high-pass / presence curve (90 Hz, +3 dB at 3 kHz) |
+
+Example: `{noise:{enabled:true,method:"speech_music",amount:60},hum:{enabled:true,amount:30},reverb:{enabled:false},voice:false}`.
+Zod and Python reject incomplete or extra settings. The worker and API continue
+to accept Phase 1C `{noise,hum,reverb,voice,strength}` jobs unchanged.
+
+The live session shows Uploading → Starting → Queued → Processing → Done/Failed
+without leaving the page. `/api/jobs/[id]` uses the normal authenticated client,
+RLS plus an explicit owner filter, and `private, no-store`. It returns status,
+measured audio duration when available, errors, and app download routes, never
+private object paths. Polling runs every 2.5 seconds without overlapping requests,
+pauses in hidden tabs, aborts on unmount, and stops on terminal status. Transient
+poll failures retain the last known job state and retry. Download routes retain
+the existing private, short-lived signed URL checks. Master's measured JSON report
+is linked beside the audio. Recent jobs remains history and refreshes on completion.
+
+The waveform is an **activity illustration, not measured progress or an audio
+analysis**: queued is a waiting pulse, processing gradually reveals smoother bars,
+and only worker-confirmed Done shows a fully clean static wave. Reduced motion
+uses a static graphic and status text. Live motion has a pause control, and the
+header's decorative animation pauses whenever a session panel is present.
+
+**Operator action: Modal redeploy required before using the new cleanup desk.**
+`workers/audio.py` accepts the new nested settings and denoising methods. Redeploy
+with `modal deploy -m workers.timeline_tools_worker` in the existing `sound-matrix` workspace; no secrets or SQL changes are
+needed. This PR does not deploy Modal or merge automatically.
