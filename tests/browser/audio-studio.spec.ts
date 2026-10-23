@@ -263,9 +263,9 @@ test("speaker mapping, timed script exports, reduced motion and input validation
     buffer: Buffer.from("bad"),
   });
   await expect(start).toBeDisabled();
-  await expect(page.getByRole("alert")).toContainText(
-    "Choose non-empty audio/video files",
-  );
+  await expect(
+    page.getByRole("region", { name: "Studio files" }).getByRole("alert"),
+  ).toContainText("Choose non-empty audio/video files");
   const status = await page.evaluate(async (owner) => {
     const r = await fetch("/api/jobs", {
       method: "POST",
