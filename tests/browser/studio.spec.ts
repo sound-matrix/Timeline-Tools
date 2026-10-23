@@ -36,15 +36,13 @@ test("sign in, queue each tool, preserve settings UI, responsive layout, sign ou
       await page.getByLabel("Target", { exact: true }).selectOption("-16");
     if (route === "subs")
       await page.getByLabel("Language").selectOption("Telugu");
-    await page
-      .getByLabel("Choose audio or video")
-      .setInputFiles({
-        name: `browser-${route}.wav`,
-        mimeType: "audio/wav",
-        buffer: wave,
-      });
+    await page.getByLabel("Choose audio or video").setInputFiles({
+      name: `browser-${route}.wav`,
+      mimeType: "audio/wav",
+      buffer: wave,
+    });
     await page.getByRole("button", { name: "Upload & queue job" }).click();
-    await expect(page.getByRole("status")).toContainText("Job queued", {
+    await expect(page.getByRole("status").first()).toContainText("Queued.", {
       timeout: 30000,
     });
   }

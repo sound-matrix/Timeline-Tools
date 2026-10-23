@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
+import StudioMotion from "./studio-motion";
 import InputPreview from "./input-preview";
 import { uploadFile } from "@/lib/upload";
 import { browserClient } from "@/lib/supabase/client";
@@ -84,7 +85,9 @@ export default function JobForm({
       if (!res.ok) throw new Error(result.error || "Could not create job");
       setFile(null);
       if (input.current) input.current.value = "";
-      setMessage("Job queued. Processing will be available in Phase 1B.");
+      setMessage(
+        "Queued. Your worker will pick this up shortly. Follow progress in Recent jobs.",
+      );
       router.refresh();
     } catch (error) {
       if (uploaded) await db.storage.from("uploads").remove([path]);
@@ -99,13 +102,14 @@ export default function JobForm({
   }
   return (
     <form onSubmit={submit}>
+      {controls && <StudioMotion type={type} />}
       <fieldset disabled={busy}>
         {controls && type === "clean" && (
           <div className="card">
             {[
-              ["noise", "Noise removal", "AI background noise suppression"],
+              ["noise", "Noise removal", "Spectral background noise reduction"],
               ["hum", "De-hum", "Removes 50/60 Hz mains hum"],
-              ["reverb", "De-reverb", "Reduces room echo"],
+              ["reverb", "De-reverb", "Gently reduces room tails"],
               ["voice", "Voice enhance", "Clarity and presence for dialogue"],
             ].map(([key, label, desc]) => (
               <label className="tog" key={key}>
@@ -194,8 +198,8 @@ export default function JobForm({
                 </select>
               </label>
               <p className="muted">
-                A real loudness report will be available after processing is
-                enabled.
+                Download a measured LUFS and true-peak report with your finished
+                master.
               </p>
             </div>
           </div>
@@ -231,8 +235,7 @@ export default function JobForm({
               </label>
             </div>
             <p className="muted">
-              Your transcript and downloads will appear when processing is
-              available.
+              Your SRT / VTT downloads appear in Recent jobs after processing.
             </p>
           </div>
         )}
