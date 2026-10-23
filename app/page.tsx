@@ -1,5 +1,5 @@
 import Link from "next/link";
-import LandingMotion from "@/components/landing-motion";
+import Visualizer from "@/components/visualizer";
 const plans = [
   {
     name: "Free",
@@ -75,7 +75,9 @@ export default function Home() {
           <a href="#pricing">Pricing</a>
         </nav>
         <div className="header-actions">
-          <Link href="/signin">Sign in</Link>
+          <Link className="btn ghost" href="/signin">
+            Sign in
+          </Link>
           <Link className="btn" href="/signup">
             Start free <span aria-hidden="true">↗</span>
           </Link>
@@ -102,7 +104,7 @@ export default function Home() {
             </p>
             <div className="hero-ctas">
               <Link className="btn" href="/signup">
-                Find your flow <span aria-hidden="true">↗</span>
+                Start free <span aria-hidden="true">↗</span>
               </Link>
               <a className="text-link" href="#tools">
                 Explore the tools <span aria-hidden="true">↓</span>
@@ -110,38 +112,8 @@ export default function Home() {
             </div>
             <p className="hero-note">30 free minutes. No credit card needed.</p>
           </div>
-          <div
-            className="sound-stage"
-            aria-label="Illustration of a recording becoming clean audio"
-          >
-            <div className="stage-label">
-              <span className="signal-dot" /> THE SOUND OF POSSIBILITY{" "}
-              <span>48 kHz / 24 bit</span>
-            </div>
-            <div className="floating-chip chip-top">
-              ✦ A little clarity goes a long way
-            </div>
-            <div className="hero-wave">
-              <Wave />
-              <canvas data-wave="hero" aria-hidden="true" />
-            </div>
-            <div className="audio-object">
-              <span className="object-ring" />
-              <span className="object-ring ring-two" />
-              <span className="object-core">
-                tt<span>YOUR NEXT GREAT TAKE</span>
-              </span>
-            </div>
-            <div className="floating-chip chip-bottom">
-              <span className="tiny-wave" aria-hidden="true">
-                ▂▅▃▇▂▆▃
-              </span>{" "}
-              Made to be heard.
-            </div>
-            <div className="stage-footer">
-              <span>01 — RAW POTENTIAL</span>
-              <span>∞ POSSIBILITIES</span>
-            </div>
+          <div className="sound-stage">
+            <Visualizer />
           </div>
           <div className="hero-bottom">
             <span>FOR PODCASTERS · FILMMAKERS · STORYTELLERS</span>
@@ -155,6 +127,7 @@ export default function Home() {
           <span>01 / CLEAN-UP</span>
           <span>02 / MASTERING</span>
           <span>03 / SUBTITLES</span>
+          <span>04 / AUDIO STUDIO</span>
         </div>
         <section className="story-section cleanup-story" id="tools">
           <div className="story-copy">
@@ -286,8 +259,8 @@ export default function Home() {
               Put your story into words ↗
             </Link>
             <p className="future-note">
-              A glimpse of our timeline vision. Full Audio Drama Studio is
-              coming later.
+              Bring guide tracks, dubbed voices and scripts together in Audio
+              Studio.
             </p>
           </div>
           <div className="timeline-visual scene-card">
@@ -393,7 +366,6 @@ export default function Home() {
         <span>A Sound Matrix creation.</span>
         <Link href="/signin">Back to your studio ↗</Link>
       </footer>
-      <LandingMotion />
     </div>
   );
 }

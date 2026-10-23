@@ -14,6 +14,7 @@ import {
 import { uploadFile } from "@/lib/upload";
 import { browserClient } from "@/lib/supabase/client";
 import type { ProcessingState } from "@/lib/job-status";
+import Visualizer from "./visualizer";
 import ProcessingStatus from "./processing-status";
 import StudioTimeline from "./studio-timeline";
 import InputPreview from "./input-preview";
@@ -305,6 +306,11 @@ export default function AudioStudio({
       : undefined;
   return (
     <div className="audio-studio">
+      {!live && (
+        <div className="card">
+          <Visualizer compact />
+        </div>
+      )}
       <form onSubmit={submit}>
         <fieldset disabled={locked}>
           <section className="card" aria-label="Studio files">

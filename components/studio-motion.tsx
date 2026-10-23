@@ -1,4 +1,5 @@
 "use client";
+import Visualizer from "./visualizer";
 import { useState } from "react";
 export function ProcessingWave() {
   return (
@@ -21,6 +22,7 @@ export default function StudioMotion({
     <div
       className={"studio-motion" + (paused || active ? " motion-stopped" : "")}
     >
+      {!active && !paused && <Visualizer compact />}
       {type === "master" ? (
         <span className="studio-meter" aria-hidden="true">
           <i />

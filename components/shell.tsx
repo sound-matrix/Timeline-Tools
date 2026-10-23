@@ -4,8 +4,8 @@ import { signOut } from "@/app/auth/actions";
 const userLinks = [
   ["/dashboard", "Dashboard"],
   ["/cleanup", "Clean-up"],
-  ["/master", "Mastering"],
-  ["/subs", "Subtitles"],
+  ["/master", "Master"],
+  ["/subs", "Subs"],
   ["/studio", "Audio Studio"],
   ["/plans", "Plans & billing"],
 ];
@@ -48,7 +48,7 @@ export default function Shell({
         </form>
       </header>
       <div className="layout">
-        <Sidebar items={admin ? adminLinks : userLinks} />
+        <Sidebar name={name} items={admin ? adminLinks : userLinks} />
         <main className="main">{children}</main>
       </div>
     </>
