@@ -32,6 +32,7 @@ export default function AudioStudio({
   const router = useRouter();
   const submitting = useRef(false);
   const scriptRead = useRef(0);
+  const bedInput = useRef<HTMLInputElement>(null);
   const [guide, setGuide] = useState<File | null>(null);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [bed, setBed] = useState<File | null>(null);
@@ -401,6 +402,7 @@ export default function AudioStudio({
             <label>
               Music / SFX bed (optional)
               <input
+                ref={bedInput}
                 type="file"
                 accept={accept}
                 onChange={(e) => {
@@ -416,6 +418,7 @@ export default function AudioStudio({
                 onClick={() => {
                   changed();
                   setBed(null);
+                  if (bedInput.current) bedInput.current.value = "";
                 }}
               >
                 Remove bed
