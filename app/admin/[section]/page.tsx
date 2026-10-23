@@ -62,7 +62,9 @@ export default async function Page({
                       <td>{row.id}</td>
                       <td>{row.user_id}</td>
                       <td>{row.file_name}</td>
-                      <td>{row.type}</td>
+                      <td>
+                        {row.type === "studio" ? "Audio Studio" : row.type}
+                      </td>
                       <td>{row.status}</td>
                       <td>{row.created_at}</td>
                     </>

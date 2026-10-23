@@ -22,7 +22,9 @@ export function jobDownloads(id: string, userId: string, paths: unknown) {
     const extension = path.split(".").pop()?.toUpperCase() ?? "";
     const label =
       extension === "JSON"
-        ? "Download measured report (JSON)"
+        ? path.endsWith("/alignment-report.json")
+          ? "Download alignment report (JSON)"
+          : "Download measured report (JSON)"
         : `Download ${/^[A-Z0-9]{1,8}$/.test(extension) ? extension : "file"}`;
     return [{ label, href: `/api/jobs/${id}/download?index=${index}` }];
   });

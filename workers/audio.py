@@ -92,6 +92,9 @@ def validate(kind, s):
         keys = ('eq', 'compressor', 'loudness', 'limiter')
         valid = (shape(s, keys) and all(stage(k, s[k]) for k in keys)
                  and any(s[k]['enabled'] for k in keys))
+    elif kind == 'studio':
+        from workers.studio_audio import validate_studio
+        valid = validate_studio(s)
     elif kind == 'subtitles':
         valid = (shape(s, ['language', 'formats']) and s['language'] in ('English', 'Hindi', 'Telugu', 'Tamil')
                  and isinstance(s['formats'], list) and 1 <= len(s['formats']) <= 2
@@ -259,4 +262,7 @@ def subtitles(source, folder, s):
 
 def process(source, folder, kind, settings):
     validate(kind, settings)
+    if kind == 'studio':
+        from workers.studio_audio import studio
+        return studio(source, folder, settings)
     return {'clean': clean, 'master': master, 'subtitles': subtitles}[kind](source, folder, settings)

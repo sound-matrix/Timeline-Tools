@@ -6,6 +6,7 @@ const userLinks = [
   ["/cleanup", "Clean-up"],
   ["/master", "Mastering"],
   ["/subs", "Subtitles"],
+  ["/studio", "Audio Studio"],
   ["/plans", "Plans & billing"],
 ];
 const adminLinks = [

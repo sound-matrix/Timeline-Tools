@@ -262,3 +262,92 @@ header's decorative animation pauses whenever a session panel is present.
 `workers/audio.py` accepts the new nested settings and denoising methods. Redeploy
 with `modal deploy -m workers.timeline_tools_worker` in the existing `sound-matrix` workspace; no secrets or SQL changes are
 needed. This PR does not deploy Modal or merge automatically.
+
+## Phase 2A — Audio Studio
+
+`/studio` accepts a guide (audio/video), 1–8 voice/dub stems, an optional music/SFX
+bed and a UTF-8 plain-text/SRT/VTT script. The desk appears after guide, voices and
+script are present. Every mix choice starts empty: dialogue LUFS, final master
+LUFS, room tone Off/amount, subtitles Off/On + formats, and bed ducking when a bed
+is present. Presets fill only the dialogue field when clicked. There are no new
+payments, auth providers, secrets or publishing controls.
+
+**Transport and limits.** The browser creates one uncompressed/stored ZIP with
+`manifest.json`, `script.txt`, `guide.<ext>`, `voice-N.<ext>` and optional `bed.<ext>`.
+It uploads to `uploads/<owner UUID>/<random UUID>.zip`; `input_path` is this one
+path. JSONB settings hold only the compact processing choices (well under 8192
+bytes), never the script, extra Storage paths, signed URLs or media. The new
+migration extends upload authorization to owner-prefixed ZIPs and adds `studio`
+to the existing job type check; all existing RLS/grants/size checks remain.
+The complete bundle must fit both the plan limit and 250 MB. The worker accepts
+only flat, unique, stored ZIP members, rejects links/traversal/unexpected files,
+and bounds extraction before reading media. Scripts: 64 KB, 300 lines, 1000
+characters per line. Audio: 60 minutes per file, 120 minutes combined. Multiple
+voice stems require unique speaker labels matching all script speakers. A single
+unlabeled dub can contain all dialogue in script order. The guide is a timing
+reference and is excluded from the final dialogue mix; longer voice/bed material
+outside the guide duration is omitted.
+
+**Alignment approach: heuristic-v1, CPU only.** FFmpeg silence detection (-35 dB,
+150 ms minimum silence) finds guide/dub acoustic regions. Existing SRT/VTT cues
+supply guide timing. Otherwise, one-region-per-line matches are used when counts
+agree; mismatched counts distribute script line lengths across cumulative speech
+time. Each speaker stem follows its own ordered script lines. Dub segments are
+trimmed, pitch-preserving time-stretched and delayed into guide positions. This
+is **not ML forced alignment**: there is no word recognition, semantic verification
+or ±150 ms accuracy guarantee. Background sound or missing/reordered words can
+mislead acoustic detection. Review the mix and all timings before publishing.
+
+Confidence is a reproducible **evidence score**, not a calibrated probability:
+`guide speech coverage × dub speech coverage × boundary evidence × stretch
+agreement`. Boundary evidence is 1 for an exact region/line count, otherwise .45;
+stretch agreement is `min(ratio, 1/ratio)`. Scores cap at .65 for inferred guide
+timing and .85 for supplied cue timing. Silence scores zero; scores below .70
+and large stretches are flagged in the script table and report.
+
+**Mix/output.** Each dialogue stem uses the chosen LUFS target; the optional bed
+is attenuated by the chosen dB amount in aligned dialogue windows (0 is bypass).
+Room-tone fill loops a detected quiet guide sample in dialogue gaps at the chosen
+percentage; if none exists it is skipped and noted in the report. Final mastering
+uses the chosen LUFS target and loudnorm's 0 dBTP safety bound. Silence or peak
+constraints may prevent the target; achieved loudness is included in the JSON
+report. Outputs are `studio-mix.wav`, `alignment-report.json`, and optional
+`subtitles.srt` / `subtitles.vtt` (at most four, compatible with `worker_complete`).
+Only the guide duration is sent to `worker_prepare`, then charged once through
+the unchanged `worker_complete` transaction. Failures do not charge minutes.
+
+The page polls the real worker lifecycle and restores the latest studio job after
+reload. Clip snapping is explicitly an activity illustration, without invented
+percentages/timings. Final clip positions and confidence come from the worker's
+private report. Select clips/table rows to seek the finished mix; report/subtitle
+exports remain available. Report retrieval authenticates the owner, checks the
+completed studio job and exact output path, then reads through user-scoped Storage
+RLS. It never sends private bucket paths in JSON responses. Timed scripts can be
+exported before mixing; plain text needs completed alignment. Motion can be paused
+and respects `prefers-reduced-motion`.
+
+**Operator release steps (not performed by this PR).** Apply
+`supabase/migrations/20261023112541_audio_studio.sql`, then **redeploy
+`timeline-tools-worker`** from the repo root:
+
+```sh
+modal deploy -m workers.timeline_tools_worker
+```
+
+The old Modal worker does not understand `studio` jobs. Coordinate migration,
+worker redeploy and app release before accepting studio submissions. This PR
+does not deploy Modal or change secrets.
+
+**Checks.** `npm test`, `npm run typecheck`, `npm run build`, and
+`python -m unittest discover -s workers/tests -v`. Isolated Playwright desk tests
+cover both Phase 1 and Audio Studio, including ZIP payload, required choices,
+status polling, subtitle export, private report retrieval, confidence warnings,
+reload, mobile overflow and reduced motion:
+
+```sh
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54331 \
+NEXT_PUBLIC_SUPABASE_ANON_KEY=desk-test-key npm run build
+npx playwright test --config=playwright.desk.config.ts
+```
+
+The `desk` CI job runs this fixture build without live account credentials.

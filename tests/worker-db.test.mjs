@@ -33,11 +33,11 @@ async function rpc(db, name, args) {
     )
   ).rows;
 }
-async function queue(db, user = a) {
+async function queue(db, user = a, kind = "clean") {
   await db.exec(
     `reset role; select set_config('request.jwt.claim.sub','${user}',false);`,
   );
-  const path = `${user}/${crypto.randomUUID()}.wav`;
+  const path = `${user}/${crypto.randomUUID()}.${kind === "studio" ? "zip" : "wav"}`;
   await db.query(
     "insert into storage.objects(bucket_id,name,metadata) values('uploads',$1,'{\"size\":1024}')",
     [path],
@@ -45,8 +45,8 @@ async function queue(db, user = a) {
   await db.exec("set role authenticated");
   const row = (
     await db.query(
-      "insert into public.jobs(file_name,input_path,type,settings) values('test.wav',$1,'clean','{}') returning id",
-      [path],
+      "insert into public.jobs(file_name,input_path,type,settings) values('test.wav',$1,$2,'{}') returning id",
+      [path, kind],
     )
   ).rows[0];
   await db.exec("reset role;set role service_role;");
@@ -248,6 +248,99 @@ test("worker SQL: RLS, state transitions, atomic success charging, ownership, ti
       (await db.query("select * from public.jobs where id=$1", [id])).rows
         .length,
       0,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("studio migration: ZIP ownership, compact settings and normal charging lifecycle", async () => {
+  const db = await database();
+  try {
+    await db.exec(
+      `insert into auth.users(id,email,raw_user_meta_data) values('${a}','a@example.invalid','{}'),('${b}','b@example.invalid','{}');`,
+    );
+    const id = await queue(db, a, "studio");
+    await db.exec(
+      `reset role; select set_config('request.jwt.claim.sub','${b}',false); set role authenticated`,
+    );
+    assert.equal(
+      (await db.query("select * from public.jobs where id=$1", [id])).rows
+        .length,
+      0,
+    );
+    assert.equal(
+      (
+        await db.query("select private.upload_allowed($1,null) as ok", [
+          a + "/11111111-1111-4111-8111-111111111111.zip",
+        ])
+      ).rows[0].ok,
+      false,
+    );
+    await db.exec(
+      `reset role; select set_config('request.jwt.claim.sub','${a}',false); set role authenticated`,
+    );
+    assert.equal(
+      (
+        await db.query("select private.upload_allowed($1,null) as ok", [
+          a + "/11111111-1111-4111-8111-111111111111.zip",
+        ])
+      ).rows[0].ok,
+      true,
+    );
+    assert.equal(
+      (
+        await db.query("select private.upload_allowed($1,null) as ok", [
+          a + "/../input.zip",
+        ])
+      ).rows[0].ok,
+      false,
+    );
+    await assert.rejects(
+      db.query(
+        "insert into public.jobs(file_name,input_path,type,settings) values('foreign',$1,'studio','{}')",
+        [b + "/11111111-1111-4111-8111-111111111111.zip"],
+      ),
+      /Upload missing/,
+    );
+    await db.exec("reset role; set role service_role");
+    assert.equal((await rpc(db, "worker_claim", ["studio-worker"]))[0].id, id);
+    assert.equal(
+      (await rpc(db, "worker_prepare", [id, "studio-worker", 61]))[0]
+        .worker_prepare,
+      true,
+    );
+    assert.equal(
+      (
+        await rpc(db, "worker_complete", [
+          id,
+          "studio-worker",
+          await output(db, id),
+        ])
+      )[0].worker_complete,
+      true,
+    );
+    assert.equal(
+      Number(
+        (
+          await db.query(
+            "select minutes_charged from public.jobs where id=$1",
+            [id],
+          )
+        ).rows[0].minutes_charged,
+      ),
+      2,
+    );
+    assert.equal(
+      Number(
+        (
+          await db.query(
+            "select minutes_balance from public.profiles where id=$1",
+            [a],
+          )
+        ).rows[0].minutes_balance,
+      ),
+      28,
     );
   } finally {
     await db.close();

@@ -1,0 +1,8 @@
+{
+  "dialogue_lufs": -23,
+  "master_lufs": -16,
+  "has_bed": true,
+  "ducking_db": 0,
+  "room_tone": { "enabled": true, "amount": 0 },
+  "subtitles": { "enabled": true, "formats": ["srt", "vtt"] }
+}

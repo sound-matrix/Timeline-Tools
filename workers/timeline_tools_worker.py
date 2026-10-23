@@ -61,11 +61,23 @@ def handle_job(db, job, worker_id, url, key):
             code = 'storage'
             transfer_input(url, key, job['input_path'], source)
             code = 'invalid_media'
-            seconds = duration(source)
+            project = None
+            if job['type'] == 'studio':
+                from workers.studio_audio import prepare
+                if source.suffix != '.zip':
+                    raise ValueError('Studio requires a ZIP bundle')
+                project = prepare(source, folder)
+                seconds = project['seconds']  # Charge guide duration once, not each stem.
+            else:
+                seconds = duration(source)
             if not db.rpc('worker_prepare', {'p_job_id': job_id, 'p_worker_id': worker_id, 'p_duration': seconds}).execute().data:
                 return
             code = 'processing'
-            outputs = process(source, folder, job['type'], job['settings'])
+            if project is not None:
+                from workers.studio_audio import mix
+                outputs = mix(project, folder, job['settings'])
+            else:
+                outputs = process(source, folder, job['type'], job['settings'])
             code = 'storage'
             for output in outputs:
                 path = f'{expected}/{job_id}/{output.name}'

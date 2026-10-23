@@ -6,6 +6,27 @@ export function processingSettings(type: JobType, values: Choices) {
     typeof values[key] === "string" && String(values[key]).trim() !== ""
       ? Number(values[key])
       : undefined;
+  if (type === "studio")
+    return {
+      dialogue_lufs: n("dialogueLufs"),
+      master_lufs: n("masterLufs"),
+      has_bed: values.hasBed === true,
+      ...(values.hasBed === true ? { ducking_db: n("duckingDb") } : {}),
+      room_tone:
+        values.roomTone === "off"
+          ? { enabled: false }
+          : {
+              enabled: values.roomTone === "on" ? true : undefined,
+              amount: n("roomAmount"),
+            },
+      subtitles:
+        values.subtitles === "off"
+          ? { enabled: false }
+          : {
+              enabled: values.subtitles === "on" ? true : undefined,
+              formats: ["srt", "vtt"].filter((k) => values[k] === true),
+            },
+    };
   if (type === "clean") {
     const stage = (key: string) => {
       if (values[key] !== true) return { enabled: false };
