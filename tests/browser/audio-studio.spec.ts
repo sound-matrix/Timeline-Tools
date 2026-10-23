@@ -104,7 +104,16 @@ test("studio files -> explicit choices -> real ZIP job -> live status -> alignme
   });
   let zip: Buffer | null = null;
   await page.route("**/storage/v1/object/uploads/**", async (route) => {
-    zip = route.request().postDataBuffer();
+    const body = route.request().postDataBuffer()!;
+    const contentType = route.request().headers()["content-type"];
+    if (contentType?.startsWith("multipart/form-data")) {
+      const form = await new Response(new Uint8Array(body), {
+        headers: { "Content-Type": contentType },
+      }).formData();
+      for (const value of form.values())
+        if (typeof value !== "string")
+          zip = Buffer.from(await value.arrayBuffer());
+    } else zip = body;
     await route.continue();
   });
   const queued = page.waitForResponse(

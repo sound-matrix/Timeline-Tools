@@ -65,10 +65,16 @@ export default function AudioStudio({
     (labels.some((s) => !s) || new Set(labels).size !== labels.length)
       ? "Give each voice stem a unique speaker label matching the script."
       : labels.some(Boolean) &&
-          preview.lines.some(
+          (preview.lines.some(
             (l) => !labels.includes(l.speaker.toLocaleLowerCase()),
-          )
-        ? "Match every script speaker to a voice stem label."
+          ) ||
+            labels.some(
+              (label) =>
+                !preview.lines.some(
+                  (l) => l.speaker.toLocaleLowerCase() === label,
+                ),
+            ))
+        ? "Match every script speaker to a voice stem label; each stem needs a script line."
         : "";
   const bytes =
     (guide?.size ?? 0) +
@@ -166,6 +172,7 @@ export default function AudioStudio({
     )
       return;
     submitting.current = true;
+    scriptRead.current++;
     setBusy(true);
     setMessage("");
     setReport(null);
@@ -541,6 +548,7 @@ export default function AudioStudio({
                   <label>
                     Room tone fill
                     <select
+                      aria-label="Room tone fill"
                       value={String(choices.roomTone ?? "")}
                       onChange={(e) => update("roomTone", e.target.value)}
                     >
@@ -571,6 +579,7 @@ export default function AudioStudio({
                   <label>
                     Subtitles from script
                     <select
+                      aria-label="Subtitles from script"
                       value={String(choices.subtitles ?? "")}
                       onChange={(e) => update("subtitles", e.target.value)}
                     >
