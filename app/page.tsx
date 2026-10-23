@@ -255,17 +255,17 @@ export default function Home() {
               <em>A bigger sound.</em>
             </h2>
             <p>
-              Shape five bands of EQ, control dynamics and aim for the right
-              loudness. Get a WAV master and a report of its measured LUFS and
-              true peak.
+              Set your LUFS target, true-peak ceiling and dynamics. Enable the
+              EQ bands you want. Get a WAV master and a report of its measured
+              LUFS and true peak.
             </p>
             <Link className="text-link" href="/signup">
               Make the final mix yours ↗
             </Link>
             <div className="feature-pills">
-              <span>-14 streaming</span>
-              <span>-16 podcasts</span>
-              <span>-23 broadcast</span>
+              <span>User-set LUFS</span>
+              <span>True-peak control</span>
+              <span>Custom dynamics</span>
             </div>
           </div>
         </section>

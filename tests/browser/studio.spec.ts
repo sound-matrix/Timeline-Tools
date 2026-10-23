@@ -31,18 +31,49 @@ test("sign in, queue each tool, preserve settings UI, responsive layout, sign ou
   wave.writeUInt32LE(16, 40);
   for (const route of ["cleanup", "master", "subs"]) {
     await page.goto("/" + route);
-    if (route === "cleanup") await page.getByLabel("De-reverb").check();
-    if (route === "master")
-      await page.getByLabel("Target", { exact: true }).selectOption("-16");
-    if (route === "subs")
-      await page.getByLabel("Language").selectOption("Telugu");
     await page.getByLabel("Choose audio or video").setInputFiles({
       name: `browser-${route}.wav`,
       mimeType: "audio/wav",
       buffer: wave,
     });
+    const submit = page.getByRole("button", { name: "Upload & queue job" });
+    await expect(submit).toBeDisabled();
+    await expect(page.locator('input[type="checkbox"]:checked')).toHaveCount(0);
+    await expect(
+      page.getByText("Select your options above.", { exact: true }),
+    ).toBeVisible();
+    if (route === "cleanup") {
+      await page.getByLabel("De-reverb", { exact: true }).check();
+      await page.getByLabel("Strength", { exact: true }).fill("45");
+    }
+    if (route === "master") {
+      await page.getByLabel("Apply loudness normalisation").check();
+      await page
+        .getByLabel("Target integrated loudness", { exact: true })
+        .fill("-18.5");
+      await page.getByLabel("Apply limiter", { exact: true }).check();
+      await page.getByLabel("Ceiling", { exact: true }).fill("-1.5");
+      await page.locator('input[name="limiterKnee"][value="soft"]').check();
+      await page.getByLabel("Limiter release", { exact: true }).fill("230");
+      await page.getByLabel("Apply compressor", { exact: true }).check();
+      await page.getByLabel("Threshold", { exact: true }).fill("-28.5");
+      await page.getByLabel("Ratio", { exact: true }).fill("4.5");
+      await page.getByLabel("Attack", { exact: true }).fill("12.5");
+      await page.getByLabel("Compressor release", { exact: true }).fill("320");
+      await page.locator('input[name="compressorKnee"][value="soft"]').check();
+      await page.locator('input[name="makeup"][value="manual"]').check();
+      await page.getByLabel("Manual makeup gain", { exact: true }).fill("0");
+      await page.getByLabel("Apply EQ", { exact: true }).check();
+      await expect(submit).toBeDisabled();
+      await page.getByLabel("60 Hz", { exact: true }).check();
+      await page.getByLabel("60 Hz gain", { exact: true }).fill("1.5");
+    }
+    if (route === "subs") {
+      await page.getByLabel("Language", { exact: true }).selectOption("Telugu");
+      await page.getByLabel("SRT", { exact: true }).check();
+    }
     await page.getByRole("button", { name: "Upload & queue job" }).click();
-    await expect(page.getByRole("status").first()).toContainText("Queued.", {
+    await expect(page.locator('[role="status"]')).toContainText("Queued.", {
       timeout: 30000,
     });
   }
