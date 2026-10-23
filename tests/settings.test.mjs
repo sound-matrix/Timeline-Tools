@@ -58,3 +58,50 @@ test("nonfinite master numbers are rejected", () => {
     );
   }
 });
+
+test("cleanup dropdowns require explicit method and amounts and map Off to bypass", () => {
+  const valid = (choices) =>
+    jobSchema.safeParse({
+      type: "clean",
+      settings: processingSettings("clean", choices),
+    }).success;
+  assert.equal(valid({ noise: true }), false);
+  assert.equal(
+    valid({ noise: true, noiseMethod: "speech", noiseAmount: "" }),
+    false,
+  );
+  assert.equal(valid({ voice: true, hum: true }), false);
+  assert.equal(valid({ voice: true, hum: true, humAmount: "0" }), true);
+  assert.equal(valid({ hum: true, humAmount: "0" }), false);
+  assert.equal(valid({ noise: true, noiseAmount: "60" }), false);
+  assert.equal(
+    valid({
+      noise: true,
+      noiseMethod: "speech",
+      noiseAmount: "0",
+      voice: true,
+    }),
+    true,
+  );
+  const choices = {
+    noise: true,
+    noiseMethod: "speech_music",
+    noiseAmount: "60",
+    hum: true,
+    humAmount: "30",
+    reverb: true,
+    reverbAmount: "100",
+  };
+  assert.equal(valid(choices), true);
+  assert.deepEqual(processingSettings("clean", choices), {
+    noise: { enabled: true, method: "speech_music", amount: 60 },
+    hum: { enabled: true, amount: 30 },
+    reverb: { enabled: true, amount: 100 },
+    voice: false,
+  });
+  assert.deepEqual(
+    processingSettings("clean", { ...choices, noise: false, hum: false }).noise,
+    { enabled: false },
+  );
+  assert.equal(valid({ voice: true }), true);
+});

@@ -77,6 +77,17 @@ def validate(kind, s):
         keys = ('noise', 'hum', 'reverb', 'voice')
         valid = (shape(s, [*keys, 'strength']) and all(type(s[k]) is bool for k in keys)
                  and any(s[k] for k in keys) and number(s['strength'], 0, 100) and s['strength'] % 1 == 0)
+        if shape(s, keys) and type(s['voice']) is bool:
+            def cleanup_stage(k):
+                v = s[k]
+                if shape(v, ['enabled']) and v['enabled'] is False:
+                    return True
+                fields = ['enabled', 'amount', 'method'] if k == 'noise' else ['enabled', 'amount']
+                return (shape(v, fields) and v['enabled'] is True
+                        and type(v['amount']) in (int, float) and v['amount'] in (30, 60, 100)
+                        and (k != 'noise' or v['method'] in ('speech_music', 'speech', 'aggressive')))
+            valid = (all(cleanup_stage(k) for k in keys[:3])
+                     and (s['voice'] or any(s[k]['enabled'] for k in keys[:3])))
     elif kind == 'master':
         keys = ('eq', 'compressor', 'loudness', 'limiter')
         valid = (shape(s, keys) and all(stage(k, s[k]) for k in keys)
@@ -96,11 +107,18 @@ def clean(source, folder, s):
     import numpy as np
     import soundfile as sf
     import noisereduce as nr
-    strength = s['strength'] / 100
+    legacy = 'strength' in s
+    def amount(key):
+        if legacy:
+            return s['strength'] / 100 if s[key] else 0
+        return s[key]['amount'] / 100 if s[key]['enabled'] else 0
+    noise, hum, reverb = (amount(k) for k in ('noise', 'hum', 'reverb'))
+    voice = s['strength'] / 100 if legacy and s['voice'] else (1 if s['voice'] else 0)
+    method = 'speech_music' if legacy or not s['noise']['enabled'] else s['noise']['method']
     decoded = folder / 'decoded.wav'
     ffmpeg(source, decoded)
     current = decoded
-    if s['noise'] and strength > 0:
+    if noise > 0:
         current = folder / 'denoised.wav'
         with sf.SoundFile(decoded) as src, sf.SoundFile(current, 'w', samplerate=src.samplerate,
                 channels=src.channels, subtype='PCM_24') as dst:
@@ -109,16 +127,17 @@ def clean(source, folder, s):
                     dst.write(block)
                 else:
                     dst.write(np.asarray(nr.reduce_noise(y=block.T, sr=src.samplerate,
-                        stationary=False, prop_decrease=strength, n_fft=1024)).T)
+                        stationary=method == 'aggressive', prop_decrease=noise, n_fft=1024)).T)
     filters = []
-    if strength > 0:
-        if s['hum']:
-            filters += [f'equalizer=f={f}:t=q:w=12:g={-24 * strength}' for f in (50, 60, 100, 120)]
-        if s['reverb']:
-            # Conservative downward gate reduces room tails; not neural dereverberation.
-            filters += [f'agate=threshold={0.008 * strength}:ratio={1 + 3 * strength}:attack=10:release=180']
-        if s['voice']:
-            filters += [f'highpass=f={60 + 30 * strength}', f'equalizer=f=3000:t=q:w=1:g={3 * strength}']
+    if noise > 0 and method == 'speech':
+        filters += ['highpass=f=100', 'lowpass=f=8000']
+    if hum > 0:
+        filters += [f'equalizer=f={f}:t=q:w=12:g={-24 * hum}' for f in (50, 60, 100, 120)]
+    if reverb > 0:
+        # Conservative downward gate reduces room tails; not neural dereverberation.
+        filters += [f'agate=threshold={0.008 * reverb}:ratio={1 + 3 * reverb}:attack=10:release=180']
+    if voice > 0:
+        filters += [f'highpass=f={60 + 30 * voice}', f'equalizer=f=3000:t=q:w=1:g={3 * voice}']
     output = folder / 'clean.wav'
     ffmpeg(current, output, ','.join(filters) or None)
     return [output]

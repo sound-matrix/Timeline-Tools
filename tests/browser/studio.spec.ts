@@ -32,12 +32,18 @@ test("sign in, queue each tool, preserve settings UI, responsive layout, sign ou
   for (const route of ["cleanup", "master", "subs"]) {
     await page.goto("/" + route);
     await expect(
-      page.getByRole("button", { name: "Upload & queue job" }),
+      page.getByRole("button", { name: "Start Processing" }),
     ).toBeDisabled();
+    await expect(page.getByText("Choose a file to continue.")).toBeVisible();
+    await page.getByLabel("Choose audio or video").setInputFiles({
+      name: `browser-${route}.wav`,
+      mimeType: "audio/wav",
+      buffer: wave,
+    });
     await expect(page.getByText("Select your options above.")).toBeVisible();
     if (route === "cleanup") {
       await page.getByLabel("De-reverb").check();
-      await page.getByLabel("Strength", { exact: true }).fill("45");
+      await page.getByLabel("De-reverb amount").selectOption("60");
     }
     if (route === "master") {
       await page.getByLabel("Apply loudness", { exact: true }).check();
@@ -49,13 +55,10 @@ test("sign in, queue each tool, preserve settings UI, responsive layout, sign ou
       await page.getByLabel("Language", { exact: true }).selectOption("Telugu");
       await page.getByLabel("SRT", { exact: true }).check();
     }
-    await page.getByLabel("Choose audio or video").setInputFiles({
-      name: `browser-${route}.wav`,
-      mimeType: "audio/wav",
-      buffer: wave,
-    });
-    await page.getByRole("button", { name: "Upload & queue job" }).click();
-    await expect(page.getByRole("status").first()).toContainText("Queued.", {
+    await page.getByRole("button", { name: "Start Processing" }).click();
+    await expect(
+      page.getByRole("region", { name: "Live processing" }).getByRole("status"),
+    ).toContainText(/Queued|Processing|Done/, {
       timeout: 30000,
     });
   }

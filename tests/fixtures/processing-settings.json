@@ -1330,7 +1330,13 @@
         },
         {
           "path": "eq",
-          "value": [0, 0, 0, 0, 0]
+          "value": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
         },
         {
           "path": "loudness",
@@ -1457,7 +1463,9 @@
       "type": "subtitles",
       "settings": {
         "language": "",
-        "formats": ["srt"]
+        "formats": [
+          "srt"
+        ]
       },
       "valid": false
     },
@@ -1466,7 +1474,9 @@
       "type": "subtitles",
       "settings": {
         "language": "Telugu",
-        "formats": ["vtt"]
+        "formats": [
+          "vtt"
+        ]
       },
       "valid": true
     },
@@ -1475,7 +1485,10 @@
       "type": "subtitles",
       "settings": {
         "language": "English",
-        "formats": ["srt", "vtt"]
+        "formats": [
+          "srt",
+          "vtt"
+        ]
       },
       "valid": true
     },
@@ -1484,7 +1497,272 @@
       "type": "subtitles",
       "settings": {
         "language": "Tamil",
-        "formats": ["txt"]
+        "formats": [
+          "txt"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "desk speech_music",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "speech_music",
+          "amount": 60
+        },
+        "hum": {
+          "enabled": true,
+          "amount": 30
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
+      },
+      "valid": true
+    },
+    {
+      "name": "desk speech",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "speech",
+          "amount": 60
+        },
+        "hum": {
+          "enabled": true,
+          "amount": 30
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
+      },
+      "valid": true
+    },
+    {
+      "name": "desk aggressive",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "aggressive",
+          "amount": 60
+        },
+        "hum": {
+          "enabled": true,
+          "amount": 30
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
+      },
+      "valid": true
+    },
+    {
+      "name": "desk voice only",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": false
+        },
+        "hum": {
+          "enabled": false
+        },
+        "reverb": {
+          "enabled": false
+        },
+        "voice": true
+      },
+      "valid": true
+    },
+    {
+      "name": "desk missing amount",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "speech_music",
+          "amount": 60
+        },
+        "hum": {
+          "enabled": true
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
+      },
+      "valid": false
+    },
+    {
+      "name": "desk missing method",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "amount": 60
+        },
+        "hum": {
+          "enabled": true,
+          "amount": 30
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
+      },
+      "valid": false
+    },
+    {
+      "name": "desk unknown method",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "magic",
+          "amount": 60
+        },
+        "hum": {
+          "enabled": true,
+          "amount": 30
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
+      },
+      "valid": false
+    },
+    {
+      "name": "desk empty amount",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "speech_music",
+          "amount": 60
+        },
+        "hum": {
+          "enabled": true,
+          "amount": 30
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": ""
+        },
+        "voice": false
+      },
+      "valid": false
+    },
+    {
+      "name": "desk zero amount must be bypassed",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "speech_music",
+          "amount": 0
+        },
+        "hum": {
+          "enabled": true,
+          "amount": 30
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
+      },
+      "valid": false
+    },
+    {
+      "name": "desk unsupported amount",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "speech_music",
+          "amount": 60
+        },
+        "hum": {
+          "enabled": true,
+          "amount": 70
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
+      },
+      "valid": false
+    },
+    {
+      "name": "desk boolean amount",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "speech_music",
+          "amount": 60
+        },
+        "hum": {
+          "enabled": true,
+          "amount": true
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
+      },
+      "valid": false
+    },
+    {
+      "name": "desk no processes",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": false
+        },
+        "hum": {
+          "enabled": false
+        },
+        "reverb": {
+          "enabled": false
+        },
+        "voice": false
+      },
+      "valid": false
+    },
+    {
+      "name": "desk disabled extra fields",
+      "type": "clean",
+      "settings": {
+        "noise": {
+          "enabled": true,
+          "method": "speech_music",
+          "amount": 60
+        },
+        "hum": {
+          "enabled": false,
+          "amount": 30
+        },
+        "reverb": {
+          "enabled": true,
+          "amount": 100
+        },
+        "voice": false
       },
       "valid": false
     }

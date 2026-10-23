@@ -11,7 +11,7 @@ export const extensions = [
   "mkv",
   "webm",
 ];
-export const cleanSchema = z
+const legacyCleanSchema = z
   .object({
     noise: z.boolean(),
     hum: z.boolean(),
@@ -25,6 +25,34 @@ export const cleanSchema = z
     "Select at least one processing option.",
   );
 const disabled = z.object({ enabled: z.literal(false) }).strict();
+const cleanAmount = z.literal([30, 60, 100]);
+const amountStage = z.discriminatedUnion("enabled", [
+  disabled,
+  z.object({ enabled: z.literal(true), amount: cleanAmount }).strict(),
+]);
+export const cleanDeskSchema = z
+  .object({
+    noise: z.discriminatedUnion("enabled", [
+      disabled,
+      z
+        .object({
+          enabled: z.literal(true),
+          method: z.enum(["speech_music", "speech", "aggressive"]),
+          amount: cleanAmount,
+        })
+        .strict(),
+    ]),
+    hum: amountStage,
+    reverb: amountStage,
+    voice: z.boolean(),
+  })
+  .strict()
+  .refine(
+    (s) => s.noise.enabled || s.hum.enabled || s.reverb.enabled || s.voice,
+    "Select at least one processing option.",
+  );
+// Preserve queued Phase 1C jobs while new forms send independent stage settings.
+export const cleanSchema = z.union([cleanDeskSchema, legacyCleanSchema]);
 const knee = z.enum(["soft", "hard"]);
 const band = z.discriminatedUnion("enabled", [
   disabled,
