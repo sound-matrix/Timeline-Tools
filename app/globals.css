@@ -2633,3 +2633,29 @@ select {
     display: none !important;
   }
 }
+
+/* Keep the workplace footer in view, and the menu trigger mobile-only. */
+.btn {
+  font-family: var(--font-ui);
+}
+.side {
+  position: sticky;
+  top: 0;
+  height: calc(100dvh - 73px);
+  min-height: 0;
+}
+.side .side-menu {
+  display: none;
+}
+.cleanup-desk .tog {
+  min-height: 44px;
+}
+@media (max-width: 760px) {
+  .side {
+    position: static;
+    height: auto;
+  }
+  .side .side-menu {
+    display: block;
+  }
+}

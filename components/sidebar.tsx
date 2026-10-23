@@ -6,9 +6,11 @@ import { usePathname } from "next/navigation";
 export default function Sidebar({
   items,
   name,
+  minutes,
 }: {
   items: string[][];
   name: string;
+  minutes?: number;
 }) {
   const [open, setOpen] = useState(false);
   const path = usePathname();
@@ -37,7 +39,10 @@ export default function Sidebar({
       </nav>
       <div className="side-footer">
         <Visualizer compact sidebar />
-        <div className="side-user">{name}</div>
+        <div className="side-user">
+          {name}
+          {minutes !== undefined && <p>{minutes} minutes available</p>}
+        </div>
         <Link href="/plans">Your plan & minutes ↗</Link>
       </div>
     </aside>

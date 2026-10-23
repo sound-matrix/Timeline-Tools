@@ -9,6 +9,7 @@ export default async function Layout({
   const { user, profile } = await requireUser();
   return (
     <Shell
+      minutes={profile.minutes_balance}
       name={profile.display_name || user.email || ""}
       isAdmin={["admin", "owner"].includes(profile.role)}
     >

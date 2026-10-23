@@ -24,7 +24,7 @@ test("Atelier portal, reduced motion, canvas fallback and narrow landing", async
   expect(await portal.evaluate((c: HTMLCanvasElement) => c.toDataURL())).toBe(
     snapshot,
   );
-  await page.screenshot({ path: `${images}/landing-desktop.png` });
+  await page.screenshot({ quality: 82, path: `${images}/landing-desktop.jpg` });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload();
   await page.waitForTimeout(150);
@@ -75,12 +75,14 @@ test("Atelier auth, shell, mobile menu and admin surfaces", async ({
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/dashboard/);
   await expect(page.locator(".side")).toHaveCSS("width", "240px");
-  await page.screenshot({ path: `${images}/shell-desktop.png` });
+  await expect(page.getByRole("button", { name: "Studio menu" })).toBeHidden();
+  await expect(page.locator(".side-user")).toBeInViewport();
+  await page.screenshot({ quality: 82, path: `${images}/shell-desktop.jpg` });
   await page.goto("/studio");
   await expect(
     page.getByRole("button", { name: "Auto-mix & Master", exact: true }),
   ).toBeDisabled();
-  await page.screenshot({ path: `${images}/studio-desktop.png` });
+  await page.screenshot({ quality: 82, path: `${images}/studio-desktop.jpg` });
   await page.setViewportSize({ width: 375, height: 850 });
   await page.getByRole("button", { name: "Studio menu" }).click();
   await page
