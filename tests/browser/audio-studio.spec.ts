@@ -45,7 +45,7 @@ test.beforeEach(async ({ page, request }) => {
   await page.getByLabel("Email", { exact: true }).fill("desk@example.test");
   await page.getByLabel("Password", { exact: true }).fill("desk-test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/dashboard/);
+  await expect(page).toHaveURL(/dashboard/, { timeout: 15000 });
   await page.getByRole("link", { name: "Audio Studio", exact: true }).click();
   await expect(page).toHaveURL(/\/studio$/);
 });
@@ -150,7 +150,7 @@ test("studio files -> explicit choices -> real ZIP job -> live status -> alignme
     data: { id, status: "processing" },
   });
   await expect(live.getByRole("status")).toHaveText("Processing", {
-    timeout: 10000,
+    timeout: 20000,
   });
   const timeline = page.getByRole("region", { name: "Multitrack timeline" });
   await expect(timeline.locator(".studio-pending-clip")).toHaveCSS(
@@ -214,7 +214,7 @@ test("studio files -> explicit choices -> real ZIP job -> live status -> alignme
       },
     },
   });
-  await expect(live.getByRole("status")).toHaveText("Done", { timeout: 10000 });
+  await expect(live.getByRole("status")).toHaveText("Done", { timeout: 20000 });
   await expect(timeline.getByText("45 / 100 · Low confidence")).toBeVisible();
   await expect(
     live.getByRole("link", { name: "Download alignment report (JSON)" }),

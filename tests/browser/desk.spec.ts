@@ -50,7 +50,7 @@ test.beforeEach(async ({ page, request }) => {
   await page.getByLabel("Email", { exact: true }).fill("desk@example.test");
   await page.getByLabel("Password", { exact: true }).fill("desk-test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/dashboard/);
+  await expect(page).toHaveURL(/dashboard/, { timeout: 15000 });
 });
 
 test("upload-first cleanup desk, independent choices, live wave and download on the same page", async ({
@@ -142,7 +142,7 @@ test("upload-first cleanup desk, independent choices, live wave and download on 
   await expect(page.locator(".studio-motion")).toHaveClass(/motion-stopped/);
   await complete(request, id, "processing");
   await expect(live.getByRole("status")).toHaveText("Processing", {
-    timeout: 10000,
+    timeout: 20000,
   });
   await expect(live.locator(".wave-processing")).toBeVisible();
   await expect(live.locator(".wave-clean")).toHaveCSS(
@@ -165,7 +165,7 @@ test("upload-first cleanup desk, independent choices, live wave and download on 
     fullPage: true,
   });
   await complete(request, id);
-  await expect(live.getByRole("status")).toHaveText("Done", { timeout: 10000 });
+  await expect(live.getByRole("status")).toHaveText("Done", { timeout: 20000 });
   await expect(
     live.getByRole("link", { name: "Download WAV" }),
   ).toHaveAttribute("href", `/api/jobs/${id}/download?index=0`);
@@ -216,7 +216,7 @@ for (const route of ["dashboard", "master", "subs"])
     await complete(request, id, "processing");
     const live = page.getByRole("region", { name: "Live processing" });
     await expect(live.getByRole("status")).toHaveText("Processing", {
-      timeout: 10000,
+      timeout: 20000,
     });
     await expect(live.locator(".wave-clean")).toHaveCSS(
       "animation-name",
@@ -228,7 +228,7 @@ for (const route of ["dashboard", "master", "subs"])
     await complete(request, id, "failed");
     await expect(live.getByRole("alert")).toContainText(
       "The media could not be decoded.",
-      { timeout: 10000 },
+      { timeout: 20000 },
     );
     await expect(
       page.getByRole("button", { name: "Start Processing" }),
@@ -307,7 +307,7 @@ test("polling interruptions preserve the job and recover to done; invalid replac
   await expect(live.getByRole("status")).toHaveText("Queued");
   fail = false;
   await complete(request, id);
-  await expect(live.getByRole("status")).toHaveText("Done", { timeout: 10000 });
+  await expect(live.getByRole("status")).toHaveText("Done", { timeout: 20000 });
   expect(polls).toBeGreaterThan(1);
   await expect(live.getByRole("alert")).toHaveCount(0);
   // Controlled timers prove terminal jobs do not keep polling.

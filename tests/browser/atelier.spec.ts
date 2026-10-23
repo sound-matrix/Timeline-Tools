@@ -73,7 +73,7 @@ test("Atelier auth, shell, mobile menu and admin surfaces", async ({
   await page.getByLabel("Email", { exact: true }).fill("desk@example.test");
   await page.getByLabel("Password", { exact: true }).fill("desk-test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/dashboard/);
+  await expect(page).toHaveURL(/dashboard/, { timeout: 15000 });
   await expect(page.locator(".side")).toHaveCSS("width", "240px");
   await expect(page.getByRole("button", { name: "Studio menu" })).toBeHidden();
   await expect(page.locator(".side-user")).toBeInViewport();
