@@ -7,7 +7,7 @@ export default async function Page() {
     <>
       <h2>Clean-up</h2>
       <p className="muted">
-        Upload, choose your settings and queue your job. Completed files are
+        Upload, choose your settings and start processing. Completed files are
         private to your account.
       </p>
       <JobForm type="clean" maxMb={plan.max_file_mb} userId={user.id} />

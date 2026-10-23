@@ -9,10 +9,18 @@ export function ProcessingWave() {
     </span>
   );
 }
-export default function StudioMotion({ type }: { type: string }) {
+export default function StudioMotion({
+  type,
+  active = false,
+}: {
+  type: string;
+  active?: boolean;
+}) {
   const [paused, setPaused] = useState(false);
   return (
-    <div className={"studio-motion" + (paused ? " motion-stopped" : "")}>
+    <div
+      className={"studio-motion" + (paused || active ? " motion-stopped" : "")}
+    >
       {type === "master" ? (
         <span className="studio-meter" aria-hidden="true">
           <i />
@@ -37,15 +45,20 @@ export default function StudioMotion({ type }: { type: string }) {
             ? "Illustrative meter · actual LUFS and true peak arrive in your report."
             : type === "subtitles"
               ? "Choose a language and review the generated subtitles before publishing."
-              : "Tune noise reduction to your recording. Progress appears in Recent jobs."}
+              : "Tune noise reduction to your recording. Follow your processing session below."}
         </p>
       </div>
       <button
         type="button"
-        aria-pressed={paused}
+        aria-pressed={paused || active}
+        disabled={active}
         onClick={() => setPaused(!paused)}
       >
-        {paused ? "Resume motion" : "Pause motion"}
+        {active
+          ? "Live session below"
+          : paused
+            ? "Resume motion"
+            : "Pause motion"}
       </button>
     </div>
   );
