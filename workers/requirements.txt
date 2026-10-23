@@ -1,0 +1,7 @@
+modal==1.6.2
+supabase==2.33.0
+httpx==0.28.1
+numpy==2.3.5
+soundfile==0.14.0
+noisereduce==3.0.3
+faster-whisper==1.2.1

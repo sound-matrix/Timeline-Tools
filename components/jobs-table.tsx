@@ -1,4 +1,6 @@
 import Link from "next/link";
+import JobsRefresh from "./jobs-refresh";
+import { ProcessingWave } from "./studio-motion";
 type Job = {
   id: string;
   file_name: string;
@@ -12,6 +14,11 @@ export default function JobsTable({ jobs }: { jobs: Job[] }) {
   return (
     <div className="card table-scroll">
       <h3>Recent jobs</h3>
+      <JobsRefresh
+        active={jobs.some(
+          (j) => j.status === "queued" || j.status === "processing",
+        )}
+      />
       {!jobs.length ? (
         <p className="muted">No jobs yet. Upload a file to get started.</p>
       ) : (
@@ -50,17 +57,28 @@ export default function JobsTable({ jobs }: { jobs: Job[] }) {
                   >
                     {j.status}
                   </span>
+                  {j.status === "processing" && (
+                    <span
+                      className="job-processing"
+                      title="Processing audio; completion time varies"
+                    >
+                      <ProcessingWave />
+                    </span>
+                  )}
                   {j.error && <p>{j.error}</p>}
                 </td>
                 <td>
                   {j.status === "done" && Array.isArray(j.output_paths)
-                    ? j.output_paths.map((_, i) => (
+                    ? j.output_paths.map((path, i) => (
                         <Link
                           className="btn sm ghost"
                           key={i}
                           href={`/api/jobs/${j.id}/download?index=${i}`}
                         >
-                          Download {i + 1}
+                          Download{" "}
+                          {typeof path === "string"
+                            ? path.split(".").pop()?.toUpperCase()
+                            : i + 1}
                         </Link>
                       ))
                     : "—"}

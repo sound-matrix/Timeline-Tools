@@ -7,3 +7,7 @@ supabase/.temp/
 
 playwright-report/
 test-results/
+
+.venv/
+__pycache__/
+*.pyc

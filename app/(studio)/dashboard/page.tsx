@@ -32,8 +32,8 @@ export default async function Page() {
         </div>
       </div>
       <p className="muted">
-        Uploads are saved securely. Jobs remain queued until Phase 1B processing
-        is enabled. No minutes are deducted yet.
+        Private uploads, processed in the cloud. Minutes are charged only on
+        success, rounded up per file.
       </p>
       <JobForm maxMb={plan.max_file_mb} userId={user.id} controls={false} />
       <JobsTable jobs={jobs ?? []} />
