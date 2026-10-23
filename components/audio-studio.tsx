@@ -433,6 +433,7 @@ export default function AudioStudio({
               <label>
                 Script
                 <textarea
+                  aria-label="Script"
                   rows={6}
                   value={script}
                   onChange={(e) => {
