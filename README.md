@@ -216,3 +216,9 @@ Master settings are strict nested objects: `loudness`, `limiter`, `compressor`, 
 Run `npm test`, `npm run typecheck`, `npm run build`, and `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m unittest discover -s workers/tests -v`. Schema cases are shared between Zod and Python in `tests/fixtures/processing-settings.json`; Python tests also exercise real ffmpeg custom targets, both knees, stage bypass, hot peaks, and silence. The thread limits keep numerical libraries from exhausting shared test-host resources; they do not change processing settings.
 
 After review/merge, the operator must redeploy the Modal worker to accept the new JSON schema. This PR does not deploy it. Until then, the old worker cannot process new-format master jobs.
+
+#### Phase 1C verification follow-up
+
+Whitespace-only numeric fields remain unselected, including strength and true-peak ceilings where zero would otherwise be a valid choice. The language select and job progress message have explicit accessible labels. Browser smoke coverage checks file-first submission blocking, preset editing, custom −18.5 LUFS/−1.5 dBTP with both soft knees and one EQ band, and the actual queued JSON payload.
+
+Loudness analysis and two-pass normalization use LRA 50 (FFmpeg's upper bound) so linear normalization preserves source dynamics where the selected LUFS/peak targets permit it. The previous internal LRA 11 could force dynamic normalization on a source with a wider loudness range even with the compressor disabled. A real 40-second loud/quiet fixture verifies that loudness-only processing preserves that contrast. Peak safety still applies, and the measured report remains authoritative. Additional worker tests cover LUFS/ceiling endpoints and legacy-job `invalid_settings` failure before storage access or charging.

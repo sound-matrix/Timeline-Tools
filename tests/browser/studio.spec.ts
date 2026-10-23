@@ -31,33 +31,105 @@ test("sign in, queue each tool, preserve settings UI, responsive layout, sign ou
   wave.writeUInt32LE(16, 40);
   for (const route of ["cleanup", "master", "subs"]) {
     await page.goto("/" + route);
-    await expect(
-      page.getByRole("button", { name: "Upload & queue job" }),
-    ).toBeDisabled();
+    const submit = page.getByRole("button", { name: "Upload & queue job" });
+    await expect(submit).toBeDisabled();
     await expect(page.getByText("Select your options above.")).toBeVisible();
-    if (route === "cleanup") {
-      await page.getByLabel("De-reverb").check();
-      await page.getByLabel("Strength", { exact: true }).fill("45");
-    }
-    if (route === "master") {
-      await page.getByLabel("Apply loudness", { exact: true }).check();
-      await page
-        .getByLabel("Target integrated loudness (LUFS)", { exact: true })
-        .fill("-18.5");
-    }
-    if (route === "subs") {
-      await page.getByLabel("Language", { exact: true }).selectOption("Telugu");
-      await page.getByLabel("SRT", { exact: true }).check();
-    }
+    await expect(page.locator('input[type="checkbox"]:checked')).toHaveCount(0);
     await page.getByLabel("Choose audio or video").setInputFiles({
       name: `browser-${route}.wav`,
       mimeType: "audio/wav",
       buffer: wave,
     });
-    await page.getByRole("button", { name: "Upload & queue job" }).click();
-    await expect(page.getByRole("status").first()).toContainText("Queued.", {
-      timeout: 30000,
-    });
+    await expect(submit).toBeDisabled();
+    if (route === "cleanup") {
+      await expect(page.getByLabel("Strength", { exact: true })).toBeDisabled();
+      await page.getByLabel("Noise removal").check();
+      await expect(submit).toBeDisabled();
+      await page.getByLabel("Strength", { exact: true }).fill("45");
+    }
+    if (route === "master") {
+      await page.getByLabel("Apply loudness", { exact: true }).check();
+      await page
+        .getByRole("button", { name: "Podcast -16", exact: true })
+        .click();
+      await expect(
+        page.getByLabel("Target integrated loudness (LUFS)", { exact: true }),
+      ).toHaveValue("-16");
+      await page
+        .getByLabel("Target integrated loudness (LUFS)", { exact: true })
+        .fill("-18.5");
+      await page.getByLabel("Apply limiter", { exact: true }).check();
+      await page
+        .getByLabel("True-peak ceiling (dBTP)", { exact: true })
+        .fill("-1.5");
+      await page
+        .getByLabel("Limiter release (ms)", { exact: true })
+        .fill("180");
+      await expect(submit).toBeDisabled();
+      await page
+        .getByRole("group", { name: "Limiter knee", exact: true })
+        .getByLabel("Soft", { exact: true })
+        .check();
+      await page.getByLabel("Apply compressor", { exact: true }).check();
+      for (const [label, value] of [
+        ["Threshold (dB)", "-22"],
+        ["Ratio", "3.5"],
+        ["Attack (ms)", "12"],
+        ["Compressor release (ms)", "220"],
+      ]) {
+        await page.getByLabel(label, { exact: true }).fill(value);
+      }
+      await page
+        .getByRole("group", { name: "Compressor knee", exact: true })
+        .getByLabel("Soft", { exact: true })
+        .check();
+      await page
+        .getByRole("group", { name: "Makeup gain", exact: true })
+        .getByLabel("Manual", { exact: true })
+        .check();
+      await expect(submit).toBeDisabled();
+      await page
+        .getByLabel("Manual makeup gain (dB)", { exact: true })
+        .fill("1.5");
+      await page.getByLabel("Apply eq", { exact: true }).check();
+      await expect(submit).toBeDisabled();
+      await page.getByLabel("60 Hz", { exact: true }).check();
+      await expect(submit).toBeDisabled();
+      await page.getByLabel("60 Hz gain (dB)", { exact: true }).fill("1.5");
+    }
+    if (route === "subs") {
+      await expect(page.getByLabel("Language", { exact: true })).toHaveValue(
+        "",
+      );
+      await page.getByLabel("Language", { exact: true }).selectOption("Telugu");
+      await expect(submit).toBeDisabled();
+      await page.getByLabel("SRT", { exact: true }).check();
+    }
+    await expect(submit).toBeEnabled();
+    const queued = page.waitForRequest(
+      (request) =>
+        request.url().endsWith("/api/jobs") && request.method() === "POST",
+    );
+    await submit.click();
+    const payload = (await queued).postDataJSON();
+    if (route === "master") {
+      expect(payload.settings.loudness).toEqual({ enabled: true, lufs: -18.5 });
+      expect(payload.settings.limiter).toEqual({
+        enabled: true,
+        ceiling: -1.5,
+        knee: "soft",
+        release: 180,
+      });
+      expect(payload.settings.compressor.knee).toBe("soft");
+      expect(
+        payload.settings.eq.bands.filter(
+          (band: { enabled: boolean }) => band.enabled,
+        ),
+      ).toHaveLength(1);
+    }
+    await expect(
+      page.getByRole("status", { name: "Job progress" }),
+    ).toContainText("Queued.", { timeout: 30000 });
   }
   await page.goto("/dashboard");
   for (const route of ["cleanup", "master", "subs"])

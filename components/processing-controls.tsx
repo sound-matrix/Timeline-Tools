@@ -114,6 +114,7 @@ export default function ProcessingControls({
         <label>
           Language
           <select
+            aria-label="Language"
             required
             value={String(values.language || "")}
             onChange={(e) => set("language", e.target.value)}

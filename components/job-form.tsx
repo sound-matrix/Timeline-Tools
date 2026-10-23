@@ -146,7 +146,9 @@ export default function JobForm({
                 ? "Choose a file to continue."
                 : "Your selected options are ready."}
           </p>
-          <p role="status">{message}</p>
+          <p role="status" aria-label="Job progress">
+            {message}
+          </p>
         </div>
       </fieldset>
       {controls && <InputPreview file={file} />}

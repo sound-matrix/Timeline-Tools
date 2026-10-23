@@ -89,7 +89,7 @@ class Pipelines(unittest.TestCase):
         self.assertEqual(outputs[0].name,'clean.wav')
         self.assertAlmostEqual(duration(outputs[0]),5,places=1)
     def test_master_measured_target_and_ceiling(self):
-        for lufs, ceiling, knee in [(-18.5, -1.5, 'soft'), (-24, -2.3, 'hard')]:
+        for lufs, ceiling, knee in [(-18.5, -1.5, 'soft'), (-24, -2.3, 'hard'), (-70, -6, 'soft'), (-5, 0, 'hard')]:
             s = master_settings()
             s['loudness']['lufs'] = lufs
             s['limiter'].update(ceiling=ceiling, knee=knee)
@@ -135,6 +135,22 @@ class Pipelines(unittest.TestCase):
             outputs = process(self.source, self.folder, 'master', s)
             self.assertLessEqual(json.loads(outputs[1].read_text())['true_peak_dbtp'], -5.45)
 
+    def test_loudness_only_preserves_chosen_source_dynamics(self):
+        import numpy as np
+        import soundfile as sf
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+            r'aevalsrc=if(lt(mod(t\,20)\,10)\,0.4\,0.07)*sin(2*PI*1000*t):s=48000:d=40',
+            str(self.source)], check=True)
+        s = {key: {'enabled': False} for key in master_settings()}
+        s['loudness'] = dict(enabled=True, lufs=-18.5)
+        output = process(self.source, self.folder, 'master', s)[0]
+        def contrast(path):
+            samples, rate = sf.read(path, always_2d=True)
+            loud = np.sqrt(np.mean(samples[3*rate:6*rate] ** 2))
+            quiet = np.sqrt(np.mean(samples[13*rate:16*rate] ** 2))
+            return 20 * math.log10(loud / quiet)
+        self.assertAlmostEqual(contrast(output), contrast(self.source), delta=.2)
+
     def test_silence_report_is_json_safe(self):
         subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','anullsrc=r=48000:cl=stereo','-t','2',str(self.source)],check=True)
         outputs=process(self.source,self.folder,'master',master_settings())
@@ -146,6 +162,16 @@ class Pipelines(unittest.TestCase):
 
 
 class WorkerRecovery(unittest.TestCase):
+    def test_old_master_fails_invalid_settings_before_storage(self):
+        from workers.timeline_tools_worker import handle_job
+        from unittest.mock import MagicMock
+        db = MagicMock()
+        job = dict(id='legacy-job', type='master', settings=dict(eq=[0]*5, threshold=-24, ratio=3, ceiling='-1', lufs='-14'))
+        with patch('workers.timeline_tools_worker.transfer_input') as transfer:
+            handle_job(db, job, 'worker', 'https://example.invalid', 'secret')
+        transfer.assert_not_called()
+        db.rpc.assert_called_once_with('worker_fail', {'p_job_id':'legacy-job', 'p_worker_id':'worker', 'p_code':'invalid_settings'})
+
     def test_completion_response_loss_keeps_successful_outputs(self):
         from workers.timeline_tools_worker import handle_job
         from unittest.mock import MagicMock

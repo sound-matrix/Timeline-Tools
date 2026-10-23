@@ -58,3 +58,38 @@ test("nonfinite master numbers are rejected", () => {
     );
   }
 });
+
+test("whitespace numbers stay missing instead of silently selecting zero", () => {
+  for (const blank of ["", " ", "\t\n"]) {
+    const clean = processingSettings("clean", { noise: true, strength: blank });
+    assert.equal(clean.strength, undefined);
+    assert.equal(
+      jobSchema.safeParse({ type: "clean", settings: clean }).success,
+      false,
+    );
+    const settings = processingSettings("master", {
+      limiter: true,
+      ceiling: blank,
+      limiterKnee: "soft",
+      limiterRelease: "180",
+    });
+    assert.equal(settings.limiter.ceiling, undefined);
+    assert.equal(
+      jobSchema.safeParse({ type: "master", settings }).success,
+      false,
+    );
+    assert.equal(
+      jobSchema.safeParse(
+        JSON.parse(JSON.stringify({ type: "master", settings })),
+      ).success,
+      false,
+    );
+  }
+  const settings = processingSettings("master", {
+    limiter: true,
+    ceiling: "0",
+    limiterKnee: "soft",
+    limiterRelease: "180",
+  });
+  assert.equal(jobSchema.safeParse({ type: "master", settings }).success, true);
+});
