@@ -199,3 +199,20 @@ npm run test:e2e -- tests/browser/motion.spec.ts
 `tests/worker-db.test.mjs` runs all migrations and the existing RLS fixture against disposable PGlite PostgreSQL with minimal Supabase auth/storage schema stubs. It checks RPC denial for anon/users, protected column grants, claim identity, duplicate completion/no double charging, output folder checks, insufficient credits, competing preflight jobs, failure sanitization, timeout and own-row/output reads. It does not replace tests against real Supabase Storage or simultaneous multi-connection load. `npm run test:rls` remains available for the original RLS suite against a disposable real Supabase database.
 
 Python tests exercise real ffmpeg clean/master/probe pipelines, silence-safe measurements, all four ASR language hints and SRT/VTT formatting (ASR inference mocked), schema rejection, and preservation of successful outputs after a lost completion response. Browser motion tests cover mobile/desktop overflow, pause/resume, navigation cleanup, reduced motion, static no-JS content and billing preview bounds. Live upload → Modal → Supabase → download smoke tests require deployment credentials and a confirmed test user; do not claim them as passed from the local tests.
+
+### Phase 1C: user-selected processing
+
+Job forms (including dashboard clean-up) start with every processing toggle off and every numeric/language/format choice empty. Submit requires a file and valid explicit choices. Preset chips only fill the loudness field after a click; they never enable a stage. Turning a stage off removes its parameters from the queued settings.
+
+Master settings are strict nested objects: `loudness`, `limiter`, `compressor`, and `eq`. Each is either `{ "enabled": false }` or an enabled object with all required parameters. At least one stage must be enabled. `/api/jobs` uses `jobSchema`, with the same validation mirrored in Python. Legacy flat master settings fail with `invalid_settings`; no migration or automatic compatibility defaults are applied.
+
+- Loudness: numeric `lufs` −70…−5. Limiter: numeric `ceiling` −6…0 dBTP, `knee` soft/hard, `release` 50…1000 ms.
+- Compressor: `threshold` −60…0 dB, `ratio` 1…20, `attack` 0.01…2000 ms, `release` 0.01…9000 ms, `knee` soft/hard, and `makeup` `{ "mode": "auto" }` or `{ "mode": "manual", "gain": -24…24 }`. Auto makeup estimates half the gain reduction at 0 dBFS.
+- EQ: exactly five `bands` at 60/250/1000/4000/12000 Hz, each disabled or enabled with `gain` −12…12 dB (Q=1). Enabling EQ requires at least one enabled band.
+- Worker order: enabled EQ bands → optional compressor → optional measured two-pass loudnorm → optional four-times oversampled limiter. Compressor knee maps to ffmpeg `acompressor` knee 2.828427 (soft) / 1 (hard). The limiter combines the same knee-controlled high-ratio compressor with `alimiter` (auto-level off), measures the final 48 kHz PCM true peak, and attenuates any overshoot. With loudness enabled and the limiter off, loudnorm still has its inherent 0 dBTP safety bound.
+- Every master returns measured LUFS/true peak, submitted settings, and requested targets (`null` for disabled stages). Silence reports null measurements. Peak limiting can prevent reaching the requested LUFS; measured results are authoritative.
+- Clean-up requires at least one feature and integer strength 0…100. Subtitles require a language and at least one of SRT/VTT.
+
+Run `npm test`, `npm run typecheck`, `npm run build`, and `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m unittest discover -s workers/tests -v`. Schema cases are shared between Zod and Python in `tests/fixtures/processing-settings.json`; Python tests also exercise real ffmpeg custom targets, both knees, stage bypass, hot peaks, and silence. The thread limits keep numerical libraries from exhausting shared test-host resources; they do not change processing settings.
+
+After review/merge, the operator must redeploy the Modal worker to accept the new JSON schema. This PR does not deploy it. Until then, the old worker cannot process new-format master jobs.
