@@ -153,6 +153,22 @@ class Pipelines(unittest.TestCase):
             outputs = process(self.source, self.folder, 'master', s)
             self.assertLessEqual(json.loads(outputs[1].read_text())['true_peak_dbtp'], -5.45)
 
+    def test_loudness_only_preserves_chosen_source_dynamics(self):
+        import numpy as np
+        import soundfile as sf
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+            r'aevalsrc=if(lt(mod(t\,20)\,10)\,0.4\,0.07)*sin(2*PI*1000*t):s=48000:d=40',
+            str(self.source)], check=True)
+        s = {key: {'enabled': False} for key in master_settings()}
+        s['loudness'] = dict(enabled=True, lufs=-18.5)
+        output = process(self.source, self.folder, 'master', s)[0]
+        def contrast(path):
+            samples, rate = sf.read(path, always_2d=True)
+            loud = np.sqrt(np.mean(samples[3*rate:6*rate] ** 2))
+            quiet = np.sqrt(np.mean(samples[13*rate:16*rate] ** 2))
+            return 20 * math.log10(loud / quiet)
+        self.assertAlmostEqual(contrast(output), contrast(self.source), delta=.2)
+
     def test_silence_report_is_json_safe(self):
         subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','anullsrc=r=48000:cl=stereo','-t','2',str(self.source)],check=True)
         outputs=process(self.source,self.folder,'master',master_settings())

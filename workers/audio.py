@@ -146,7 +146,7 @@ def clean(source, folder, s):
 def measure(source, target, peak):
     result = run(['ffmpeg', '-hide_banner', '-nostdin', '-protocol_whitelist', 'file,pipe',
                   '-i', str(source), '-map', '0:a:0', '-af',
-                  f'loudnorm=I={target}:TP={peak}:LRA=11:print_format=json', '-f', 'null', '-'])
+                  f'loudnorm=I={target}:TP={peak}:LRA=50:print_format=json', '-f', 'null', '-'])
     match = re.search(r'\{\s*"input_i".*?\}', result.stderr, re.S)
     if not match:
         raise MediaError('Measurement failed')
@@ -179,7 +179,9 @@ def master(source, folder, s):
         m = measure(current, target, peak_target)
         fields = ('input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset')
         if all(math.isfinite(float(m[k])) for k in fields):
-            norm = (f'loudnorm=I={target}:TP={peak_target}:LRA=11:measured_I={m["input_i"]}'
+            # Avoid narrowing dynamics to a fixed LRA when linear gain can reach
+            # the requested target. Compressor/limiter remain explicit choices.
+            norm = (f'loudnorm=I={target}:TP={peak_target}:LRA=50:measured_I={m["input_i"]}'
                     f':measured_TP={m["input_tp"]}:measured_LRA={m["input_lra"]}'
                     f':measured_thresh={m["input_thresh"]}:offset={m["target_offset"]}:linear=true')
             normalized = folder / 'normalized.wav'

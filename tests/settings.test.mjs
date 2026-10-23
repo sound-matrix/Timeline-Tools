@@ -105,3 +105,46 @@ test("cleanup dropdowns require explicit method and amounts and map Off to bypas
   );
   assert.equal(valid({ voice: true }), true);
 });
+
+test("whitespace numbers stay missing instead of silently selecting zero", () => {
+  for (const blank of ["", " ", "\t\n"]) {
+    for (const stage of ["noise", "hum", "reverb"]) {
+      const clean = processingSettings("clean", {
+        [stage]: true,
+        [`${stage}Amount`]: blank,
+        noiseMethod: "speech",
+        voice: true,
+      });
+      assert.equal(clean[stage].enabled, true);
+      assert.equal(clean[stage].amount, undefined);
+      assert.equal(
+        jobSchema.safeParse({ type: "clean", settings: clean }).success,
+        false,
+      );
+    }
+    const settings = processingSettings("master", {
+      limiter: true,
+      ceiling: blank,
+      limiterKnee: "soft",
+      limiterRelease: "180",
+    });
+    assert.equal(settings.limiter.ceiling, undefined);
+    assert.equal(
+      jobSchema.safeParse({ type: "master", settings }).success,
+      false,
+    );
+    assert.equal(
+      jobSchema.safeParse(
+        JSON.parse(JSON.stringify({ type: "master", settings })),
+      ).success,
+      false,
+    );
+  }
+  const settings = processingSettings("master", {
+    limiter: true,
+    ceiling: "0",
+    limiterKnee: "soft",
+    limiterRelease: "180",
+  });
+  assert.equal(jobSchema.safeParse({ type: "master", settings }).success, true);
+});

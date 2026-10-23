@@ -119,7 +119,9 @@ test("upload-first cleanup desk, independent choices, live wave and download on 
   );
   await page.getByRole("button", { name: "Start Processing" }).click();
   const liveUpload = page.getByRole("region", { name: "Live processing" });
-  await expect(liveUpload.getByRole("status")).toContainText("Uploading");
+  await expect(
+    liveUpload.getByRole("status", { name: "Job progress" }),
+  ).toContainText("Uploading");
   await expect(
     page.getByRole("button", { name: "Uploading…", exact: true }),
   ).toBeDisabled();

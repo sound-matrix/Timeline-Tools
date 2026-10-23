@@ -152,7 +152,12 @@ export default function ProcessingStatus({
       <div className="processing-heading">
         <div>
           <p className="eyebrow">YOUR PROCESSING SESSION</p>
-          <h3 role="status" aria-live="polite" aria-atomic="true">
+          <h3
+            role="status"
+            aria-label="Job progress"
+            aria-live="polite"
+            aria-atomic="true"
+          >
             {labels[state.status]}
             {state.status === "uploading" && state.uploadPercent !== undefined
               ? ` · ${state.uploadPercent}%`

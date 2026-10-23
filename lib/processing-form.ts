@@ -3,7 +3,7 @@ export type Choices = Record<string, string | boolean>;
 // Empty numeric fields stay missing: Number("") must never silently choose zero.
 export function processingSettings(type: JobType, values: Choices) {
   const n = (key: string) =>
-    typeof values[key] === "string" && values[key] !== ""
+    typeof values[key] === "string" && String(values[key]).trim() !== ""
       ? Number(values[key])
       : undefined;
   if (type === "clean") {
