@@ -5,7 +5,7 @@ process.env.DESK_FIXTURE = "1";
 
 export default defineConfig({
   ...base,
-  testMatch: "desk.spec.ts",
+  testMatch: ["desk.spec.ts", "audio-studio.spec.ts"],
   webServer: [
     {
       command: "node tests/fixtures/studio-api.mjs",

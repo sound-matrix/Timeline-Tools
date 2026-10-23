@@ -43,7 +43,7 @@ export default function JobsTable({ jobs }: { jobs: Job[] }) {
                     IST
                   </small>
                 </td>
-                <td>{j.type}</td>
+                <td>{j.type === "studio" ? "Audio Studio" : j.type}</td>
                 <td>
                   <span
                     className={

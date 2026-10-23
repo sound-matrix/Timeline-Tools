@@ -135,9 +135,49 @@ export const subtitlesSchema = z
       .max(2),
   })
   .strict();
+// Studio choices never coerce blanks or infer an enabled stage.
+export const studioSchema = z
+  .object({
+    dialogue_lufs: z.number().min(-70).max(-5),
+    master_lufs: z.number().min(-70).max(-5),
+    has_bed: z.boolean(),
+    ducking_db: z.number().min(0).max(40).optional(),
+    room_tone: z.discriminatedUnion("enabled", [
+      disabled,
+      z
+        .object({
+          enabled: z.literal(true),
+          amount: z.number().min(0).max(100),
+        })
+        .strict(),
+    ]),
+    subtitles: z.discriminatedUnion("enabled", [
+      disabled,
+      z
+        .object({
+          enabled: z.literal(true),
+          formats: z
+            .array(z.enum(["srt", "vtt"]))
+            .min(1)
+            .max(2)
+            .refine(
+              (f) => new Set(f).size === f.length,
+              "Choose each format once.",
+            ),
+        })
+        .strict(),
+    ]),
+  })
+  .strict()
+  .refine(
+    (s) =>
+      s.has_bed ? s.ducking_db !== undefined : s.ducking_db === undefined,
+    "Choose ducking when a music/SFX bed is present.",
+  );
 export const jobSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("clean"), settings: cleanSchema }),
   z.object({ type: z.literal("master"), settings: masterSchema }),
   z.object({ type: z.literal("subtitles"), settings: subtitlesSchema }),
+  z.object({ type: z.literal("studio"), settings: studioSchema }),
 ]);
-export type JobType = "clean" | "master" | "subtitles";
+export type JobType = "clean" | "master" | "subtitles" | "studio";

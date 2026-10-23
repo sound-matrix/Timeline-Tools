@@ -36,6 +36,7 @@ const profile = {
 };
 const plan = { id: "test", name: "Test plan", max_file_mb: 25 };
 let jobs = [],
+  reports = {},
   requests = [];
 
 createServer(async (req, res) => {
@@ -61,11 +62,13 @@ createServer(async (req, res) => {
   }
   if (url.pathname === "/__reset") {
     jobs = [];
+    reports = {};
     requests = [];
     return send({});
   }
   if (url.pathname === "/__requests") return send(requests);
   if (url.pathname === "/__job") {
+    if (body.report) reports[body.id] = body.report;
     if (req.method === "POST")
       jobs = jobs.map((job) =>
         job.id === body.id ? { ...job, ...body } : job,
@@ -112,6 +115,10 @@ createServer(async (req, res) => {
     });
   if (url.pathname === "/auth/v1/user") return send(user);
   if (url.pathname === "/auth/v1/logout") return send({});
+  if (url.pathname.endsWith("/alignment-report.json")) {
+    const id = url.pathname.split("/").at(-2);
+    return reports[id] ? send(reports[id]) : send({ error: "missing" }, 404);
+  }
   if (url.pathname.startsWith("/storage/v1/object/"))
     return send({ Key: "uploads/test.wav", Id: jobId });
   if (url.pathname === "/rest/v1/profiles") return send(profile);

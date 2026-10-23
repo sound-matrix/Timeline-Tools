@@ -19,7 +19,9 @@ export async function POST(request: Request) {
     !body.file_name.length ||
     typeof body.input_path !== "string" ||
     !body.input_path.startsWith(user.id + "/") ||
-    !extensions.includes(body.input_path.split(".").pop()?.toLowerCase())
+    !(parsed.data.type === "studio"
+      ? new RegExp(`^${user.id}/[0-9a-f-]+\\.zip$`).test(body.input_path)
+      : extensions.includes(body.input_path.split(".").pop()?.toLowerCase()))
   )
     return NextResponse.json(
       { error: "Invalid file or processing settings" },

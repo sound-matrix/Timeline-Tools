@@ -1,0 +1,47 @@
+import { studioContext } from "@/lib/studio";
+import AudioStudio from "@/components/audio-studio";
+import ToolJobs from "@/components/tool-jobs";
+import { jobDownloads, type ProcessingState } from "@/lib/job-status";
+
+export default async function Page() {
+  const { user, plan, db } = await studioContext();
+  const { data: last } = await db
+    .from("jobs")
+    .select("id,file_name,status,error,duration_sec,output_paths")
+    .eq("user_id", user.id)
+    .eq("type", "studio")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const initial: ProcessingState | null = last
+    ? {
+        id: last.id,
+        fileName: last.file_name,
+        status: last.status,
+        error: last.error,
+        durationSec: last.duration_sec,
+        downloads:
+          last.status === "done"
+            ? jobDownloads(last.id, user.id, last.output_paths)
+            : [],
+      }
+    : null;
+  return (
+    <>
+      <div className="audio-studio-heading">
+        <p className="eyebrow">YOUR SOUND, IN SYNC</p>
+        <h2>Audio Studio</h2>
+        <p className="muted">
+          Bring your guide, voices and script together. Align, mix and master in
+          one private workspace.
+        </p>
+      </div>
+      <AudioStudio
+        userId={user.id}
+        maxMb={plan.max_file_mb}
+        initial={initial}
+      />
+      <ToolJobs userId={user.id} type="studio" />
+    </>
+  );
+}

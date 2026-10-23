@@ -143,7 +143,9 @@ export default function ProcessingStatus({
       ? "Cleaning…"
       : type === "master"
         ? "Mastering…"
-        : "Transcribing…";
+        : type === "studio"
+          ? "Aligning, mixing & mastering…"
+          : "Transcribing…";
   return (
     <section
       className={`card processing-panel${paused ? " live-paused" : ""}`}
