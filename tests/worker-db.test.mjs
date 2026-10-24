@@ -346,3 +346,140 @@ test("studio migration: ZIP ownership, compact settings and normal charging life
     await db.close();
   }
 });
+
+test("DAW revision locks, ownership, immutable sources and first-export billing", async () => {
+  const db = await database();
+  try {
+    await db.query(
+      "insert into auth.users(id,email,raw_user_meta_data) values($1,'a@test','{}'),($2,'b@test','{}')",
+      [a, b],
+    );
+    const parent = await queue(db, a, "studio");
+    await rpc(db, "worker_claim", ["parent-worker"]);
+    await rpc(db, "worker_prepare", [parent, "parent-worker", 60]);
+    const arrangement = {
+      version: 1,
+      job_id: parent,
+      clips: [{ id: "c0", duration: 121 }],
+      lines: [{ index: 0, text: "hello" }],
+      duration: 121,
+    };
+    await db.query(
+      "insert into public.studio_arrangements(job_id,user_id,arrangement_path,arrangement) values($1,$2,$3,$4)",
+      [
+        parent,
+        a,
+        `${a}/${parent}/arrangement-r1.json`,
+        JSON.stringify(arrangement),
+      ],
+    );
+    await rpc(db, "worker_complete", [
+      parent,
+      "parent-worker",
+      await output(db, parent),
+    ]);
+    await db.exec(
+      `reset role; select set_config('request.jwt.claim.sub','${a}',false);set role authenticated;`,
+    );
+    assert.equal(
+      (
+        await rpc(db, "save_arrangement", [
+          parent,
+          1,
+          JSON.stringify(arrangement),
+        ])
+      )[0].save_arrangement,
+      2,
+    );
+    await assert.rejects(
+      rpc(db, "save_arrangement", [parent, 1, JSON.stringify(arrangement)]),
+      /Revision conflict/,
+    );
+    await assert.rejects(
+      rpc(db, "save_arrangement", [
+        parent,
+        2,
+        JSON.stringify({ ...arrangement, clips: [] }),
+      ]),
+      /Invalid arrangement/,
+    );
+    await db.exec(
+      `reset role; select set_config('request.jwt.claim.sub','${b}',false);set role authenticated;`,
+    );
+    assert.equal(
+      (await db.query("select * from public.studio_arrangements")).rows.length,
+      0,
+    );
+    await assert.rejects(
+      rpc(db, "save_arrangement", [parent, 2, JSON.stringify(arrangement)]),
+      /unavailable/,
+    );
+    await assert.rejects(
+      db.query("update public.studio_arrangements set exports_count=0"),
+      /permission denied/,
+    );
+    await db.exec(
+      `reset role; select set_config('request.jwt.claim.sub','${a}',false);set role authenticated;`,
+    );
+    async function exportJob(cost) {
+      return (
+        await db.query(
+          "insert into public.jobs(file_name,input_path,type,parent_job_id,confirmed_export_minutes,settings) values('export','placeholder','studio_export',$1,$2,'{\"revision\":2}') returning id",
+          [parent, cost],
+        )
+      ).rows[0].id;
+    }
+    const first = await exportJob(0);
+    await assert.rejects(exportJob(0), /confirm again/);
+    const second = await exportJob(3);
+    await db.exec("reset role;set role service_role;");
+    await rpc(db, "worker_claim", ["export-1"]);
+    await rpc(db, "worker_prepare", [first, "export-1", 121]);
+    await rpc(db, "worker_claim", ["export-2"]);
+    await rpc(db, "worker_prepare", [second, "export-2", 121]);
+    const free = (
+      await db.query(
+        "select id,export_free from public.jobs where parent_job_id=$1 order by created_at,id",
+        [parent],
+      )
+    ).rows;
+    assert.equal(free.filter((r) => r.export_free).length, 1);
+    await rpc(db, "worker_complete", [
+      first,
+      "export-1",
+      await output(db, first),
+    ]);
+    await rpc(db, "worker_complete", [
+      second,
+      "export-2",
+      await output(db, second),
+    ]);
+    const costs = (
+      await db.query(
+        "select minutes_charged from public.jobs where parent_job_id=$1 order by minutes_charged",
+        [parent],
+      )
+    ).rows.map((r) => Number(r.minutes_charged));
+    assert.deepEqual(costs, [0, 3]);
+    assert.equal(
+      (
+        await db.query(
+          "select exports_count from public.studio_arrangements where job_id=$1",
+          [parent],
+        )
+      ).rows[0].exports_count,
+      2,
+    );
+    assert.equal(
+      (
+        await db.query(
+          "select count(*)::int n from public.studio_arrangement_versions where job_id=$1",
+          [parent],
+        )
+      ).rows[0].n,
+      2,
+    );
+  } finally {
+    await db.close();
+  }
+});

@@ -17,7 +17,7 @@ export async function GET(
     );
   const { data: job, error } = await db
     .from("jobs")
-    .select("status,error,output_paths,duration_sec")
+    .select("status,error,error_code,error_detail,output_paths,duration_sec")
     .eq("id", id)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -34,6 +34,8 @@ export async function GET(
   const snapshot = jobStatusSchema.safeParse({
     status: job.status,
     error: job.error,
+    errorCode: job.error_code ?? null,
+    errorDetail: job.error_detail ?? null,
     durationSec:
       typeof job.duration_sec === "number" &&
       Number.isFinite(job.duration_sec) &&

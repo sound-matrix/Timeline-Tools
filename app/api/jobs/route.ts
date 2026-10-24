@@ -12,6 +12,72 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
   const parsed = jobSchema.safeParse(body);
+  if (parsed.success && parsed.data.type === "studio_export") {
+    if (!Number.isInteger(body.expected_cost) || body.expected_cost < 0)
+      return NextResponse.json(
+        { error: "Confirm the export cost" },
+        { status: 400 },
+      );
+    const { data: parent } = await db
+      .from("jobs")
+      .select("id")
+      .eq("id", body.parent_job_id)
+      .eq("user_id", user.id)
+      .eq("type", "studio")
+      .eq("status", "done")
+      .maybeSingle();
+    if (!parent)
+      return NextResponse.json(
+        { error: "Parent unavailable" },
+        { status: 404 },
+      );
+    const { data, error } = await db
+      .from("jobs")
+      .insert({
+        ...parsed.data,
+        parent_job_id: parent.id,
+        confirmed_export_minutes: body.expected_cost,
+        file_name: "Studio export",
+        input_path: `${user.id}/${parent.id}/export-${crypto.randomUUID()}.json`,
+      })
+      .select("id")
+      .single();
+    if (error) {
+      if (error.code === "40001") {
+        const { data: active } = await db
+          .from("jobs")
+          .select("id")
+          .eq("parent_job_id", parent.id)
+          .eq("user_id", user.id)
+          .eq("export_free", true)
+          .in("status", ["queued", "processing", "done"])
+          .limit(1);
+        const { data: arr } = await db
+          .from("studio_arrangements")
+          .select("arrangement")
+          .eq("job_id", parent.id)
+          .eq("user_id", user.id)
+          .maybeSingle();
+        return NextResponse.json(
+          {
+            error: "Session or export cost changed. Review and confirm again.",
+            reason: error.message?.includes("price")
+              ? "price_changed"
+              : "revision_conflict",
+            expected_cost: active?.length
+              ? Math.ceil((arr?.arrangement.duration ?? 0) / 60)
+              : 0,
+          },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json(
+        { error: "Could not queue export" },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json(data, { status: 201 });
+  }
   if (
     !parsed.success ||
     typeof body.file_name !== "string" ||

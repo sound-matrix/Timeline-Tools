@@ -48,18 +48,14 @@ export function parseScript(input: string): ScriptLine[] {
       if (!match) throw new Error("Check the script timestamps.");
       const start = clock(match[1]),
         end = clock(match[2]);
-      if (
-        !Number.isFinite(end) ||
-        end <= start ||
-        end > 86400 ||
-        (lines.length && start < (lines.at(-1)?.end ?? 0))
-      )
+      if (!Number.isFinite(end) || end <= start || end > 86400)
         throw new Error(
           "Script cues must be ordered, non-overlapping and shorter than 24 hours.",
         );
       add(rows.slice(i + 1).join(" "), start, end);
     }
   } else for (const line of text.split("\n")) add(line);
+  if (lines[0]?.start !== undefined) lines.sort((a, b) => a.start! - b.start!);
   if (
     !lines.length ||
     lines.length > 300 ||

@@ -1,3 +1,4 @@
+import { exportSettingsSchema } from "./arrangement.ts";
 import { z } from "zod";
 export const extensions = [
   "wav",
@@ -138,6 +139,9 @@ export const subtitlesSchema = z
 // Studio choices never coerce blanks or infer an enabled stage.
 export const studioSchema = z
   .object({
+    line_gap_ms: z.number().int().min(0).max(5000),
+    match_strictness: z.enum(["strict", "normal", "loose"]),
+    bed_fit: z.enum(["trim", "loop", "extend"]).optional(),
     dialogue_lufs: z.number().min(-70).max(-5),
     master_lufs: z.number().min(-70).max(-5),
     has_bed: z.boolean(),
@@ -171,7 +175,9 @@ export const studioSchema = z
   .strict()
   .refine(
     (s) =>
-      s.has_bed ? s.ducking_db !== undefined : s.ducking_db === undefined,
+      s.has_bed
+        ? s.ducking_db !== undefined && s.bed_fit !== undefined
+        : s.ducking_db === undefined && s.bed_fit === undefined,
     "Choose ducking when a music/SFX bed is present.",
   );
 export const jobSchema = z.discriminatedUnion("type", [
@@ -179,5 +185,10 @@ export const jobSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("master"), settings: masterSchema }),
   z.object({ type: z.literal("subtitles"), settings: subtitlesSchema }),
   z.object({ type: z.literal("studio"), settings: studioSchema }),
+  z.object({
+    type: z.literal("studio_export"),
+    settings: exportSettingsSchema,
+  }),
 ]);
-export type JobType = "clean" | "master" | "subtitles" | "studio";
+export type JobType =
+  "clean" | "master" | "subtitles" | "studio" | "studio_export";

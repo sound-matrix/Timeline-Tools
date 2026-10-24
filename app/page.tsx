@@ -259,8 +259,7 @@ export default function Home() {
               Put your story into words ↗
             </Link>
             <p className="future-note">
-              Bring guide tracks, dubbed voices and scripts together in Audio
-              Studio.
+              Bring your script and audio clips together in Audio Studio.
             </p>
           </div>
           <div className="timeline-visual scene-card">

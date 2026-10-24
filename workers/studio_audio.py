@@ -1,46 +1,37 @@
-"""CPU-only Audio Studio: bounded bundles, acoustic timing and deterministic mixing.
+"""Script-driven Studio. Probe -> language gate -> prepare -> ASR -> match -> arrange.
 
-Confidence is an evidence score, never a probability or an accuracy guarantee.
-No model downloads, transcription, voice cloning or network media protocols.
+No guide is read, no time stretching. ASR models are lazy-loaded and test-injectable.
 """
 import json
 import math
 import re
+import unicodedata
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
-
-from workers.audio import MediaError, duration, ffmpeg, master, run, write_subtitles
-
+from workers.audio import duration, ffmpeg, master, run, write_subtitles
 MAX_BYTES = 250 * 1024 * 1024
-MEDIA = {'wav', 'mp3', 'm4a', 'flac', 'aac', 'ogg', 'mp4', 'mov', 'mkv', 'webm'}
-NOTE = ('Heuristic timing from script order, guide speech regions and dub speech regions. '
-        'Confidence measures acoustic coverage, boundary evidence and stretch; it is not a calibrated probability. '
-        'No word recognition or ±150 ms guarantee. Review every line before publishing. The guide is not mixed into dialogue.')
+MEDIA = {'wav','mp3','m4a','flac','aac','ogg','mp4','mov','mkv','webm'}
+NOTE = 'script-match-v1: text similarity, speaker evidence and monotonic clip order. Review low-confidence and missing lines. No time-stretch.'
 
+class LanguageMismatch(ValueError):
+    def __init__(self, detail):
+        super().__init__('language_mismatch')
+        self.detail = detail
 
 def validate_studio(s):
-    def shape(v, keys):
-        return isinstance(v, dict) and set(v) == set(keys)
-    def number(v, low, high):
-        return type(v) in (int, float) and math.isfinite(v) and low <= v <= high
-    if not isinstance(s, dict):
-        return False
-    keys = ['dialogue_lufs', 'master_lufs', 'has_bed', 'room_tone', 'subtitles']
-    if s.get('has_bed') is True:
-        keys += ['ducking_db']
-    if not shape(s, keys) or type(s['has_bed']) is not bool:
-        return False
-    room, subs = s['room_tone'], s['subtitles']
-    return (number(s['dialogue_lufs'], -70, -5) and number(s['master_lufs'], -70, -5)
-            and (not s['has_bed'] or number(s['ducking_db'], 0, 40))
-            and (shape(room, ['enabled']) and room['enabled'] is False or
-                 shape(room, ['enabled', 'amount']) and room['enabled'] is True and number(room['amount'], 0, 100))
-            and (shape(subs, ['enabled']) and subs['enabled'] is False or
-                 shape(subs, ['enabled', 'formats']) and subs['enabled'] is True
-                 and isinstance(subs['formats'], list) and 1 <= len(subs['formats']) <= 2
-                 and all(f in ('srt', 'vtt') for f in subs['formats']) and len(set(subs['formats'])) == len(subs['formats'])))
-
+    if not isinstance(s, dict): return False
+    keys = {'line_gap_ms','match_strictness','dialogue_lufs','master_lufs','has_bed','room_tone','subtitles'}
+    if s.get('has_bed') is True: keys |= {'ducking_db','bed_fit'}
+    if set(s) != keys or type(s.get('has_bed')) is not bool: return False
+    def num(v,lo,hi): return type(v) in (int,float) and math.isfinite(v) and lo <= v <= hi
+    room,sub = s['room_tone'],s['subtitles']
+    return (type(s['line_gap_ms']) is int and num(s['line_gap_ms'],0,5000)
+      and s['match_strictness'] in ('strict','normal','loose')
+      and num(s['dialogue_lufs'],-70,-5) and num(s['master_lufs'],-70,-5)
+      and (not s['has_bed'] or num(s['ducking_db'],0,40) and s['bed_fit'] in ('trim','loop','extend'))
+      and isinstance(room,dict) and (type(room.get('enabled')) is bool and room=={'enabled':False} or set(room)=={'enabled','amount'} and room['enabled'] is True and num(room['amount'],0,100))
+      and isinstance(sub,dict) and (type(sub.get('enabled')) is bool and sub=={'enabled':False} or set(sub)=={'enabled','formats'} and sub['enabled'] is True and isinstance(sub['formats'],list) and 1<=len(sub['formats'])<=2 and len(set(sub['formats']))==len(sub['formats']) and all(f in ('srt','vtt') for f in sub['formats'])))
 
 def parse_script(text):
     if len(text.encode('utf-8')) > 65536:
@@ -71,90 +62,16 @@ def parse_script(text):
                     result = result * 60 + float(part)
                 return result
             start, end = clock(match[1]), clock(match[2])
-            if not 0 <= start < end <= 86400 or lines and start < lines[-1]['end']:
+            if not 0 <= start < end <= 86400:
                 raise ValueError('Script cues must be ordered and non-overlapping')
             add(' '.join(rows[at+1:]), start, end)
     else:
         for line in text.split('\n'):
             add(line)
+    if lines and lines[0]['start'] is not None: lines.sort(key=lambda line: line['start'])
     if not 1 <= len(lines) <= 300:
         raise ValueError('Use 1-300 script lines')
     return lines
-
-
-def unpack(source, folder):
-    """Accept only flat, stored ZIP members. No extractall, links or compressed bombs."""
-    try:
-        if source.stat().st_size > MAX_BYTES:
-            raise ValueError('Bundle too large')
-        with zipfile.ZipFile(source) as archive:
-            infos = archive.infolist()
-            names = [i.filename for i in infos]
-            if not 4 <= len(infos) <= 12 or len(set(names)) != len(names):
-                raise ValueError('Invalid bundle')
-            if sum(i.file_size for i in infos) > MAX_BYTES:
-                raise ValueError('Bundle too large')
-            for info in infos:
-                if (not re.fullmatch(r'[A-Za-z0-9_-]+\.[a-z0-9]+', info.filename)
-                        or info.compress_type != zipfile.ZIP_STORED or info.flag_bits & 1
-                        or (info.external_attr >> 16) & 0o170000 == 0o120000):
-                    raise ValueError('Invalid archive member')
-            if 'manifest.json' not in names or archive.getinfo('manifest.json').file_size > 16384:
-                raise ValueError('Manifest missing')
-            manifest = json.loads(archive.read('manifest.json'))
-            if not isinstance(manifest, dict) or set(manifest) != {'version', 'guide', 'voices', 'bed', 'script'} or type(manifest['version']) is not int or manifest['version'] != 1:
-                raise ValueError('Invalid manifest')
-            def media(name):
-                return isinstance(name, str) and name in names and name.split('.')[-1] in MEDIA
-            voices = manifest['voices']
-            if not media(manifest['guide']) or not isinstance(voices, list) or not 1 <= len(voices) <= 8:
-                raise ValueError('Invalid stems')
-            if manifest['bed'] is not None and not media(manifest['bed']):
-                raise ValueError('Invalid bed')
-            speakers = []
-            for voice in voices:
-                if (not isinstance(voice, dict) or set(voice) != {'file', 'speaker', 'name'} or not media(voice['file'])
-                        or not isinstance(voice['speaker'], str) or len(voice['speaker']) > 60
-                        or not isinstance(voice['name'], str) or not 1 <= len(voice['name']) <= 255):
-                    raise ValueError('Invalid voice')
-                speakers.append(voice['speaker'].strip().casefold())
-            if len(voices) > 1 and (not all(speakers) or len(set(speakers)) != len(speakers)):
-                raise ValueError('Multiple voice stems need unique speaker labels')
-            script = manifest['script']
-            if script not in ('script.txt', 'script.srt', 'script.vtt') or script not in names or archive.getinfo(script).file_size > 65536:
-                raise ValueError('Invalid script')
-            required = ['manifest.json', manifest['guide'], script] + [v['file'] for v in voices] + ([manifest['bed']] if manifest['bed'] else [])
-            if len(set(required)) != len(required) or set(required) != set(names):
-                raise ValueError('Duplicate or unexpected bundle files')
-            text = archive.read(script).decode('utf-8-sig')
-            lines = parse_script(text)
-            if len(voices) > 1 or speakers[0]:
-                if any(l['speaker'].casefold() not in speakers for l in lines):
-                    raise ValueError('Every script speaker must match a voice stem')
-            folder.mkdir(exist_ok=True)
-            for name in required:
-                if name == 'manifest.json' or name == script:
-                    continue
-                with archive.open(name) as src, (folder / name).open('wb') as dst:
-                    while chunk := src.read(1024 * 1024):
-                        dst.write(chunk)
-            return manifest, lines
-    except (zipfile.BadZipFile, KeyError, TypeError, UnicodeError, OSError, json.JSONDecodeError):
-        raise ValueError('Invalid studio bundle') from None
-
-
-def prepare(source, folder):
-    assets = folder / 'assets'
-    manifest, lines = unpack(source, assets)
-    names = [manifest['guide']] + [v['file'] for v in manifest['voices']] + ([manifest['bed']] if manifest['bed'] else [])
-    durations = {name: duration(assets / name) for name in names}
-    # Bound CPU/disk consumption before any decoding or filtering.
-    if max(durations.values()) > 3600 or sum(durations.values()) > 7200:
-        raise ValueError('Studio supports at most 60 minutes per file / 120 minutes combined')
-    seconds = durations[manifest['guide']]
-    if any(l['end'] is not None and l['end'] > seconds + .01 for l in lines):
-        raise ValueError('Script cues exceed guide duration')
-    return dict(manifest=manifest, lines=lines, durations=durations, seconds=seconds, assets=assets)
 
 
 def speech_regions(source, seconds):
@@ -179,146 +96,282 @@ def speech_regions(source, seconds):
     return active, quiet
 
 
-def allocate(lines, regions, seconds):
-    """Match line order to acoustic regions; fall back to character-weighted speech time."""
-    if len(regions) == len(lines):
-        return regions
-    spans = regions or [(0, seconds)]
-    total = sum(e-s for s, e in spans)
-    weights = [max(1, len(l['text'].split()) if ' ' in l['text'] else len(l['text'])) for l in lines]
-    def position(amount, end=False):
-        for i, (s, e) in enumerate(spans):
-            length = e-s
-            if amount < length - 1e-9 or end and amount <= length + 1e-9 or i == len(spans)-1:
-                return min(e, s+amount)
-            amount -= length
-        return seconds
-    consumed, timings = 0, []
-    for weight in weights:
-        start = position(total * consumed / sum(weights))
-        consumed += weight
-        end = position(total * consumed / sum(weights), True)
-        timings.append((start, max(start + .001, end)))
-    return timings
+
+def unpack(source, folder):
+    if source.stat().st_size > MAX_BYTES: raise ValueError('Bundle too large')
+    try:
+        with zipfile.ZipFile(source) as z:
+            infos=z.infolist(); names=[i.filename for i in infos]
+            if not 3<=len(infos)<=204 or len(set(names))!=len(names) or sum(i.file_size for i in infos)>MAX_BYTES: raise ValueError('Invalid bundle')
+            for i in infos:
+                if not re.fullmatch(r'[A-Za-z0-9_-]+\.[a-z0-9]+',i.filename) or i.compress_type!=zipfile.ZIP_STORED or i.flag_bits&1 or (i.external_attr>>16)&0o170000==0o120000: raise ValueError('Unsafe bundle')
+            if z.getinfo('manifest.json').file_size>131072: raise ValueError('Manifest too large')
+            m=json.loads(z.read('manifest.json'))
+            if m.get('version') not in (1,2): raise ValueError('Invalid version')
+            if set(m) != ({'version','guide','voices','bed','script'} if m['version']==1 else {'version','clips','bed','script'}): raise ValueError('Invalid manifest')
+            clips=m.get('clips',m.get('voices'))
+            if not isinstance(clips,list) or not 1<=len(clips)<=200: raise ValueError('Use 1-200 clips')
+            def media(n): return isinstance(n,str) and n in names and n.split('.')[-1] in MEDIA
+            for c in clips:
+                if not isinstance(c,dict) or set(c)-{'file','speaker','name'} or not media(c.get('file')) or not isinstance(c.get('name'),str) or not 1<=len(c['name'])<=255 or not isinstance(c.get('speaker',''),str) or len(c.get('speaker',''))>60: raise ValueError('Invalid clip')
+                c.setdefault('speaker','')
+            if m['bed'] is not None and not media(m['bed']): raise ValueError('Invalid bed')
+            script=m['script']
+            if script not in ('script.txt','script.srt','script.vtt') or z.getinfo(script).file_size>65536: raise ValueError('Invalid script')
+            required=['manifest.json',script]+[c['file'] for c in clips]+([m['bed']] if m['bed'] else [])
+            # v1 guide is accepted for compatibility, but NEVER read, extracted, probed or billed.
+            allowed=set(required)|({m['guide']} if m['version']==1 and isinstance(m['guide'],str) else set())
+            if len(set(required))!=len(required) or set(names)!=allowed: raise ValueError('Unexpected members')
+            lines=parse_script(z.read(script).decode('utf-8-sig'))
+            folder.mkdir(exist_ok=True)
+            for name in required[2:]:
+                with z.open(name) as src, (folder/name).open('wb') as dst:
+                    while chunk:=src.read(1024*1024): dst.write(chunk)
+            return dict(version=2,clips=clips,bed=m['bed'],script=script),lines
+    except (zipfile.BadZipFile,KeyError,TypeError,UnicodeError,json.JSONDecodeError) as e: raise ValueError('Invalid studio bundle') from e
 
 
-def coverage(regions, start, end):
-    return min(1, sum(max(0, min(e, end)-max(s, start)) for s, e in regions) / max(.001, end-start))
+def script_language(text):
+    # Script blocks are deterministic, including short Indic lines unreliable in LID models.
+    blocks=[(0x0900,0x097f,'hi'),(0x0c00,0x0c7f,'te'),(0x0b80,0x0bff,'ta'),(0x0c80,0x0cff,'kn'),(0x0d00,0x0d7f,'ml'),(0x0980,0x09ff,'bn'),(0x0a80,0x0aff,'gu'),(0x0a00,0x0a7f,'pa'),(0x0b00,0x0b7f,'or'),(0x0600,0x06ff,'ar'),(0x4e00,0x9fff,'zh'),(0xac00,0xd7af,'ko'),(0x3040,0x30ff,'ja')]
+    counts=[(sum(lo<=ord(c)<=hi for c in text),code) for lo,hi,code in blocks]
+    count,lang=max(counts)
+    if count: return lang
+    from lingua import LanguageDetectorBuilder
+    result=LanguageDetectorBuilder.from_all_languages().build().detect_language_of(text)
+    if result is None: raise ValueError('Unable to detect script language')
+    return result.iso_code_639_1.name.lower()
+
+_MODELS={}
+def model(device='cpu', size='small'):
+    from faster_whisper import WhisperModel
+    key=(device,size)
+    if key not in _MODELS: _MODELS[key]=WhisperModel(size,device=device,compute_type='int8_float16' if device=='cuda' else 'int8',download_root='/models')
+    return _MODELS[key]
+
+def detect_language(path, regions, folder, index):
+    # Concatenate at most 30 seconds of speech, rather than 30 seconds of leading silence.
+    spans=[]; remaining=30.0
+    for a,b in regions:
+        if remaining<=0: break
+        end=min(b,a+remaining); spans.append((a,end)); remaining-=end-a
+    if not spans: return ('uncertain',0.0)
+    out=folder/f'gate-{index}.wav'
+    graph=';'.join(f'[0:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS[s{i}]' for i,(a,b) in enumerate(spans))
+    graph+=';'+''.join(f'[s{i}]' for i in range(len(spans)))+f'concat=n={len(spans)}:v=0:a=1[out]'
+    run(['ffmpeg','-v','error','-nostdin','-y','-protocol_whitelist','file,pipe','-i',str(path),'-filter_complex',graph,'-map','[out]','-ar','16000','-ac','1',str(out)])
+    _,info=model().transcribe(str(out),vad_filter=True,beam_size=1)
+    return info.language,float(info.language_probability)
+
+def prepare(source,folder,settings=None,detector=None):
+    assets=folder/'assets'; m,lines=unpack(source,assets)
+    names=[c['file'] for c in m['clips']]+([m['bed']] if m['bed'] else [])
+    durations={n:duration(assets/n) for n in names}
+    if max(durations.values())>3600 or sum(durations.values())>7200: raise ValueError('60 minutes per file / 120 minutes combined')
+    regions={n:speech_regions(assets/n,durations[n]) for n in names}
+    lang=script_language(' '.join(l['text'] for l in lines)); languages=[]
+    for i,c in enumerate(m['clips']):
+        code,prob=(detector or detect_language)(assets/c['file'],regions[c['file']][0],folder,i)
+        languages.append(dict(name=c['name'],lang=code,prob=prob,uncertain=prob<.5))
+    detail=dict(script_lang=lang,clips=languages)
+    if any(c['prob']>=.5 and c['lang']!=lang for c in languages): raise LanguageMismatch(detail)
+    gap=(settings or {}).get('line_gap_ms',0)/1000
+    seconds=sum(b-a for c in m['clips'] for a,b in regions[c['file']][0])+max(0,len(lines)-1)*gap
+    # Reserve missing-line silence in the estimate, preventing later underfunded processing.
+    seconds=max(.001,seconds)
+    if m['bed'] and (settings or {}).get('bed_fit')=='extend': seconds=max(seconds,durations[m['bed']])
+    return dict(manifest=m,lines=lines,durations=durations,seconds=seconds,assets=assets,regions=regions,languages=detail)
 
 
-def alignment(project):
-    manifest, lines, assets, seconds = (project[k] for k in ('manifest', 'lines', 'assets', 'seconds'))
-    guide_regions, quiet = speech_regions(assets / manifest['guide'], seconds)
-    target = ([(l['start'], l['end']) for l in lines] if lines[0]['start'] is not None
-              else allocate(lines, guide_regions, seconds))
-    result, tracks = [], []
-    for i, voice in enumerate(manifest['voices']):
-        track = f'voice-{i}'
-        tracks.append(dict(id=track, name=voice['name'], speaker=voice['speaker']))
-        indices = [j for j, l in enumerate(lines) if len(manifest['voices']) == 1 and not voice['speaker']
-                   or l['speaker'].casefold() == voice['speaker'].strip().casefold()]
-        if not indices:
-            raise ValueError('Voice has no matching script lines')
-        length = project['durations'][voice['file']]
-        regions, _ = speech_regions(assets / voice['file'], length)
-        source_times = allocate([lines[j] for j in indices], regions, length)
-        for j, (ss, se) in zip(indices, source_times):
-            start, end = target[j]
-            ratio = (se-ss) / max(.001, end-start)
-            guide_coverage, dub_coverage = coverage(guide_regions, start, end), coverage(regions, ss, se)
-            boundary = 1 if len(regions) == len(indices) else .45
-            stretch = min(ratio, 1/ratio) if ratio > 0 else 0
-            score = round(min(.85 if lines[j]['start'] is not None else .65,
-                              guide_coverage * dub_coverage * boundary * stretch), 3)
-            flags = []
-            if len(regions) != len(indices): flags.append('Line boundaries estimated from script length')
-            if not .5 <= ratio <= 2: flags.append('Large timing stretch; listen carefully')
-            if guide_coverage < .5 or dub_coverage < .5: flags.append('Little acoustic speech evidence')
-            if score < .7: flags.append('Low confidence: review timing')
-            result.append(dict(text=lines[j]['text'], speaker=lines[j]['speaker'], start=round(start, 3), end=round(end, 3),
-                               source_start=round(ss, 3), source_end=round(se, 3), confidence=score, track=track, flags=flags))
-    result.sort(key=lambda l: (l['start'], l['track']))
-    return dict(method='heuristic-v1', duration=round(seconds, 3), note=NOTE, tracks=tracks, lines=result), quiet
+def transcribe(project,device='cpu'):
+    result=[]
+    from faster_whisper import BatchedInferencePipeline
+    pipeline=BatchedInferencePipeline(model=model(device))
+    for i,c in enumerate(project['manifest']['clips']):
+        segments,_=pipeline.transcribe(str(project['assets']/c['file']),language=project['languages']['script_lang'],word_timestamps=True,vad_filter=True,batch_size=8 if device=='cuda' else 2)
+        for segment in segments:
+            words=getattr(segment,'words',None)
+            groups=[]; group=[]
+            for word in words or []:
+                if group and word.start-group[-1].end>=.45: groups.append(group); group=[]
+                group.append(word)
+                if re.search(r'[.!?।॥。！？]\s*$',word.word) or len(group)>=80: groups.append(group); group=[]
+            if group: groups.append(group)
+            if groups:
+                for g in groups:
+                    if g[-1].end>g[0].start: result.append(dict(clip=f'c{i}',src_start=g[0].start,src_end=g[-1].end,text=''.join(w.word for w in g).strip(),speaker=c.get('speaker',''),name=c['name']))
+            elif segment.end>segment.start:
+                result.append(dict(clip=f'c{i}',src_start=segment.start,src_end=segment.end,text=segment.text.strip(),speaker=c.get('speaker',''),name=c['name']))
+    return result
 
 
-def tempo(ratio):
-    # Keep each atempo stage in [0.5,2]. No pitch shift.
-    values = []
-    while ratio > 2:
-        values.append('atempo=2'); ratio /= 2
-    while ratio < .5:
-        values.append('atempo=0.5'); ratio *= 2
-    return ','.join(values + [f'atempo={ratio:.8f}'])
+def normal(text): return ''.join(c for c in unicodedata.normalize('NFKC',text).casefold() if unicodedata.category(c)[0] not in ('P','Z','C'))
+def similarity(a,b):
+    from rapidfuzz.fuzz import ratio,token_set_ratio
+    return .7*ratio(normal(a),normal(b))/100+.3*token_set_ratio(unicodedata.normalize('NFKC',a).casefold(),unicodedata.normalize('NFKC',b).casefold())/100
+
+def matching(lines,segments):
+    # Per-clip monotonic dynamic programming, then resolve competing clips by evidence.
+    # Groups permit one segment to cover consecutive lines and merged segments per line.
+    proposals=[]
+    for clip in dict.fromkeys(s['clip'] for s in segments):
+        indices=[i for i,s in enumerate(segments) if s['clip']==clip]; n,m=len(indices),len(lines)
+        dp=[[0.0]*(m+1) for _ in range(n+1)]; trace={}
+        for i in range(n+1):
+            for j in range(m+1):
+                if i<n and dp[i+1][j]<=dp[i][j]: dp[i+1][j]=dp[i][j]; trace[i+1,j]=(i,j,None)
+                if j<m and dp[i][j+1]<=dp[i][j]: dp[i][j+1]=dp[i][j]; trace[i,j+1]=(i,j,None)
+                for sc,lc in ((1,1),(2,1),(3,1),(1,2),(1,3)):
+                    if i+sc>n or j+lc>m: continue
+                    group=[segments[k] for k in indices[i:i+sc]]
+                    score=similarity(' '.join(s['text'] for s in group),' '.join(l['text'] for l in lines[j:j+lc]))
+                    speaker=group[0]['speaker'].strip().casefold()
+                    tag=lines[j]['speaker'].strip().casefold()
+                    inferred=tag and re.search(r'(?:^|[^\w])'+re.escape(tag)+r'(?:$|[_\W\d])',group[0]['name'].casefold())
+                    score=min(1,score+(.08 if tag and (speaker==tag or inferred) else 0))
+                    if score<.48: continue
+                    value=dp[i][j]+(score-.3)-.02*(sc+lc-2)
+                    if value>dp[i+sc][j+lc]:
+                        dp[i+sc][j+lc]=value; trace[i+sc,j+lc]=(i,j,(indices[i:i+sc],list(range(j,j+lc)),score))
+        point=(n,m)
+        while point in trace:
+            i,j,match=trace[point]
+            if match: proposals.append(match)
+            point=(i,j)
+    selected=[]; used_s=set(); used_l=set()
+    for ss,ll,score in sorted(proposals,key=lambda p:p[2],reverse=True):
+        if used_s.intersection(ss) or used_l.intersection(ll): continue
+        selected.append((ss,ll,score)); used_s.update(ss); used_l.update(ll)
+    return selected,used_s
 
 
-def mix(project, folder, s):
-    report, quiet = alignment(project)
-    manifest, assets, seconds = (project[k] for k in ('manifest', 'assets', 'seconds'))
-    if s['has_bed'] != (manifest['bed'] is not None):
-        raise ValueError('Bed settings do not match bundle')
-    aligned = []
-    for index, voice in enumerate(manifest['voices']):
-        decoded = folder / f'dialogue-{index}.wav'
-        # Normalize the whole stem to the chosen dialogue target, preserving dynamics.
-        stem_folder = folder / f'norm-{index}'; stem_folder.mkdir()
-        normalized = master(assets / voice['file'], stem_folder, {
-            'eq': {'enabled': False}, 'compressor': {'enabled': False}, 'limiter': {'enabled': False},
-            'loudness': {'enabled': True, 'lufs': s['dialogue_lufs']}})[0]
-        cues = [l for l in report['lines'] if l['track'] == f'voice-{index}']
-        filters, labels = [], []
-        # Split one input for all line trims; one process per stem, not per line.
-        splits = ''.join(f'[split{n}]' for n in range(len(cues)))
-        filters.append(f'[0:a]asplit={len(cues)}{splits}')
-        for n, line in enumerate(cues):
-            span = max(.001, line['end']-line['start'])
-            ratio = max(.001, line['source_end']-line['source_start']) / span
-            filters.append(f'[split{n}]atrim=start={line["source_start"]}:end={line["source_end"]},asetpts=N/SR/TB,'
-                           f'{tempo(ratio)},asetpts=N/SR/TB,apad=whole_dur={span},atrim=duration={span},adelay={round(line["start"]*1000)}:all=1,asetpts=N/SR/TB[c{n}]')
-            labels.append(f'[c{n}]')
-        filters.append(''.join(labels) + f'amix=inputs={len(cues)}:normalize=0,asetpts=N/SR/TB,apad=whole_dur={seconds},atrim=duration={seconds}[out]')
-        run(['ffmpeg', '-v', 'error', '-nostdin', '-y', '-protocol_whitelist', 'file,pipe', '-i', str(normalized),
-             '-filter_complex', ';'.join(filters), '-map', '[out]', '-t', str(seconds), '-ar', '48000', '-ac', '2', '-c:a', 'pcm_s24le', str(decoded)])
-        aligned.append(decoded)
-    # Duck the bed only in the actual aligned dialogue windows.
-    windows = [(l['start'], l['end']) for l in report['lines'] if l['confidence'] > 0]
-    activity = '+'.join(f'between(t,{start},{end})' for start, end in windows) or '0'
-    parts = list(aligned)
-    if manifest['bed']:
-        bed = folder / 'bed.wav'
-        attenuation = 10 ** (-s['ducking_db']/20)
-        ffmpeg(assets / manifest['bed'], bed, f"apad=whole_dur={seconds},atrim=duration={seconds},volume='if(gt({activity},0),{attenuation},1)':eval=frame")
-        parts.append(bed)
-    room = s['room_tone']
-    if room['enabled'] and room['amount'] > 0:
-        usable = [(start, end) for start, end in quiet if end-start >= .2]
-        if usable:
-            start, end = max(usable, key=lambda v: v[1]-v[0])
-            sample, fill = folder / 'room-sample.wav', folder / 'room.wav'
-            ffmpeg(assets / manifest['guide'], sample, f'atrim=start={start}:end={end},asetpts=PTS-STARTPTS')
-            run(['ffmpeg', '-v', 'error', '-nostdin', '-y', '-stream_loop', '-1', '-protocol_whitelist', 'file,pipe', '-i', str(sample),
-                 '-t', str(seconds), '-af', f"volume='if(gt({activity},0),0,{room['amount']/100})':eval=frame", '-c:a', 'pcm_s24le', str(fill)])
-            parts.append(fill)
+def arrange(project,segments,settings,job_id):
+    lines=project['lines']; matches,used=matching(lines,segments); byline={}
+    for ss,ll,score in matches:
+        first,last=segments[ss[0]],segments[ss[-1]]; start,end=first['src_start'],last['src_end']
+        weights=[max(1,len(normal(lines[j]['text']))) for j in ll]; total=sum(weights); cursor=start
+        for j,w in zip(ll,weights):
+            nxt=cursor+(end-start)*w/total; byline[j]=(first['clip'],cursor,nxt,score); cursor=nxt
+    speakers=list(dict.fromkeys(l['speaker'] or 'Dialogue' for l in lines))
+    speakers.sort(key=lambda n:0 if n.casefold() in ('narrator','narration') else 1)
+    palette=['#818CF8','#A78BFA','#67E8F9','#6EE7B7','#FCD34D','#F9A8D4']
+    lanes=[dict(id=f'l{i}',name=n,color=palette[i%len(palette)],gain_db=0,mute=False,solo=False) for i,n in enumerate(speakers)]
+    lane={l['name']:l['id'] for l in lanes}; regions=[]; missing=[]; cursor=0; gap=settings['line_gap_ms']/1000
+    for j,line in enumerate(lines):
+        lid=lane[line['speaker'] or 'Dialogue']
+        if j in byline:
+            clip,a,b,score=byline[j]; regions.append(dict(id=f'r{j}',lane=lid,kind='clip',clip=clip,src_start=round(a,6),src_end=round(b,6),start=round(cursor,6),gain_db=0,line=j,confidence=round(score,3))); length=b-a
         else:
-            report['note'] += ' Room tone was not added: no quiet guide region was found.'
-    raw = folder / 'mix.wav'
-    args = ['ffmpeg', '-v', 'error', '-nostdin', '-y']
-    for path in parts:
-        args += ['-protocol_whitelist', 'file,pipe', '-i', str(path)]
-    graph = ''.join(f'[{i}:a]' for i in range(len(parts))) + f'amix=inputs={len(parts)}:normalize=0,atrim=duration={seconds}[out]'
-    run(args + ['-filter_complex', graph, '-map', '[out]', '-c:a', 'pcm_s24le', str(raw)])
-    final_folder = folder / 'final'; final_folder.mkdir()
-    final = master(raw, final_folder, {'eq': {'enabled': False}, 'compressor': {'enabled': False},
-                   'limiter': {'enabled': False}, 'loudness': {'enabled': True, 'lufs': s['master_lufs']}})[0]
-    output = folder / 'studio-mix.wav'; final.replace(output)
-    # Report actual achieved loudness; loudnorm's 0 dBTP safety bound may prevent target.
-    report['loudness'] = json.loads((final_folder / 'loudness-report.json').read_text())
-    dest = folder / 'alignment-report.json'; dest.write_text(json.dumps(report, ensure_ascii=False, allow_nan=False))
-    outputs = [output, dest]
-    if s['subtitles']['enabled']:
-        segments = [SimpleNamespace(start=l['start'], end=l['end'], text=(l['speaker'] + ': ' if l['speaker'] else '') + l['text']) for l in report['lines']]
-        outputs += write_subtitles(segments, folder, s['subtitles']['formats'])
+            length=max(1.5,len(normal(line['text']))/12); missing.append(dict(line=j,lane=lid,start=round(cursor,6),length=length,text=line['text']))
+        cursor+=length+(gap if j<len(lines)-1 else 0)
+    if project['manifest']['bed'] and settings['bed_fit']=='extend': cursor=max(cursor,project['durations'][project['manifest']['bed']])
+    a=dict(version=1,job_id=job_id,sample_rate=48000,duration=round(max(.001,cursor),6),snap=True,line_gap_ms=settings['line_gap_ms'],match_strictness=settings['match_strictness'],lanes=lanes,
+      clips=[dict(id=f'c{i}',name=c['name'],duration=project['durations'][c['file']]) for i,c in enumerate(project['manifest']['clips'])],regions=regions,missing=missing,
+      unplaced=[dict(clip=s['clip'],src_start=s['src_start'],src_end=s['src_end'],transcript=s['text']) for i,s in enumerate(segments) if i not in used],
+      lines=[dict(index=i,speaker=l['speaker'],text=l['text']) for i,l in enumerate(lines)])
+    validate_arrangement(a)
+    return a
+
+def validate_arrangement(a):
+    if a.get('version')!=1 or len(json.dumps(a,ensure_ascii=False).encode())>524288 or not 0<a['duration']<=14400: raise ValueError('Invalid arrangement')
+    clips={c['id']:c['duration'] for c in a['clips']}; lanes={l['id'] for l in a['lanes']}
+    if len(a['regions'])>2000 or sum(r['src_end']-r['src_start'] for r in a['regions'])>14400: raise ValueError('Arrangement render budget exceeded')
+    for r in a['regions']:
+        values=[r[k] for k in ('src_start','src_end','start','gain_db')]
+        if any(type(v) not in (int,float) or not math.isfinite(v) for v in values) or not 0<=r['src_start']<r['src_end']<=clips.get(r['clip'],0)+.001 or r['lane'] not in lanes or not -60<=r['gain_db']<=24 or r['start']<0 or r['start']+r['src_end']-r['src_start']>a['duration']+.001: raise ValueError('Invalid region')
+    for l in a['lanes']:
+        if type(l['gain_db']) not in (int,float) or not -60<=l['gain_db']<=24 or type(l['mute']) is not bool or type(l['solo']) is not bool: raise ValueError('Invalid lane')
+    return a
+
+
+def normalize_clips(project,folder,settings):
+    import numpy as np
+    import soundfile as sf
+    stems=folder/'stems'; peaks=folder/'peaks'; stems.mkdir(exist_ok=True); peaks.mkdir(exist_ok=True); outputs=[]
+    for i,c in enumerate(project['manifest']['clips']):
+        work=folder/f'norm-{i}'; work.mkdir(exist_ok=True)
+        result=master(project['assets']/c['file'],work,{'eq':{'enabled':False},'compressor':{'enabled':False},'limiter':{'enabled':False},'loudness':{'enabled':True,'lufs':settings['dialogue_lufs']}})[0]
+        dest=stems/f'c{i}.wav'; result.replace(dest); outputs.append(dest)
+        # Bounded peak extraction at 100 Hz, signed 8-bit extrema. Never load a 60m stem wholesale.
+        values=[]
+        with sf.SoundFile(dest) as f:
+            for block in f.blocks(blocksize=max(1,f.samplerate//100),dtype='float32',always_2d=True):
+                mono=block.mean(axis=1); values.append([int(np.clip(mono.min()*127,-128,127)),int(np.clip(mono.max()*127,-128,127))])
+        peak=peaks/f'c{i}.json'; peak.write_text(json.dumps(dict(rate=100,peaks=values),separators=(',',':'))); outputs.append(peak)
     return outputs
 
 
-def studio(source, folder, settings):
-    return mix(prepare(source, folder), folder, settings)
+def mix(project,folder,settings,job_id=None,segments=None):
+    a=arrange(project,segments if segments is not None else transcribe(project),settings,job_id or '00000000-0000-4000-8000-000000000000')
+    outputs=normalize_clips(project,folder,settings)
+    path=folder/'arrangement-r1.json'; path.write_text(json.dumps(a,ensure_ascii=False,allow_nan=False)); outputs.append(path)
+    report=folder/'report.json'; report.write_text(json.dumps(dict(method='script-match-v1',note=NOTE,languages=project['languages'],asr=project.get('asr',{'model':'small','device':'cpu-fallback','cost_measurement':'Not measured'}),missing=a['missing'],unplaced=a['unplaced'],matches=a['regions'],low_confidence=[r['id'] for r in a['regions'] if r['confidence']<{'strict':.85,'normal':.7,'loose':.5}[settings['match_strictness']]]),ensure_ascii=False)); outputs.append(report)
+    if settings['subtitles']['enabled']:
+        cues=[SimpleNamespace(start=r['start'],end=r['start']+r['src_end']-r['src_start'],text=(a['lines'][r['line']]['speaker']+': ' if a['lines'][r['line']]['speaker'] else '')+a['lines'][r['line']]['text']) for r in a['regions']]
+        outputs+=write_subtitles(cues,folder,settings['subtitles']['formats'])
+    # No preview render until export: the first user-selected render is included.
+    return outputs
+
+
+def render(project,a,folder,settings,export):
+    validate_arrangement(a); parts=[]; solo=any(l['solo'] for l in a['lanes']); lanes={l['id']:l for l in a['lanes']}
+    seconds=a['duration']
+    # Stream dialogue in half-second blocks. Never materialize one delayed multi-hour
+    # WAV per region (200 clips can otherwise create terabytes of silent files).
+    import numpy as np
+    import soundfile as sf
+    from contextlib import ExitStack
+    dialogue=folder/'dialogue.wav'
+    audible=[r for r in a['regions'] if not lanes[r['lane']]['mute'] and (not solo or lanes[r['lane']]['solo'])]
+    with ExitStack() as stack:
+        inputs={}
+        for clip,path in project['stems'].items():
+            probe=sf.info(path)
+            if probe.samplerate!=48000 or probe.channels!=2:
+                normalized=folder/f'decode-{clip}.wav'; ffmpeg(path,normalized); path=normalized
+            inputs[clip]=stack.enter_context(sf.SoundFile(path))
+        out=stack.enter_context(sf.SoundFile(dialogue,mode='w',samplerate=48000,channels=2,format='RF64',subtype='FLOAT'))
+        total=round(seconds*48000); blocksize=24000
+        spans=[(round(r['start']*48000),round((r['start']+r['src_end']-r['src_start'])*48000),r) for r in audible]
+        for offset in range(0,total,blocksize):
+            count=min(blocksize,total-offset); block=np.zeros((count,2),dtype='float32')
+            for start,end,r in spans:
+                left=max(offset,start); right=min(offset+count,end)
+                if right<=left: continue
+                source=inputs[r['clip']]; source.seek(max(0,round(r['src_start']*48000)+left-start))
+                samples=source.read(right-left,dtype='float32',always_2d=True)
+                gain=10**((r['gain_db']+lanes[r['lane']]['gain_db'])/20)
+                block[left-offset:left-offset+len(samples)]+=samples*gain
+            out.write(block)
+    parts.append(dialogue)
+    activity='+'.join(f"between(t,{r['start']},{r['start']+r['src_end']-r['src_start']})" for r in a['regions'] if not lanes[r['lane']]['mute'] and (not solo or lanes[r['lane']]['solo'])) or '0'
+    if project.get('bed'):
+        out=folder/'bed.wav'; args=['ffmpeg','-v','error','-y','-nostdin']
+        if settings['bed_fit']=='loop': args+=['-stream_loop','-1']
+        args+=['-protocol_whitelist','file,pipe','-i',str(project['bed']),'-af',f"apad=whole_dur={seconds},atrim=duration={seconds},volume='if(gt({activity},0),{10**(-settings['ducking_db']/20)},1)':eval=frame",'-t',str(seconds),'-c:a','pcm_s24le',str(out)]
+        run(args);parts.append(out)
+    room=settings['room_tone']
+    if room['enabled'] and room['amount']>0:
+        for clip,path in project['stems'].items():
+            _,quiet=speech_regions(path,duration(path)); usable=[(s,e) for s,e in quiet if e-s>=.2]
+            if usable:
+                s,e=max(usable,key=lambda p:p[1]-p[0]); sample=folder/'room-sample.wav'; ffmpeg(path,sample,f'atrim=start={s}:end={e},asetpts=PTS-STARTPTS')
+                out=folder/'room.wav';run(['ffmpeg','-v','error','-y','-nostdin','-stream_loop','-1','-i',str(sample),'-t',str(seconds),'-af',f"volume='if(gt({activity},0),0,{room['amount']/100})':eval=frame",'-c:a','pcm_s24le',str(out)]);parts.append(out);break
+    raw=folder/'raw.wav'
+    if parts:
+        args=['ffmpeg','-v','error','-y','-nostdin']
+        for path in parts: args+=['-i',str(path)]
+        graph=''.join(f'[{i}:a]' for i in range(len(parts)))+f'amix=inputs={len(parts)}:normalize=0,apad=whole_dur={seconds},atrim=duration={seconds}[out]'
+        run(args+['-filter_complex',graph,'-map','[out]','-ar','48000','-ac','2','-c:a','pcm_s24le',str(raw)])
+    else: run(['ffmpeg','-v','error','-y','-f','lavfi','-i','anullsrc=r=48000:cl=stereo','-t',str(seconds),str(raw)])
+    work=folder/'master';work.mkdir(); final=master(raw,work,{'eq':{'enabled':False},'compressor':{'enabled':False},'limiter':{'enabled':False},'loudness':{'enabled':True,'lufs':settings['master_lufs']}})[0]; outputs=[]
+    for fmt in export['formats']:
+        options=export[fmt];dest=folder/f'studio-mix.{fmt}'
+        codec=['-c:a','libmp3lame','-b:a',f"{options['bitrate_kbps']}k"] if fmt=='mp3' else ['-c:a',{16:'pcm_s16le',24:'pcm_s24le','32f':'pcm_f32le'}[options['bit_depth']]]
+        run(['ffmpeg','-v','error','-y','-i',str(final),'-t',str(seconds),'-ar',str(options['sample_rate'])]+codec+(['-rf64','auto'] if fmt=='wav' else [])+[str(dest)]);outputs.append(dest)
+    cues=[SimpleNamespace(start=r['start'],end=r['start']+r['src_end']-r['src_start'],text=a['lines'][r['line']]['text']) for r in a['regions']]
+    if export['missing_lines']=='mark': cues += [SimpleNamespace(start=m['start'],end=m['start']+m['length'],text='[Missing line] '+m['text']) for m in a['missing']]
+    return outputs+write_subtitles(sorted(cues,key=lambda c:c.start),folder,export['subtitles'])
+
+
+def studio(source,folder,settings): return mix(prepare(source,folder,settings),folder,settings)

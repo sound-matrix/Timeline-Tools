@@ -37,6 +37,7 @@ const profile = {
 const plan = { id: "test", name: "Test plan", max_file_mb: 25 };
 let jobs = [],
   reports = {},
+  arrangements = {},
   requests = [];
 
 createServer(async (req, res) => {
@@ -64,6 +65,7 @@ createServer(async (req, res) => {
     profile.role = "user";
     jobs = [];
     reports = {};
+    arrangements = {};
     requests = [];
     return send({});
   }
@@ -74,6 +76,12 @@ createServer(async (req, res) => {
   if (url.pathname === "/__requests") return send(requests);
   if (url.pathname === "/__job") {
     if (body.report) reports[body.id] = body.report;
+    if (body.arrangement)
+      arrangements[body.id] = {
+        revision: 1,
+        exports_count: 0,
+        arrangement: body.arrangement,
+      };
     if (req.method === "POST")
       jobs = jobs.map((job) =>
         job.id === body.id ? { ...job, ...body } : job,
@@ -123,6 +131,54 @@ createServer(async (req, res) => {
   if (url.pathname.endsWith("/alignment-report.json")) {
     const id = url.pathname.split("/").at(-2);
     return reports[id] ? send(reports[id]) : send({ error: "missing" }, 404);
+  }
+  if (url.pathname === "/rest/v1/studio_arrangements")
+    return send(arrangements[url.searchParams.get("job_id")?.slice(3)] ?? null);
+  if (url.pathname === "/rest/v1/rpc/save_arrangement") {
+    const a = arrangements[body.p_job];
+    if (!a) return send({ message: "Unavailable" }, 404);
+    if (a.revision !== body.p_revision)
+      return send({ code: "40001", message: "Revision conflict" }, 409);
+    a.arrangement = body.p_arrangement;
+    a.revision++;
+    return send(a.revision);
+  }
+  if (url.pathname.startsWith("/storage/v1/object/sign/outputs/")) {
+    return send({
+      signedURL: "/object/public/outputs/" + url.pathname.split("/outputs/")[1],
+    });
+  }
+  if (
+    url.pathname.includes("/object/public/outputs/") &&
+    /\/peaks\/c\d+\.json$/.test(url.pathname)
+  )
+    return send({
+      rate: 100,
+      peaks: Array.from({ length: 400 }, (_, i) => [-(i % 50), i % 70]),
+    });
+  if (
+    url.pathname.includes("/object/public/outputs/") &&
+    /\/stems\/c\d+\.wav$/.test(url.pathname)
+  ) {
+    const wave = Buffer.alloc(64044);
+    wave.write("RIFF");
+    wave.writeUInt32LE(wave.length - 8, 4);
+    wave.write("WAVEfmt ", 8);
+    wave.writeUInt32LE(16, 16);
+    wave.writeUInt16LE(1, 20);
+    wave.writeUInt16LE(1, 22);
+    wave.writeUInt32LE(8000, 24);
+    wave.writeUInt32LE(16000, 28);
+    wave.writeUInt16LE(2, 32);
+    wave.writeUInt16LE(16, 34);
+    wave.write("data", 36);
+    wave.writeUInt32LE(64000, 40);
+    res.writeHead(200, {
+      "Content-Type": "audio/wav",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end(wave);
+    return;
   }
   if (url.pathname.startsWith("/storage/v1/object/"))
     return send({ Key: "uploads/test.wav", Id: jobId });

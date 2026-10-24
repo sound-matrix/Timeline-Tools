@@ -144,8 +144,10 @@ export default function ProcessingStatus({
       : type === "master"
         ? "Mastering…"
         : type === "studio"
-          ? "Aligning, mixing & mastering…"
-          : "Transcribing…";
+          ? "Matching speech & arranging your timeline…"
+          : type === "studio_export"
+            ? "Rendering your export…"
+            : "Transcribing…";
   return (
     <section
       className={`card processing-panel${paused ? " live-paused" : ""}`}
@@ -202,6 +204,23 @@ export default function ProcessingStatus({
           {state.error || "Something went wrong. Please try again."}
         </p>
       )}
+      {failed &&
+        state.errorCode === "language_mismatch" &&
+        state.errorDetail && (
+          <div role="alert">
+            <p>
+              The language of the clips and the script don’t match. Script:{" "}
+              {state.errorDetail.script_lang}. No minutes charged.
+            </p>
+            <ul>
+              {state.errorDetail.clips.map((c, i) => (
+                <li key={i}>
+                  {c.name}: {c.lang} ({Math.round(c.prob * 100)}%)
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       {pollError && active && (
         <div role="alert">
           <p>{pollError}</p>

@@ -12,6 +12,7 @@ image = (modal.Image.debian_slim(python_version='3.12')
     .apt_install('ffmpeg', 'libsndfile1')
     .pip_install_from_requirements('workers/requirements.txt')
     .add_local_python_source('workers'))
+gpu_image = image.pip_install('nvidia-cublas-cu12==12.8.4.1', 'nvidia-cudnn-cu12==9.10.2.21').env({'LD_LIBRARY_PATH':'/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib'})
 models = modal.Volume.from_name('timeline-tools-asr-models', create_if_missing=True)
 secrets = modal.Secret.from_name('timeline-tools-supabase', required_keys=['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])
 
@@ -29,7 +30,7 @@ def transfer_input(url, key, input_path, target):
 
 def transfer_output(url, key, output_path, source):
     import httpx
-    mime = {'.wav': 'audio/wav', '.json': 'application/json', '.srt': 'application/x-subrip', '.vtt': 'text/vtt'}[source.suffix]
+    mime = {'.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.json': 'application/json', '.srt': 'application/x-subrip', '.vtt': 'text/vtt'}[source.suffix]
     def chunks():
         with source.open('rb') as file:
             while data := file.read(1024 * 1024):
@@ -49,25 +50,39 @@ def handle_job(db, job, worker_id, url, key):
     completion_attempted = False
     code = 'processing'
     try:
-        validate(job['type'], job['settings'])
+        if job['type'] == 'studio_export':
+            from workers.studio_export import validate_export
+            validate_export(job['settings'])
+        else:
+            validate(job['type'], job['settings'])
         # Defense in depth for service-role Storage access.
         expected = str(uuid.UUID(job['user_id']))
-        parts = job['input_path'].split('/')
+        input_path = job['input_path']
+        parent = None
+        if job['type'] == 'studio_export':
+            parent = db.table('jobs').select('*').eq('id',job['parent_job_id']).eq('user_id',expected).eq('type','studio').eq('status','done').single().execute().data
+            if not parent: raise ValueError('Invalid parent')
+            input_path = parent['input_path']
+        parts = input_path.split('/')
         if len(parts) != 2 or parts[0] != expected or '..' in parts[1]:
             raise ValueError('Invalid input owner')
         with tempfile.TemporaryDirectory(prefix='timeline-') as directory:
             folder = Path(directory)
             source = folder / ('input' + Path(parts[1]).suffix)
             code = 'storage'
-            transfer_input(url, key, job['input_path'], source)
+            transfer_input(url, key, input_path, source)
             code = 'invalid_media'
             project = None
             if job['type'] == 'studio':
                 from workers.studio_audio import prepare
                 if source.suffix != '.zip':
                     raise ValueError('Studio requires a ZIP bundle')
-                project = prepare(source, folder)
-                seconds = project['seconds']  # Charge guide duration once, not each stem.
+                project = prepare(source, folder, job['settings'])
+                seconds = project['seconds']  # Derived VAD speech + chosen gaps, after language gate.
+            elif parent is not None:
+                from workers.studio_audio import validate_arrangement
+                arrangement = validate_arrangement(job['arrangement_snapshot'])
+                seconds = arrangement['duration']
             else:
                 seconds = duration(source)
             if not db.rpc('worker_prepare', {'p_job_id': job_id, 'p_worker_id': worker_id, 'p_duration': seconds}).execute().data:
@@ -75,18 +90,52 @@ def handle_job(db, job, worker_id, url, key):
             code = 'processing'
             if project is not None:
                 from workers.studio_audio import mix
-                outputs = mix(project, folder, job['settings'])
+                try:
+                    result = studio_asr.remote(url, key, input_path, project['languages']['script_lang'])
+                    if isinstance(result,dict):
+                        segments=result['segments']; project['asr']=result['metrics']
+                    else:
+                        segments=result
+                except Exception:
+                    from workers.studio_audio import transcribe
+                    segments = transcribe(project)  # CPU fallback, same cached small model.
+                outputs = mix(project, folder, job['settings'], job_id, segments)
+            elif parent is not None:
+                from workers.studio_audio import unpack, render
+                manifest, _ = unpack(source, folder/'assets')
+                stems = {}
+                for clip in arrangement['clips']:
+                    path = f"{expected}/{parent['id']}/stems/{clip['id']}.wav"
+                    if path not in parent['output_paths']: raise ValueError('Unknown clip')
+                    dest = folder/f"{clip['id']}.wav"
+                    transfer_stem(url,key,path,dest)
+                    stems[clip['id']] = dest
+                outputs = render(dict(stems=stems,bed=folder/'assets'/manifest['bed'] if manifest['bed'] else None),arrangement,folder,parent['settings'],job['settings'])
             else:
                 outputs = process(source, folder, job['type'], job['settings'])
             code = 'storage'
             for output in outputs:
-                path = f'{expected}/{job_id}/{output.name}'
+                path = f'{expected}/{job_id}/{output.relative_to(folder).as_posix()}'
                 paths.append(path)  # Also clean up a partially transferred object on failure.
                 transfer_output(url, key, path, output)
+            if project is not None:
+                import json
+                a = json.loads((folder/'arrangement-r1.json').read_text())
+                db.table('jobs').update(dict(duration_sec=min(seconds,a['duration']))).eq('id',job_id).eq('worker_id',worker_id).eq('status','processing').execute()
+                db.table('studio_arrangements').insert(dict(job_id=job_id,user_id=expected,revision=1,arrangement=a,arrangement_path=f'{expected}/{job_id}/arrangement-r1.json')).execute()
+                db.table('jobs').update(dict(peaks_paths=[p for p in paths if '/peaks/' in p])).eq('id',job_id).eq('worker_id',worker_id).execute()
             completion_attempted = True
             committed = bool(db.rpc('worker_complete', {'p_job_id': job_id, 'p_worker_id': worker_id, 'p_outputs': paths}).execute().data)
-    except ValueError:
-        code = 'invalid_settings'
+    except ValueError as error:
+        from workers.studio_audio import LanguageMismatch
+        if isinstance(error,LanguageMismatch):
+            code='language_mismatch'
+            detail=dict(script_lang=error.detail['script_lang'],clips=[c for c in error.detail['clips'] if c['prob']>=.5 and c['lang']!=error.detail['script_lang']])
+            import json
+            while len(json.dumps(detail).encode())>8192: detail['clips'].pop()
+            db.table('jobs').update(dict(error_code=code,error_detail=detail)).eq('id',job_id).eq('worker_id',worker_id).eq('status','processing').execute()
+        else:
+            code = 'invalid_settings'
     except MediaError:
         pass
     except Exception:
@@ -115,6 +164,29 @@ def handle_job(db, job, worker_id, url, key):
                         db.storage.from_('outputs').remove(paths)
                     except Exception:
                         pass  # Private orphan objects can be removed by operator.
+
+
+def transfer_stem(url,key,path,target):
+    import httpx
+    with httpx.stream('GET',f'{url}/storage/v1/object/authenticated/outputs/{quote(path,safe="/")}',headers={'Authorization':f'Bearer {key}','apikey':key},timeout=300) as response:
+        response.raise_for_status()
+        with target.open('wb') as f:
+            for chunk in response.iter_bytes(1024*1024): f.write(chunk)
+
+@app.function(image=gpu_image, volumes={'/models':models}, gpu='T4', cpu=2, memory=8192,timeout=3600,max_containers=2)
+def studio_asr(url,key,input_path,language):
+    import time
+    from workers.studio_audio import unpack,transcribe
+    from workers.audio import duration
+    started=time.perf_counter()
+    with tempfile.TemporaryDirectory(prefix='studio-asr-') as tmp:
+        folder=Path(tmp); source=folder/'input.zip';transfer_input(url,key,input_path,source)
+        manifest,lines=unpack(source,folder/'assets')
+        result=transcribe(dict(manifest=manifest,assets=folder/'assets',languages={'script_lang':language}),device='cuda')
+        models.commit()
+        seconds=time.perf_counter()-started
+        minutes=sum(duration(folder/'assets'/c['file']) for c in manifest['clips'])/60
+        return dict(segments=result,metrics=dict(model='small',device='T4',elapsed_seconds=seconds,audio_minutes=minutes,gpu_only_usd_per_audio_minute=seconds*0.000164/max(minutes,.001),pricing_basis='Modal public T4 $0.000164/s; excludes CPU, memory, language gate and storage'))
 
 
 @app.function(image=image, secrets=[secrets], volumes={'/models': models},

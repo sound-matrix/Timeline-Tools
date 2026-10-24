@@ -1,26 +1,20 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { extensions, jobSchema } from "@/lib/settings";
 import { processingSettings, type Choices } from "@/lib/processing-form";
 import {
-  alignmentReportSchema,
   parseScript,
   SCRIPT_MAX_BYTES,
   STUDIO_MAX_BYTES,
-  subtitleText,
-  type AlignmentReport,
 } from "@/lib/audio-studio";
 import { uploadFile } from "@/lib/upload";
 import { browserClient } from "@/lib/supabase/client";
 import type { ProcessingState } from "@/lib/job-status";
 import Visualizer from "./visualizer";
 import ProcessingStatus from "./processing-status";
-import StudioTimeline from "./studio-timeline";
-import InputPreview from "./input-preview";
-
-type Voice = { file: File; speaker: string };
-const accept = extensions.map((ext) => `.${ext}`).join(",");
+import StudioDaw from "./studio-daw";
+const accept = extensions.map((e) => "." + e).join(",");
 export default function AudioStudio({
   userId,
   maxMb,
@@ -34,101 +28,49 @@ export default function AudioStudio({
   const submitting = useRef(false);
   const scriptRead = useRef(0);
   const bedInput = useRef<HTMLInputElement>(null);
-  const [guide, setGuide] = useState<File | null>(null);
-  const [voices, setVoices] = useState<Voice[]>([]);
-  const [bed, setBed] = useState<File | null>(null);
-  const [script, setScript] = useState("");
-  const [title, setTitle] = useState("");
-  const [choices, setChoices] = useState<Choices>({});
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [live, setLive] = useState<ProcessingState | null>(initial);
-  const [report, setReport] = useState<AlignmentReport | null>(null);
-  const [reportError, setReportError] = useState("");
-  const [retry, setRetry] = useState(0);
-  const running = live?.status === "queued" || live?.status === "processing";
-  const locked = busy || running;
+  const [clips, setClips] = useState<{ file: File; speaker: string }[]>([]),
+    [bed, setBed] = useState<File | null>(null),
+    [script, setScript] = useState(""),
+    [title, setTitle] = useState("");
+  const [choices, setChoices] = useState<Choices>({}),
+    [message, setMessage] = useState(""),
+    [busy, setBusy] = useState(false),
+    [live, setLive] = useState(initial);
+  const locked =
+    busy || live?.status === "queued" || live?.status === "processing";
   const maxBytes = Math.min(maxMb * 1048576, STUDIO_MAX_BYTES);
   const preview = useMemo(() => {
     try {
       return { lines: parseScript(script), error: "" };
-    } catch (error) {
+    } catch (e) {
       return {
         lines: [],
         error: script.trim()
-          ? (error as Error).message
+          ? (e as Error).message
           : "Add your script to continue.",
       };
     }
   }, [script]);
-  const labels = voices.map((v) => v.speaker.trim().toLocaleLowerCase());
-  const speakerError =
-    voices.length > 1 &&
-    (labels.some((s) => !s) || new Set(labels).size !== labels.length)
-      ? "Give each voice stem a unique speaker label matching the script."
-      : labels.some(Boolean) &&
-          (preview.lines.some(
-            (l) => !labels.includes(l.speaker.toLocaleLowerCase()),
-          ) ||
-            labels.some(
-              (label) =>
-                !preview.lines.some(
-                  (l) => l.speaker.toLocaleLowerCase() === label,
-                ),
-            ))
-        ? "Match every script speaker to a voice stem label; each stem needs a script line."
-        : "";
   const bytes =
-    (guide?.size ?? 0) +
-    voices.reduce((n, v) => n + v.file.size, 0) +
+    clips.reduce((n, c) => n + c.file.size, 0) +
     (bed?.size ?? 0) +
     new TextEncoder().encode(script).length +
-    16384;
+    65536;
   const filesReady =
-    !!guide &&
-    voices.length > 0 &&
+    clips.length > 0 &&
+    clips.length <= 200 &&
     preview.lines.length > 0 &&
-    !speakerError &&
     bytes <= maxBytes;
   const selection = jobSchema.safeParse({
     type: "studio",
     settings: processingSettings("studio", { ...choices, hasBed: !!bed }),
   });
-  const showDesk = !!guide && voices.length > 0 && preview.lines.length > 0;
-  const doneId = live?.status === "done" ? live.id : undefined;
-  useEffect(() => {
-    if (!doneId) return;
-    const controller = new AbortController();
-    setReportError("");
-    void (async () => {
-      try {
-        const response = await fetch(`/api/jobs/${doneId}/alignment`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok || response.redirected)
-          throw new Error(
-            "Could not load the alignment table. Your downloads are still available below.",
-          );
-        const parsed = alignmentReportSchema.safeParse(await response.json());
-        if (!parsed.success)
-          throw new Error(
-            "Alignment report could not be read. Download the JSON report to review it.",
-          );
-        if (!controller.signal.aborted) setReport(parsed.data);
-      } catch (error) {
-        if (!controller.signal.aborted)
-          setReportError((error as Error).message);
-      }
-    })();
-    return () => controller.abort();
-  }, [doneId, retry]);
-
   function changed() {
-    setReport(null);
-    setLive(null);
     setMessage("");
-    setReportError("");
+    setLive(null);
+  }
+  function update(key: string, value: string | boolean) {
+    setChoices((v) => ({ ...v, [key]: value }));
   }
   function media(file?: File) {
     if (!file) return null;
@@ -138,14 +80,11 @@ export default function AudioStudio({
       file.size > maxBytes
     ) {
       setMessage(
-        `Choose non-empty audio/video files. Complete projects must fit within ${Math.floor(maxBytes / 1048576)} MB.`,
+        `Choose non-empty audio/video files. Project limit: ${Math.floor(maxBytes / 1048576)} MB.`,
       );
       return null;
     }
     return file;
-  }
-  function update(key: string, value: string | boolean) {
-    setChoices((v) => ({ ...v, [key]: value }));
   }
   async function readScript(file?: File) {
     const version = ++scriptRead.current;
@@ -155,38 +94,27 @@ export default function AudioStudio({
       return;
     }
     try {
-      const text = await file.text();
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(
+        await file.arrayBuffer(),
+      );
       if (version !== scriptRead.current) return;
       changed();
       setScript(text);
     } catch {
-      setMessage("Could not read the script file.");
+      setMessage("Could not read the UTF-8 script file.");
     }
   }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (
-      !guide ||
-      !filesReady ||
-      !selection.success ||
-      locked ||
-      submitting.current
-    )
+    if (!filesReady || !selection.success || locked || submitting.current)
       return;
     submitting.current = true;
     scriptRead.current++;
     setBusy(true);
     setMessage("");
-    setReport(null);
-    setReportError("");
-    const name = title.trim() || guide.name;
-    const initialState = {
-      fileName: name,
-      error: null,
-      durationSec: null,
-      downloads: [],
-    };
-    setLive({ ...initialState, status: "starting" });
+    const name = title.trim() || "Audio Studio session",
+      base = { fileName: name, error: null, durationSec: null, downloads: [] };
+    setLive({ ...base, status: "starting" });
     const path = `${userId}/${crypto.randomUUID()}.zip`;
     let uploaded = false,
       submitted = false;
@@ -198,37 +126,35 @@ export default function AudioStudio({
         entries[key] = new Uint8Array(await file.arrayBuffer());
         return key;
       };
-      const guidePath = await add(guide, "guide");
-      const voicePaths = [];
-      for (const [i, voice] of voices.entries())
-        voicePaths.push({
-          file: await add(voice.file, `voice-${i}`),
-          speaker: voice.speaker.trim(),
-          name: voice.file.name,
+      const manifestClips = [];
+      for (const [i, c] of clips.entries())
+        manifestClips.push({
+          file: await add(c.file, `clip-${i}`),
+          name: c.file.name,
+          speaker: c.speaker.trim(),
         });
       const bedPath = bed ? await add(bed, "bed") : null;
       entries["script.txt"] = strToU8(script);
       entries["manifest.json"] = strToU8(
         JSON.stringify({
-          version: 1,
-          guide: guidePath,
-          voices: voicePaths,
+          version: 2,
+          clips: manifestClips,
           bed: bedPath,
           script: "script.txt",
         }),
       );
-      // Stored ZIP avoids wasting CPU recompressing media; extraction is strictly bounded.
-      const packed = zipSync(entries, { level: 0 });
-      const bundle = new File([new Uint8Array(packed)], "studio.zip", {
-        type: "application/zip",
-      });
+      const bundle = new File(
+        [new Uint8Array(zipSync(entries, { level: 0 }))],
+        "studio.zip",
+        { type: "application/zip" },
+      );
       if (bundle.size > maxBytes)
-        throw new Error("The complete project exceeds your upload limit.");
+        throw Error("The complete project exceeds your upload limit.");
       await uploadFile(path, bundle, (uploadPercent) =>
-        setLive({ ...initialState, status: "uploading", uploadPercent }),
+        setLive({ ...base, status: "uploading", uploadPercent }),
       );
       uploaded = true;
-      setLive({ ...initialState, status: "starting" });
+      setLive({ ...base, status: "starting" });
       submitted = true;
       const response = await fetch("/api/jobs", {
         method: "POST",
@@ -242,28 +168,26 @@ export default function AudioStudio({
       });
       if (!response.ok) {
         if ([400, 403].includes(response.status)) submitted = false;
-        const result = await response.json();
-        throw new Error(result.error || "Could not start Audio Studio.");
+        throw Error(
+          (await response.json()).error || "Could not start Audio Studio.",
+        );
       }
       const result = await response.json();
       if (typeof result.id !== "string")
-        throw new Error("Could not confirm the job.");
-      setLive({ ...initialState, status: "queued", id: result.id });
+        throw Error("Could not confirm the job.");
+      setLive({ ...base, status: "queued", id: result.id });
       router.refresh();
-    } catch (error) {
-      if (uploaded && !submitted) {
+    } catch (e) {
+      if (uploaded && !submitted)
         try {
           await browserClient().storage.from("uploads").remove([path]);
-        } catch {
-          /* Keep original error. */
-        }
-      }
+        } catch {}
       setLive({
-        ...initialState,
+        ...base,
         status: "failed",
         error: submitted
-          ? "Could not confirm the job. It may still be running. Check Recent jobs before trying again."
-          : (error as Error).message,
+          ? "Could not confirm the job. Check Recent jobs before trying again."
+          : (e as Error).message,
       });
       if (submitted) router.refresh();
     } finally {
@@ -271,44 +195,50 @@ export default function AudioStudio({
       setBusy(false);
     }
   }
-  const selectedFormats =
-    choices.subtitles === "on"
-      ? (["srt", "vtt"] as const).filter((f) => choices[f] === true)
-      : report && choices.subtitles === undefined
-        ? (["srt", "vtt"] as const).filter((f) =>
-            live?.downloads.some(
-              (d) => d.label === `Download ${f.toUpperCase()}`,
-            ),
-          )
-        : [];
-  const exportLines = report?.lines ?? preview.lines;
-  const canExportScript =
-    selectedFormats.length > 0 &&
-    exportLines.length > 0 &&
-    exportLines.every((l) => l.start !== undefined);
-  function exportScript() {
-    for (const format of selectedFormats) {
-      const url = URL.createObjectURL(
-        new Blob([subtitleText(exportLines, format)], {
-          type: "text/plain;charset=utf-8",
-        }),
-      );
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${report ? "aligned" : "script"}.${format}`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-  }
-  const mixHref =
-    live?.status === "done"
-      ? live.downloads.find((d) => d.label === "Download WAV")?.href
-      : undefined;
+  const number = (
+    label: string,
+    key: string,
+    min: number,
+    max: number,
+    step = 1,
+  ) => (
+    <label>
+      {label}
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={String(choices[key] ?? "")}
+        onChange={(e) => update(key, e.target.value)}
+      />
+    </label>
+  );
+  const select = (label: string, key: string, values: string[]) => (
+    <label>
+      {label}
+      <select
+        aria-label={label}
+        value={String(choices[key] ?? "")}
+        onChange={(e) => update(key, e.target.value)}
+      >
+        <option value="">Select…</option>
+        {values.map((v) => (
+          <option key={v} value={v}>
+            {v}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
   return (
     <div className="audio-studio">
       {!live && (
         <div className="card">
           <Visualizer compact />
+          <p className="muted">
+            Script-driven arrangement · your clips, your timing.
+          </p>
         </div>
       )}
       <form onSubmit={submit}>
@@ -317,9 +247,10 @@ export default function AudioStudio({
             <p className="eyebrow">01 · YOUR FILES</p>
             <h3>Build your session</h3>
             <p className="muted">
-              One guide + up to eight voice stems. Optional music/SFX bed. Up to{" "}
-              {Math.floor(maxBytes / 1048576)} MB total; 60 minutes per file and
-              120 minutes combined. Minutes are charged once by guide duration.
+              Script + 1–200 audio clips; speaker labels are optional. Up to{" "}
+              {Math.floor(maxBytes / 1048576)} MB total, 60 minutes per file /
+              120 minutes combined. Output timing comes from speech and your
+              chosen gaps.
             </p>
             <label>
               Project title (optional)
@@ -333,342 +264,195 @@ export default function AudioStudio({
             <div className="studio-file-grid">
               <div className="studio-file-slot">
                 <label>
-                  Guide track
-                  <input
-                    type="file"
-                    accept={accept}
-                    onChange={(e) => {
-                      changed();
-                      setGuide(media(e.target.files?.[0]));
-                    }}
-                  />
-                </label>
-                <small className="muted">
-                  Audio or video · timing reference, excluded from the mix
-                </small>
-                {guide && <InputPreview file={guide} />}
-              </div>
-              <div className="studio-file-slot">
-                <label>
-                  Voice / dub tracks
+                  Audio clips
                   <input
                     type="file"
                     accept={accept}
                     multiple
                     onChange={(e) => {
                       changed();
-                      const files = Array.from(e.target.files ?? []);
-                      if (files.length > 8) {
-                        setVoices([]);
-                        setMessage("Choose up to eight voice tracks.");
+                      const all = Array.from(e.target.files ?? []);
+                      if (all.length + clips.length > 200) {
+                        setMessage("Use at most 200 clips.");
                         return;
                       }
-                      const checked = files.map(media);
-                      setVoices(
-                        checked.every(Boolean)
-                          ? checked.map((file) => ({
-                              file: file!,
-                              speaker: "",
-                            }))
-                          : [],
-                      );
+                      const valid = all
+                        .map(media)
+                        .filter((f): f is File => !!f);
+                      setClips((v) => [
+                        ...v,
+                        ...valid.map((file) => ({ file, speaker: "" })),
+                      ]);
+                      e.target.value = "";
                     }}
                   />
                 </label>
-                {voices.map((voice, i) => (
+                {clips.map((c, i) => (
                   <div className="studio-voice" key={i}>
-                    <b>{voice.file.name}</b>
+                    <b>{c.file.name}</b>
                     <label>
-                      Speaker label for voice {i + 1}
+                      Speaker {i + 1} (optional)
                       <input
-                        value={voice.speaker}
+                        value={c.speaker}
                         maxLength={60}
-                        placeholder="e.g. Narrator"
                         onChange={(e) => {
                           changed();
-                          setVoices((v) =>
-                            v.map((item, j) =>
-                              j === i
-                                ? { ...item, speaker: e.target.value }
-                                : item,
+                          setClips((v) =>
+                            v.map((x, j) =>
+                              j === i ? { ...x, speaker: e.target.value } : x,
                             ),
                           );
                         }}
                       />
                     </label>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={() => {
+                        changed();
+                        setClips((v) => v.filter((_, j) => i !== j));
+                      }}
+                    >
+                      Remove clip {i + 1}
+                    </button>
                   </div>
                 ))}
-                <small className="muted">
-                  For multiple stems, match each speaker label exactly to the
-                  script. One unlabeled stem can contain all dialogue in script
-                  order.
-                </small>
               </div>
-            </div>
-            <label>
-              Music / SFX bed (optional)
-              <input
-                ref={bedInput}
-                type="file"
-                accept={accept}
-                onChange={(e) => {
-                  changed();
-                  setBed(media(e.target.files?.[0]));
-                }}
-              />
-            </label>
-            {bed && (
-              <button
-                type="button"
-                className="btn ghost sm"
-                onClick={() => {
-                  changed();
-                  setBed(null);
-                  if (bedInput.current) bedInput.current.value = "";
-                }}
-              >
-                Remove bed
-              </button>
-            )}
-            <div className="studio-script-input">
-              <label>
-                Import script (TXT / SRT / VTT)
-                <input
-                  type="file"
-                  accept=".txt,.srt,.vtt"
-                  onChange={(e) => void readScript(e.target.files?.[0])}
-                />
-              </label>
-              <label>
-                Script
-                <textarea
-                  aria-label="Script"
-                  rows={6}
-                  value={script}
-                  onChange={(e) => {
-                    scriptRead.current++;
-                    changed();
-                    setScript(e.target.value);
-                  }}
-                  placeholder={
-                    "Narrator: A new day begins.\nMeera: I am ready."
-                  }
-                />
-              </label>
-              <small className="muted">
-                UTF-8 · up to 64 KB / 300 lines. Existing SRT/VTT timing is
-                treated as guide timing.
-              </small>
-            </div>
-            {(message ||
-              (script.trim() && preview.error) ||
-              speakerError ||
-              bytes > maxBytes) && (
-              <p role="alert">
-                {message ||
-                  preview.error ||
-                  speakerError ||
-                  "Your complete project exceeds the upload limit."}
-              </p>
-            )}
-          </section>
-        </fieldset>
-        {(showDesk || report) && (
-          <StudioTimeline
-            report={report}
-            lines={preview.lines}
-            voices={voices.map((v) => ({
-              name: v.file.name,
-              speaker: v.speaker,
-            }))}
-            guide={guide?.name ?? ""}
-            bed={bed?.name}
-            state={live?.status}
-            mixHref={mixHref}
-          />
-        )}
-        <fieldset disabled={locked}>
-          {showDesk && (
-            <section
-              className="card studio-options"
-              aria-label="Auto-mix settings"
-            >
-              <p className="eyebrow">03 · YOUR MIX</p>
-              <h3>Auto-mix settings</h3>
-              <p className="muted">
-                Choose every process. Presets fill only the field you select.
-                Final loudness uses a 0 dBTP safety bound.
-              </p>
-              <div className="studio-options-grid">
-                <div>
-                  <label>
-                    Dialogue level (LUFS)
-                    <input
-                      type="number"
-                      step="0.1"
-                      min={-70}
-                      max={-5}
-                      value={String(choices.dialogueLufs ?? "")}
-                      onChange={(e) => update("dialogueLufs", e.target.value)}
-                    />
-                  </label>
-                  <div className="studio-presets">
-                    {[
-                      ["Podcast", -16],
-                      ["Broadcast", -23],
-                      ["Film", -24],
-                    ].map(([name, n]) => (
-                      <button
-                        type="button"
-                        className="btn ghost sm"
-                        key={name}
-                        onClick={() => update("dialogueLufs", String(n))}
-                      >
-                        {name} {n}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              <div className="studio-file-slot">
                 <label>
-                  Final master target (LUFS)
+                  Music/SFX bed (optional)
                   <input
-                    type="number"
-                    step="0.1"
-                    min={-70}
-                    max={-5}
-                    value={String(choices.masterLufs ?? "")}
-                    onChange={(e) => update("masterLufs", e.target.value)}
+                    ref={bedInput}
+                    type="file"
+                    accept={accept}
+                    onChange={(e) => {
+                      changed();
+                      setBed(media(e.target.files?.[0]));
+                    }}
                   />
                 </label>
                 {bed && (
-                  <label>
-                    Music ducking (dB)
-                    <input
-                      type="number"
-                      min={0}
-                      max={40}
-                      step="0.1"
-                      value={String(choices.duckingDb ?? "")}
-                      onChange={(e) => update("duckingDb", e.target.value)}
-                    />
-                    <small>0 dB keeps the bed level unchanged.</small>
-                  </label>
+                  <>
+                    <p>{bed.name}</p>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={() => {
+                        changed();
+                        setBed(null);
+                        if (bedInput.current) bedInput.current.value = "";
+                      }}
+                    >
+                      Remove bed
+                    </button>
+                  </>
                 )}
-                <div>
-                  <label>
-                    Room tone fill
-                    <select
-                      aria-label="Room tone fill"
-                      value={String(choices.roomTone ?? "")}
-                      onChange={(e) => update("roomTone", e.target.value)}
-                    >
-                      <option value="">Choose…</option>
-                      <option value="off">Off</option>
-                      <option value="on">Choose amount</option>
-                    </select>
-                  </label>
-                  {choices.roomTone === "on" && (
-                    <label>
-                      Room tone amount (%)
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step="1"
-                        value={String(choices.roomAmount ?? "")}
-                        onChange={(e) => update("roomAmount", e.target.value)}
-                      />
-                      <small>
-                        Fills dialogue gaps from a quiet guide region, if
-                        available.
-                      </small>
-                    </label>
-                  )}
-                </div>
-                <div>
-                  <label>
-                    Subtitles from script
-                    <select
-                      aria-label="Subtitles from script"
-                      value={String(choices.subtitles ?? "")}
-                      onChange={(e) => update("subtitles", e.target.value)}
-                    >
-                      <option value="">Choose…</option>
-                      <option value="off">Off</option>
-                      <option value="on">On</option>
-                    </select>
-                  </label>
-                  {choices.subtitles === "on" && (
-                    <div className="studio-format-choices">
-                      {["srt", "vtt"].map((f) => (
-                        <label key={f}>
-                          <input
-                            type="checkbox"
-                            checked={choices[f] === true}
-                            onChange={(e) => update(f, e.target.checked)}
-                          />
-                          {f.toUpperCase()}
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </div>
+            </div>
+            <label>
+              Script file (TXT, SRT or VTT)
+              <input
+                type="file"
+                accept=".txt,.srt,.vtt"
+                onChange={(e) => void readScript(e.target.files?.[0])}
+              />
+            </label>
+            <label>
+              Script text
+              <textarea
+                rows={8}
+                value={script}
+                onChange={(e) => {
+                  scriptRead.current++;
+                  changed();
+                  setScript(e.target.value);
+                }}
+                placeholder="NARRATOR: Every story starts with a voice."
+              />
+            </label>
+            <p className="muted">
+              {preview.lines.length
+                ? `${preview.lines.length} script lines. Timestamps set order only.`
+                : preview.error}
+            </p>
+            {bytes > maxBytes && (
+              <p role="alert">
+                The complete project exceeds your upload limit.
+              </p>
+            )}
+          </section>
+          {clips.length > 0 && preview.lines.length > 0 && (
+            <section className="card" aria-label="Processing options">
+              <p className="eyebrow">02 · YOUR ARRANGEMENT</p>
+              <h3>Choose your settings</h3>
+              <div className="studio-options-grid">
+                {number("Line gap (ms)", "lineGap", 0, 5000)}
+                {select("Match strictness", "matchStrictness", [
+                  "strict",
+                  "normal",
+                  "loose",
+                ])}
+                {number("Dialogue target (LUFS)", "dialogueLufs", -70, -5, 0.1)}
+                {number("Master target (LUFS)", "masterLufs", -70, -5, 0.1)}
+                {bed && (
+                  <>
+                    {number("Bed ducking (dB)", "duckingDb", 0, 40, 0.1)}
+                    {select("Bed fit", "bedFit", ["trim", "loop", "extend"])}
+                  </>
+                )}
+                {select("Room tone", "roomTone", ["off", "on"])}
+                {choices.roomTone === "on" &&
+                  number("Room tone amount (%)", "roomAmount", 0, 100)}
+                {select("Subtitles", "subtitles", ["off", "on"])}
+                {choices.subtitles === "on" && (
+                  <div className="studio-format-choices">
+                    {["srt", "vtt"].map((f) => (
+                      <label key={f}>
+                        <input
+                          type="checkbox"
+                          checked={choices[f] === true}
+                          onChange={(e) => update(f, e.target.checked)}
+                        />
+                        {f.toUpperCase()}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <p className="muted">
+                Language is checked before billing. Uncertain language results
+                are flagged. The first export is included; later exports use
+                processing minutes.
+              </p>
             </section>
           )}
           <div className="processing-start">
-            <div className="studio-actions">
-              <button
-                className="btn"
-                disabled={!filesReady || !selection.success || locked}
-                aria-describedby="studio-help"
-              >
-                {busy
-                  ? "Preparing session…"
-                  : running
-                    ? "Processing…"
-                    : "Auto-mix & Master"}
-              </button>
-              <button
-                type="button"
-                className="btn ghost"
-                disabled={!canExportScript || locked}
-                onClick={exportScript}
-              >
-                Export SRT / VTT
-              </button>
-            </div>
-            <p id="studio-help" className="muted">
+            <button
+              className="btn"
+              disabled={!filesReady || !selection.success || locked}
+            >
+              Start Processing
+            </button>
+            <p className="muted">
               {!filesReady
-                ? "Add guide, voice tracks and a valid script to continue."
+                ? "Add your script and audio clips to continue."
                 : !selection.success
                   ? "Select your options above."
-                  : locked
-                    ? "Follow your live session below."
-                    : "Your selected options are ready."}
-            </p>
-            <p className="muted">
-              Timed scripts can be exported before mixing. For plain text,
-              aligned subtitle downloads appear after processing. Heuristic
-              alignment requires review and cannot guarantee ±150 ms accuracy.
+                  : "Ready to arrange your session."}
             </p>
           </div>
         </fieldset>
       </form>
-      {reportError && (
-        <div className="card" role="alert">
-          <p>{reportError}</p>
-          <button
-            type="button"
-            className="btn ghost"
-            onClick={() => setRetry((n) => n + 1)}
-          >
-            Retry alignment table
-          </button>
-        </div>
-      )}
+      {message && <p role="alert">{message}</p>}
       {live && (
         <ProcessingStatus state={live} setState={setLive} type="studio" />
+      )}
+      {live?.status === "done" && live.id && (
+        <StudioDaw
+          key={live.id}
+          jobId={live.id}
+          lineGap={Number(choices.lineGap ?? 0) / 1000}
+        />
       )}
     </div>
   );

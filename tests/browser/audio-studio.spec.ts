@@ -1,9 +1,14 @@
-import { test, expect, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Page,
+  type APIRequestContext,
+} from "@playwright/test";
+import { readFileSync, mkdirSync } from "node:fs";
 import { unzipSync, strFromU8 } from "fflate";
-
-test.skip(!process.env.DESK_FIXTURE, "Use playwright.desk.config.ts.");
-const fixture = "http://127.0.0.1:54331";
-const owner = "11111111-1111-4111-8111-111111111111";
+test.skip(!process.env.DESK_FIXTURE, "Use playwright.desk.config.ts");
+const fixture = "http://127.0.0.1:54331",
+  owner = "11111111-1111-4111-8111-111111111111";
 const wave = Buffer.alloc(16044);
 wave.write("RIFF");
 wave.writeUInt32LE(wave.length - 8, 4);
@@ -17,98 +22,90 @@ wave.writeUInt16LE(2, 32);
 wave.writeUInt16LE(16, 34);
 wave.write("data", 36);
 wave.writeUInt32LE(16000, 40);
-const file = { name: "voice.wav", mimeType: "audio/wav", buffer: wave };
-const script = "Narrator: Hello there\nNarrator: Goodbye";
+const file = { name: "meera_03.wav", mimeType: "audio/wav", buffer: wave };
+const script =
+  "Narrator: Hello there\nMeera: Welcome home\nMeera: Where is the key?";
 async function files(page: Page) {
-  await page
-    .getByLabel("Guide track", { exact: true })
-    .setInputFiles({ ...file, name: "guide.wav" });
-  await page
-    .getByLabel("Voice / dub tracks", { exact: true })
-    .setInputFiles(file);
-  await page.getByLabel("Script", { exact: true }).fill(script);
+  await expect(page.getByLabel("Guide track", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Audio clips", { exact: true }).setInputFiles(file);
+  await page.getByLabel("Script text", { exact: true }).fill(script);
 }
 async function options(page: Page) {
-  await page.getByLabel("Dialogue level (LUFS)", { exact: true }).fill("-23");
+  await page.getByLabel("Line gap (ms)", { exact: true }).fill("250");
   await page
-    .getByLabel("Final master target (LUFS)", { exact: true })
-    .fill("-16");
-  await page.getByLabel("Room tone fill", { exact: true }).selectOption("off");
+    .getByLabel("Match strictness", { exact: true })
+    .selectOption("normal");
+  await page.getByLabel("Dialogue target (LUFS)", { exact: true }).fill("-23");
+  await page.getByLabel("Master target (LUFS)", { exact: true }).fill("-16");
+  await page.getByLabel("Room tone", { exact: true }).selectOption("off");
+  await page.getByLabel("Subtitles", { exact: true }).selectOption("off");
+}
+async function queue(page: Page) {
+  const queued = page.waitForResponse(
+    (r) => r.url().endsWith("/api/jobs") && r.request().method() === "POST",
+  );
   await page
-    .getByLabel("Subtitles from script", { exact: true })
-    .selectOption("on");
-  await page.getByLabel("SRT", { exact: true }).check();
+    .getByRole("button", { name: "Start Processing", exact: true })
+    .click();
+  const response = await queued;
+  expect(response.status()).toBe(201);
+  return (await response.json()).id as string;
+}
+async function complete(request: APIRequestContext, id: string) {
+  const arrangement = JSON.parse(
+    readFileSync("tests/fixtures/daw-arrangement.json", "utf8"),
+  );
+  arrangement.job_id = id;
+  await request.post(fixture + "/__job", {
+    data: {
+      id,
+      status: "done",
+      duration_sec: 8,
+      error: null,
+      arrangement,
+      output_paths: [
+        `${owner}/${id}/arrangement-r1.json`,
+        ...["c0", "c1"].flatMap((c) => [
+          `${owner}/${id}/stems/${c}.wav`,
+          `${owner}/${id}/peaks/${c}.json`,
+        ]),
+      ],
+    },
+  });
 }
 test.beforeEach(async ({ page, request }) => {
   await request.post(fixture + "/__reset");
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/signin");
   await page.getByLabel("Email", { exact: true }).fill("desk@example.test");
   await page.getByLabel("Password", { exact: true }).fill("desk-test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/dashboard/, { timeout: 15000 });
-  await page.getByRole("link", { name: "Audio Studio", exact: true }).click();
-  await expect(page).toHaveURL(/\/studio$/);
+  await expect(page).toHaveURL(/dashboard/);
+  await page.goto("/studio");
 });
-
-test("studio files -> explicit choices -> real ZIP job -> live status -> alignment and downloads", async ({
+test("v2 ZIP, blank settings, real peak lanes, playback and server export choices", async ({
   page,
   request,
-}, info) => {
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
+}) => {
+  mkdirSync("docs/studio-daw", { recursive: true });
   const start = page.getByRole("button", {
-    name: "Auto-mix & Master",
+    name: "Start Processing",
     exact: true,
   });
-  await expect(
-    page.getByRole("heading", { name: "Audio Studio", exact: true }),
-  ).toBeVisible();
   await expect(start).toBeDisabled();
-  await expect(
-    page.getByRole("region", { name: "Auto-mix settings" }),
-  ).toHaveCount(0);
   await files(page);
-  await expect(
-    page.getByRole("region", { name: "Multitrack timeline" }),
-  ).toBeVisible();
-  const opts = page.getByRole("region", { name: "Auto-mix settings" });
-  await expect(opts).toBeVisible();
-  expect((await opts.boundingBox())!.y).toBeGreaterThan(
-    (await page.getByRole("region", { name: "Studio files" }).boundingBox())!.y,
+  await expect(start).toBeDisabled();
+  await expect(page.getByLabel("Line gap (ms)", { exact: true })).toHaveValue(
+    "",
   );
-  for (const label of [
-    "Dialogue level (LUFS)",
-    "Final master target (LUFS)",
-    "Room tone fill",
-    "Subtitles from script",
-  ])
-    await expect(page.getByLabel(label, { exact: true })).toHaveValue("");
-  await page.getByRole("button", { name: "Podcast -16", exact: true }).click();
-  await expect(page.getByLabel("Dialogue level (LUFS)")).toHaveValue("-16");
-  await expect(page.getByLabel("Final master target (LUFS)")).toHaveValue("");
   await options(page);
-  await page
-    .getByLabel("Music / SFX bed (optional)", { exact: true })
-    .setInputFiles({ ...file, name: "bed.wav" });
-  await expect(start).toBeDisabled();
-  await expect(page.getByLabel("Music ducking (dB)")).toHaveValue("");
-  await page.getByLabel("Music ducking (dB)").fill("0");
-  await expect(start).toBeEnabled();
-  await page.getByLabel("SRT", { exact: true }).uncheck();
-  await expect(start).toBeDisabled();
-  await page.getByLabel("SRT", { exact: true }).check();
-  await page.getByLabel("VTT", { exact: true }).check();
-  await page.screenshot({
-    path: info.outputPath("audio-studio-desktop.png"),
-    fullPage: true,
-  });
   let zip: Buffer | null = null;
   await page.route("**/storage/v1/object/uploads/**", async (route) => {
-    const body = route.request().postDataBuffer()!;
-    const contentType = route.request().headers()["content-type"];
-    if (contentType?.startsWith("multipart/form-data")) {
+    const body = route.request().postDataBuffer()!,
+      type = route.request().headers()["content-type"];
+    if (type?.startsWith("multipart/form-data")) {
       const form = await new Response(new Uint8Array(body), {
-        headers: { "Content-Type": contentType },
+        headers: { "Content-Type": type },
       }).formData();
       for (const value of form.values())
         if (typeof value !== "string")
@@ -116,174 +113,167 @@ test("studio files -> explicit choices -> real ZIP job -> live status -> alignme
     } else zip = body;
     await route.continue();
   });
-  const queued = page.waitForResponse(
-    (r) => r.url().endsWith("/api/jobs") && r.request().method() === "POST",
+  await page.screenshot({ path: "docs/studio-daw/desk.png", fullPage: true });
+  const id = await queue(page);
+  expect(zip).not.toBeNull();
+  const manifest = JSON.parse(strFromU8(unzipSync(zip!)["manifest.json"]));
+  expect(manifest.version).toBe(2);
+  expect(manifest.guide).toBeUndefined();
+  expect(manifest.clips[0].name).toBe("meera_03.wav");
+  await complete(request, id);
+  const daw = page.getByRole("region", { name: "DAW timeline", exact: true });
+  await expect(daw).toBeVisible();
+  await expect(daw.locator(".daw-lane")).toHaveCount(2);
+  await expect(daw.locator(".daw-peaks")).toHaveCount(2);
+  await expect(daw.getByText("Missing line: Where is the key?")).toBeVisible();
+  await expect(daw.getByText("Unused alternate take")).toBeVisible();
+  await daw.scrollIntoViewIfNeeded();
+  await daw.focus();
+  await page.keyboard.press("Space");
+  await expect(
+    daw.getByRole("button", { name: "Pause", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Space");
+  const ruler = daw.getByRole("slider", { name: "Time ruler" });
+  const box = (await ruler.boundingBox())!;
+  await page.mouse.click(box.x + 50, box.y + 20);
+  await expect(daw.getByLabel("Current time", { exact: true })).toHaveText(
+    "00:01.000",
   );
-  await start.click();
-  const response = await queued;
-  expect(response.status()).toBe(201);
-  const payload = response.request().postDataJSON();
-  expect(payload.type).toBe("studio");
-  expect(payload.input_path).toMatch(new RegExp(`^${owner}/.*\\.zip$`));
-  expect(payload.settings).toEqual({
-    dialogue_lufs: -23,
-    master_lufs: -16,
-    has_bed: true,
-    ducking_db: 0,
-    room_tone: { enabled: false },
-    subtitles: { enabled: true, formats: ["srt", "vtt"] },
+  const head = daw.getByRole("slider", { name: "Playhead", exact: true });
+  const h = (await head.boundingBox())!;
+  await page.mouse.move(h.x, h.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(h.x + 30, h.y + 20);
+  await page.mouse.up();
+  await expect(daw.getByLabel("Current time", { exact: true })).toHaveText(
+    "00:01.600",
+  );
+  await page.screenshot({
+    path: "docs/studio-daw/timeline-missing.png",
+    fullPage: true,
   });
-  expect(Buffer.byteLength(JSON.stringify(payload.settings))).toBeLessThan(
-    8192,
-  );
-  const unpacked = unzipSync(zip!);
-  expect(strFromU8(unpacked["script.txt"])).toBe(script);
-  expect(JSON.parse(strFromU8(unpacked["manifest.json"])).voices).toEqual([
-    { file: "voice-0.wav", speaker: "", name: "voice.wav" },
-  ]);
-  const { id } = await response.json();
-  const live = page.getByRole("region", { name: "Live processing" });
-  await expect(live.getByRole("status", { name: "Job progress" })).toHaveText(
-    "Queued",
-  );
-  await request.post(fixture + "/__job", {
-    data: { id, status: "processing" },
+  await daw.getByRole("button", { name: "Export mix", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Export your mix" });
+  await expect(
+    dialog.getByRole("button", { name: "Confirm export" }),
+  ).toBeDisabled();
+  await dialog.getByLabel("MP3", { exact: true }).check();
+  await expect(
+    dialog.getByRole("button", { name: "Confirm export" }),
+  ).toBeDisabled();
+  await dialog
+    .getByLabel("MP3 bitrate (kbps)", { exact: true })
+    .selectOption("320");
+  await dialog
+    .getByLabel("MP3 sample rate (Hz)", { exact: true })
+    .selectOption("48000");
+  await dialog
+    .getByLabel("Export subtitles", { exact: true })
+    .selectOption("none");
+  await dialog
+    .getByLabel("Missing lines in subtitles", { exact: true })
+    .selectOption("exclude");
+  await page.screenshot({
+    path: "docs/studio-daw/export-dialog.png",
+    fullPage: true,
   });
-  await expect(live.getByRole("status")).toHaveText("Processing", {
-    timeout: 20000,
+  const exported = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/jobs") &&
+      r.request().postDataJSON()?.type === "studio_export",
+  );
+  await dialog.getByRole("button", { name: "Confirm export" }).click();
+  expect((await exported).status()).toBe(201);
+});
+test("move lane/time, trim, undo/redo, split, missing bin placement and autosave", async ({
+  page,
+  request,
+}) => {
+  await files(page);
+  await options(page);
+  const id = await queue(page);
+  await complete(request, id);
+  const daw = page.getByRole("region", { name: "DAW timeline", exact: true });
+  await expect(daw).toBeVisible();
+  await daw.scrollIntoViewIfNeeded();
+  const region = daw.getByRole("button", {
+    name: "Region Hello there",
+    exact: true,
   });
-  const timeline = page.getByRole("region", { name: "Multitrack timeline" });
-  await expect(timeline.locator(".studio-pending-clip")).toHaveCSS(
-    "animation-name",
-    "studio-snap",
-  );
-  await page.getByRole("button", { name: "Pause clip motion" }).click();
-  await expect(timeline.locator(".studio-pending-clip")).toHaveCSS(
-    "animation-name",
-    "none",
-  );
-  await page.getByRole("button", { name: "Resume clip motion" }).click();
-  await expect(timeline.locator(".studio-pending-clip")).toHaveCSS(
-    "animation-name",
-    "studio-snap",
-  );
+  const box = (await region.boundingBox())!;
+  await page.mouse.move(box.x + 30, box.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 80, box.y + 130, { steps: 5 });
+  await page.mouse.up();
+  await expect(daw.locator('[data-lane="l1"] .daw-region')).toHaveCount(2);
+  await daw.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(daw.locator('[data-lane="l0"] .daw-region')).toHaveCount(1);
+  await daw.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(daw.locator('[data-lane="l1"] .daw-region')).toHaveCount(2);
+  const ruler = daw.getByRole("slider", { name: "Time ruler", exact: true });
+  const rulerBox = (await ruler.boundingBox())!;
+  await page.mouse.click(rulerBox.x + 75, rulerBox.y + 20);
+  await region.focus();
+  await page.keyboard.press("s");
+  await expect(daw.locator(".daw-region")).toHaveCount(3);
+  await daw.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(daw.locator(".daw-region")).toHaveCount(2);
+  const trim = daw.getByRole("button", { name: "Trim end r0", exact: true });
+  await trim.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(
+    daw.getByRole("status", { name: "Autosave", exact: true }),
+  ).toContainText("Saving");
+  await expect(
+    daw.getByRole("status", { name: "Autosave", exact: true }),
+  ).toContainText("Saved", {
+    timeout: 10000,
+  });
+  const bin = daw.locator(".daw-bin-item");
+  await bin.getByLabel("Place on lane", { exact: true }).selectOption("l0");
+  await expect(daw.getByText("Unplaced segments (0)")).toBeVisible();
+  await expect(
+    daw.getByRole("status", { name: "Autosave", exact: true }),
+  ).toContainText("Saved", {
+    timeout: 10000,
+  });
+  await daw.focus();
+  await page.keyboard.press("Control+z");
+  await expect(daw.getByText("Unplaced segments (1)")).toBeVisible();
+  await page.keyboard.press("Control+Shift+z");
+  await expect(daw.getByText("Unplaced segments (0)")).toBeVisible();
+});
+test("language mismatch lists clips, charges zero, reduced-motion and mobile view", async ({
+  page,
+  request,
+}) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(timeline.locator(".studio-pending-clip")).toHaveCSS(
-    "animation-name",
-    "none",
-  );
-  await page.setViewportSize({ width: 375, height: 812 });
+  await files(page);
+  await options(page);
+  const id = await queue(page);
+  await request.post(fixture + "/__job", {
+    data: {
+      id,
+      status: "failed",
+      error: "The language of the clips and the script do not match",
+      error_code: "language_mismatch",
+      error_detail: {
+        script_lang: "hi",
+        clips: [{ name: "meera_03.wav", lang: "en", prob: 0.99 }],
+      },
+    },
+  });
+  await expect(page.getByText(/Script: hi/)).toBeVisible();
+  await expect(page.getByText("meera_03.wav: en (99%)")).toBeVisible();
+  await page.screenshot({
+    path: "docs/studio-daw/language-error.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 375, height: 844 });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
-  ).toBe(true);
-  await page.screenshot({
-    path: info.outputPath("audio-studio-live-mobile.png"),
-    fullPage: true,
-  });
-  await request.post(fixture + "/__job", {
-    data: {
-      id,
-      status: "done",
-      duration_sec: 6,
-      output_paths: [
-        "studio-mix.wav",
-        "alignment-report.json",
-        "subtitles.srt",
-        "subtitles.vtt",
-      ].map((f) => `${owner}/${id}/${f}`),
-      report: {
-        method: "heuristic-v1",
-        duration: 6,
-        note: "Heuristic timing: review before publishing.",
-        tracks: [{ id: "voice-0", speaker: "", name: "voice.wav" }],
-        lines: [
-          {
-            text: "Hello there",
-            speaker: "Narrator",
-            start: 0.5,
-            end: 1.5,
-            source_start: 1,
-            source_end: 2,
-            track: "voice-0",
-            confidence: 0.45,
-            flags: ["Low confidence: review timing"],
-          },
-        ],
-      },
-    },
-  });
-  await expect(live.getByRole("status")).toHaveText("Done", { timeout: 20000 });
-  await expect(timeline.getByText("45 / 100 · Low confidence")).toBeVisible();
-  await expect(
-    live.getByRole("link", { name: "Download alignment report (JSON)" }),
-  ).toHaveAttribute("href", `/api/jobs/${id}/download?index=1`);
-  for (const name of ["Download WAV", "Download SRT", "Download VTT"])
-    await expect(live.getByRole("link", { name, exact: true })).toBeVisible();
-  await timeline.getByRole("button", { name: "Review line 1" }).click();
-  await expect(timeline.locator(".studio-selected-row")).toHaveCount(1);
-  await expect(page).toHaveURL(/\/studio$/);
-  await page.reload();
-  await expect(page.getByText("45 / 100 · Low confidence")).toBeVisible();
-  expect(errors).toEqual([]);
-});
-
-test("speaker mapping, timed script exports, reduced motion and input validation", async ({
-  page,
-}) => {
-  await files(page);
-  await options(page);
-  await page
-    .getByLabel("Voice / dub tracks", { exact: true })
-    .setInputFiles([file, { ...file, name: "meera.wav" }]);
-  const start = page.getByRole("button", {
-    name: "Auto-mix & Master",
-    exact: true,
-  });
-  await expect(start).toBeDisabled();
-  await page.getByLabel("Speaker label for voice 1").fill("Narrator");
-  await page.getByLabel("Speaker label for voice 2").fill("Meera");
-  await page
-    .getByLabel("Script", { exact: true })
-    .fill(
-      "1\n00:00:00,000 --> 00:00:01,000\nNarrator: Hello\n\n2\n00:00:01,100 --> 00:00:02,000\nMeera: Hi",
-    );
-  await expect(start).toBeEnabled();
-  const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export SRT / VTT" }).click();
-  expect((await download).suggestedFilename()).toBe("script.srt");
-  await page.getByLabel("Room tone fill").selectOption("on");
-  await expect(start).toBeDisabled();
-  await page.getByLabel("Room tone amount (%)").fill("0");
-  await expect(start).toBeEnabled();
-  await page.getByLabel("Guide track", { exact: true }).setInputFiles({
-    name: "bad.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("bad"),
-  });
-  await expect(start).toBeDisabled();
-  await expect(
-    page.getByRole("region", { name: "Studio files" }).getByRole("alert"),
-  ).toContainText("Choose non-empty audio/video files");
-  const status = await page.evaluate(async (owner) => {
-    const r = await fetch("/api/jobs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "studio",
-        file_name: "foreign.zip",
-        input_path: "22222222-2222-4222-8222-222222222222/a.zip",
-        settings: {
-          dialogue_lufs: -23,
-          master_lufs: -16,
-          has_bed: false,
-          room_tone: { enabled: false },
-          subtitles: { enabled: false },
-        },
-      }),
-    });
-    return r.status;
-  }, owner);
-  expect(status).toBe(400);
+  ).toBeTruthy();
 });
