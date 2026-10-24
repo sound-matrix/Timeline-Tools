@@ -1,0 +1,39 @@
+import copy,json,tempfile,unittest,math
+from pathlib import Path
+import numpy as np
+import soundfile as sf
+from workers.editor_export import asset_path,validate_editor_snapshot,render_editor
+from workers.studio_audio import migrate_arrangement,fade_envelope,pan_gains
+from workers.studio_export import apply_inserts
+OWNER='a1111111-1111-4111-8111-111111111111';PROJECT='33333333-3333-4333-8333-333333333333';ASSET='55555555-5555-4555-8555-555555555555'
+def fixture():
+ a=migrate_arrangement(json.loads(Path('tests/fixtures/daw-arrangement.json').read_text()));a.update(job_id=PROJECT,editor_project=True,pan_law='equal_power',legacy_mastering=False,duration=2,missing=[],unplaced=[])
+ a['loop']['end']=2;a['clips']=[dict(id=ASSET,asset=ASSET,name='Imported.wav',duration=2)]
+ r=dict(a['regions'][0],clip=ASSET,src_start=0,src_end=2,start=0,fade_in=.1,fade_out=.3,gain_db=-6,fade_curve='equal_power',lines=[])
+ a['regions']=[r,dict(r,id='crossfade',start=.5,src_end=1.5,fade_in=.5,fade_out=.5,gain_db=-9)]
+ a['lanes'][0]['pan']=.3;a['master']['gain_db']=-2
+ return a
+class EditorExport(unittest.TestCase):
+ def test_paths_ownership_and_insert_passthrough(self):
+  path=f'editor/{OWNER}/{PROJECT}/{ASSET}.wav'
+  self.assertEqual(asset_path(path,OWNER,PROJECT,ASSET),path)
+  for bad in (path.replace(OWNER,PROJECT),path+'/../secret',path.replace('.wav','.mp4')):
+   with self.assertRaises(ValueError):asset_path(bad,OWNER,PROJECT,ASSET)
+  a=fixture();row=dict(id=ASSET,project_id=PROJECT,user_id=OWNER,storage_path=path,peaks_path=path[:-4]+'.peaks',duration=2)
+  validate_editor_snapshot(dict(arrangement=a,assets=[row]),OWNER,PROJECT)
+  with self.assertRaises(ValueError):validate_editor_snapshot(dict(arrangement=a,assets=[dict(row,user_id=PROJECT)]),OWNER,PROJECT)
+  value=np.ones(10);self.assertIs(apply_inserts(value,[]),value)
+  with self.assertRaises(ValueError):apply_inserts(value,[{}])
+ def test_editor_export_range_and_parity_fixture(self):
+  a=fixture();rate=48000;t=np.arange(rate*2)/rate;signal=np.column_stack([np.sin(t*440*2*np.pi)*.1,np.sin(t*660*2*np.pi)*.1]).astype('float32')
+  with tempfile.TemporaryDirectory() as tmp:
+   folder=Path(tmp);source=folder/'source.wav';sf.write(source,signal,rate,subtype='FLOAT')
+   settings=dict(revision=1,range=[0,2],options=dict(format='wav',rate=rate,depth=24,bitrate=320,normalize=False),subtitles=[])
+   paths=render_editor({ASSET:source},a,folder,settings);out,sr=sf.read(paths[0],dtype='float32',always_2d=True)
+   reference=np.zeros_like(signal)
+   for r in a['regions']:
+    start=round(r['start']*rate);count=round((r['src_end']-r['src_start'])*rate);samples=signal[:count]
+    env=fade_envelope(r,np.arange(count)/rate);gain=10**((r['gain_db']+a['lanes'][0]['gain_db']+a['master']['gain_db'])/20)
+    reference[start:start+count]+=samples*env[:,None]*np.asarray(pan_gains(.3))*gain
+   rms=float(np.sqrt(np.mean((out-reference)**2)));self.assertLess(20*math.log10(max(rms,1e-20)),-60)
+   self.assertEqual(sr,48000);self.assertEqual(len(out),96000)

@@ -64,11 +64,11 @@ export function localPodcastEdits(
     speaker_names: {},
   };
 }
-export function podcastRenderArrangement(a: Arrangement, edits: PodcastEdits) {
+export function podcastRenderArrangement(a: Arrangement, edits: PodcastEdits, sourceIds?:Set<string>) {
   const local = new Map(
     a.clips.map((c) => [
       c.id,
-      c.id === "source"
+      sourceIds && !sourceIds.has(c.id) ? {operations:[],corrections:{},speaker_names:{}} : c.id === "source"
         ? edits
         : localPodcastEdits(edits, c.offset ?? 0, c.duration),
     ]),
@@ -192,7 +192,7 @@ export function podcastOutputTime(
   if (!r || !original || !c) {
     const mapped = outputToSource(
       output,
-      a.clips[0].id === "source" ? a.clips[0].duration : a.duration,
+      a.clips[0]?.id === "source" ? a.clips[0].duration : a.duration,
       edits,
     );
     return { view: mapped.time, source: mapped.time, gap: mapped.gap };

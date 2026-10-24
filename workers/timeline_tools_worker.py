@@ -54,6 +54,9 @@ def transfer_output(url, key, output_path, source):
 
 
 def handle_job(db, job, worker_id, url, key):
+    if job['type']=='editor_export':
+        from workers.editor_export import handle_editor_job
+        return handle_editor_job(db,job,worker_id,url,key)
     if job['type'] in ('podcast','podcast_export'):
         from workers.podcast_worker import handle_podcast_job
         return handle_podcast_job(db,job,worker_id,url,key)

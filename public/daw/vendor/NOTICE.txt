@@ -1,0 +1,7 @@
+lamejs 1.2.1 by Alex Zhukov, LGPL-3.0.
+Unmodified encoder: https://github.com/zhuker/lamejs
+Corresponding source: npm package lamejs@1.2.1 (pinned in package-lock.json).
+The standalone encoder is loaded only in the export Worker and can be replaced
+with a compatible build at /daw/vendor/lame.min.js. See LAMEJS-LICENSE.txt.
+Full LGPL-3.0 and incorporated GPL-3.0 terms are provided alongside this notice.
+LAME project acknowledgement: https://lame.sourceforge.net/

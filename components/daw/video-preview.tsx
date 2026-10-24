@@ -1,10 +1,12 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-/** Media-element playback stays on the audio clock; seeks converge within one 30fps frame. */
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { syncVideo, type VideoClock } from "@/lib/daw/video-sync";
+/** The preview follows audio-clock samples without React updates on every frame. */
 export default function VideoPreview({
   media,
   playhead,
   playing,
+  clock,
 }: {
   media: {
     index: number;
@@ -14,22 +16,47 @@ export default function VideoPreview({
   }[];
   playhead: number;
   playing: boolean;
+  clock?: RefObject<VideoClock>;
 }) {
   const [floating, setFloating] = useState(false),
+    [activeIndex, setActiveIndex] = useState<number | null>(null),
     video = useRef<HTMLVideoElement>(null);
-  const active = media.find(
-    (m) => m.proxy && playhead >= m.offset && playhead < m.offset + m.duration,
-  );
-  const clock = useRef({ playhead, at: 0, playing });
+  const latest = useRef({ media, playhead, playing, clock });
+  latest.current = { media, playhead, playing, clock };
+  const selected = useRef<number | null>(null);
+  const active = media.find((m) => m.index === activeIndex);
   useEffect(() => {
-    clock.current = { playhead, at: performance.now(), playing };
-    const v = video.current;
-    if (!v || !active) return;
-    const target = playhead - active.offset;
-    if (Math.abs(v.currentTime - target) > 1 / 30) v.currentTime = target;
-    if (playing) void v.play().catch(() => {});
-    else v.pause();
-  }, [playhead, playing, active?.index, active?.offset]);
+    let frame = 0;
+    const update = () => {
+      const current = latest.current,
+        sample = current.clock?.current ?? {
+          time: current.playhead,
+          playing: current.playing,
+          gap: false,
+        },
+        clip = current.media.find(
+          (m) =>
+            m.proxy &&
+            sample.time >= m.offset &&
+            sample.time < m.offset + m.duration,
+        ),
+        index = clip?.index ?? null;
+      if (selected.current !== index) {
+        selected.current = index;
+        setActiveIndex(index);
+      }
+      const v = video.current;
+      if (v && clip && v.dataset.mediaIndex === String(clip.index))
+        syncVideo(
+          v,
+          sample.time - clip.offset,
+          current.playing && sample.playing && !sample.gap,
+        );
+      frame = requestAnimationFrame(update);
+    };
+    frame = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(frame);
+  }, []);
   return (
     <div className={floating ? "pro-video-floating" : ""}>
       <button
@@ -44,6 +71,7 @@ export default function VideoPreview({
           <video
             key={active.index}
             ref={video}
+            data-media-index={active.index}
             src={active.proxy!}
             muted
             playsInline

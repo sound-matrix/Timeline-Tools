@@ -1,0 +1,111 @@
+(node:15) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///workspace/scratch/2eab087e4a10/Timeline-Tools/lib/defaults.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /workspace/scratch/2eab087e4a10/Timeline-Tools/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ defaults accept partial clean: {} (10.297404ms)
+✔ defaults accept partial clean: {"noise":{"enabled":false},"hum":{"enabled":false},"reverb":{"enabled":false},"voice":false} (0.36398ms)
+✔ defaults accept partial master: {} (3.372713ms)
+✔ defaults accept partial master: {"loudness":{"enabled":false},"limiter":{"enabled":false},"compressor":{"enabled":false},"eq":{"enabled":false}} (1.073937ms)
+✔ defaults accept partial subtitles: {} (1.831596ms)
+✔ defaults accept partial subtitles: {"formats":[]} (0.281636ms)
+✔ defaults accept partial studio: {} (1.934892ms)
+✔ defaults accept partial studio: {"has_bed":false,"room_tone":{},"subtitles":{}} (0.791736ms)
+✔ defaults accept partial clean: {"noise":{"enabled":true},"hum":{"enabled":false},"reverb":{"enabled":false},"voice":false} (0.57536ms)
+✔ defaults accept partial master: {"loudness":{"enabled":false},"limiter":{"enabled":false},"compressor":{"enabled":true,"makeup":{}},"eq":{"enabled":false}} (1.690728ms)
+✔ defaults accept partial master: {"loudness":{"enabled":false},"limiter":{"enabled":false},"compressor":{"enabled":false},"eq":{"enabled":true,"bands":[{"enabled":false},{"enabled":false},{"enabled":false},{"enabled":false},{"enabled":false}]}} (1.065491ms)
+✔ defaults accept partial studio: {"has_bed":true,"room_tone":{"enabled":true},"subtitles":{"enabled":true,"formats":[]}} (0.907559ms)
+✔ defaults accept partial studio_export: {"revision":1} (1.389772ms)
+✔ defaults accept partial studio_export: {"revision":1,"formats":["wav"],"wav":{}} (0.533946ms)
+✖ client and Python apply the identical fixture, including omitted values (31.031107ms)
+✔ explicit values are preserved and range errors stay errors (2.41505ms)
+✔ nested union issues map to the actual cleanup field (5.512562ms)
+✔ unknown prototype-shaped keys stay own properties for strict rejection (0.496984ms)
+(node:16) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///workspace/scratch/2eab087e4a10/Timeline-Tools/lib/defaults.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /workspace/scratch/2eab087e4a10/Timeline-Tools/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ Podcast defaults preserve strictness and mirror Python (53.880858ms)
+✖ EDL unions overlapping cuts, remaps subtitle endpoints and insertion gaps identically to Python (41.600889ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 17
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 495.784599
+
+✖ failing tests:
+
+test at ../workspace/scratch/2eab087e4a10/Timeline-Tools/tests/defaults-pr16-cwd-baseline.mjs:38:1
+✖ client and Python apply the identical fixture, including omitted values (31.031107ms)
+  AssertionError [ERR_ASSERTION]: Traceback (most recent call last):
+    File "<string>", line 1, in <module>
+  ModuleNotFoundError: No module named 'workers'
+  
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///workspace/scratch/2eab087e4a10/Timeline-Tools/tests/defaults-pr16-cwd-baseline.mjs:48:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../workspace/scratch/2eab087e4a10/Timeline-Tools/tests/podcast-pr16-cwd-baseline.mjs:39:1
+✖ Podcast defaults preserve strictness and mirror Python (53.880858ms)
+  AssertionError [ERR_ASSERTION]: Traceback (most recent call last):
+    File "<string>", line 1, in <module>
+  ModuleNotFoundError: No module named 'workers'
+  
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///workspace/scratch/2eab087e4a10/Timeline-Tools/tests/podcast-pr16-cwd-baseline.mjs:75:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../workspace/scratch/2eab087e4a10/Timeline-Tools/tests/podcast-pr16-cwd-baseline.mjs:93:1
+✖ EDL unions overlapping cuts, remaps subtitle endpoints and insertion gaps identically to Python (41.600889ms)
+  AssertionError [ERR_ASSERTION]: Traceback (most recent call last):
+    File "<string>", line 1, in <module>
+  ModuleNotFoundError: No module named 'workers'
+  
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///workspace/scratch/2eab087e4a10/Timeline-Tools/tests/podcast-pr16-cwd-baseline.mjs:112:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

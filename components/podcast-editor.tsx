@@ -23,7 +23,9 @@ import {
   podcastOutputTime,
   podcastWindow,
 } from "@/lib/daw/podcast-audio";
+import OpenEditor from "./editor/open-editor";
 import VideoPreview from "./daw/video-preview";
+import type { VideoClock } from "@/lib/daw/video-sync";
 type Media = {
   index: number;
   name: string;
@@ -59,7 +61,6 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     [playing, setPlaying] = useState(false),
     [viewHead, setViewHead] = useState(0),
     [outputHead, setOutputHead] = useState(0),
-    [videoGap, setVideoGap] = useState(false),
     [page, setPage] = useState(0),
     [rangeStart, setRangeStart] = useState(""),
     [rangeEnd, setRangeEnd] = useState(""),
@@ -72,6 +73,11 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     [exportBusy, setExportBusy] = useState(false),
     [exportLive, setExportLive] = useState<ProcessingState | null>(null);
   const transport = useRef<DawTransport | null>(null);
+  const videoClock = useRef<VideoClock>({
+    time: 0,
+    playing: false,
+    gap: false,
+  });
   const revision = useRef(1),
     lastSaved = useRef(""),
     current = useRef(edits),
@@ -169,6 +175,18 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     setViewHead(view);
     transport.current?.seek(view);
   }, []);
+  async function flushEditor() {
+    const deadline=Date.now()+15000;
+    while(saving.current && Date.now()<deadline)await new Promise(r=>setTimeout(r,25));
+    if(saving.current || conflict.current)throw Error("Resolve the save conflict before opening Editor Studio.");
+    saving.current=true;
+    try {
+      const snapshot=JSON.stringify(current.current);
+      const r=await fetch(`/api/podcast/${jobId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision:revision.current,edits:current.current})});
+      if(!r.ok)throw Error("Could not save the latest word edits. Retry opening Editor Studio.");
+      revision.current=(await r.json()).revision;lastSaved.current=snapshot;setSaved("Saved");
+    } finally {saving.current=false;}
+  }
   function toggle() {
     transport.current?.toggle();
   }
@@ -447,7 +465,10 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
               duration: session.duration,
             },
           ],
-      regions: (session.media.every(m=>m.audio)?session.media:[{...session.media[0],offset:0,duration:session.duration}]).map((m, i) => ({
+      regions: (session.media.every((m) => m.audio)
+        ? session.media
+        : [{ ...session.media[0], offset: 0, duration: session.duration }]
+      ).map((m, i) => ({
         id: `media_${i}`,
         lane: laneFor.get(m.index) ?? speakers[0].id,
         kind: "clip",
@@ -637,7 +658,8 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
           <VideoPreview
             media={session.media}
             playhead={playhead}
-            playing={playing && !videoGap}
+            clock={videoClock}
+            playing={playing}
           />
           <DawTimeline
             arrangement={podcastTimeline!}
@@ -667,7 +689,26 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
               setViewHead(t);
               setOutputHead(mapped.output);
               setPlayhead(mapped.source);
-              setVideoGap(false);
+              videoClock.current = {
+                time: mapped.source,
+                playing: false,
+                gap: false,
+              };
+              return mapped.output;
+            }}
+            onPlaybackFrame={(t, presenting) => {
+              const mapped = podcastOutputTime(
+                podcastTimeline!,
+                podcastRender!,
+                current.current,
+                t,
+              );
+              videoClock.current = {
+                time: mapped.source,
+                playing: presenting ?? true,
+                gap: mapped.gap,
+              };
+              return mapped.view;
             }}
             onPlaybackTick={(t) => {
               const mapped = podcastOutputTime(
@@ -679,7 +720,6 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
               setOutputHead(t);
               setViewHead(mapped.view);
               setPlayhead(mapped.source);
-              setVideoGap(mapped.gap);
             }}
             playbackArrangement={podcastRender}
             readWindow={readPodcast}
@@ -947,6 +987,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
           setState={setExportLive}
         />
       )}
+      <OpenEditor source="podcast" jobId={jobId} flush={flushEditor} />
     </section>
   );
 }

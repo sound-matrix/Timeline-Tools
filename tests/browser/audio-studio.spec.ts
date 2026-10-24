@@ -197,6 +197,10 @@ test("v2 ZIP, blank settings, real peak lanes, playback and server export choice
   );
   await dialog.getByRole("button", { name: "Confirm export" }).click();
   expect((await exported).status()).toBe(201);
+  await page.getByRole("link",{name:"Open in Editor Studio",exact:true}).click();
+  await expect(page).toHaveURL(/editor\/[0-9a-f-]{36}/);
+  await expect(page.getByRole("main",{name:"Editor Studio"})).toBeVisible();
+  await expect(page.getByText("Regions (2) · select with keyboard")).toBeVisible();
 });
 test("move lane/time, trim, undo/redo, split, missing bin placement and autosave", async ({
   page,

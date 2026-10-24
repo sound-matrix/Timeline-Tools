@@ -37,6 +37,7 @@ const profile = {
 };
 const plan = { id: "test", name: "Test plan", max_file_mb: 25 };
 let podcasts = {};
+let editors={}, editorAssets={},editorVersions={};
 let jobs = [],
   reports = {},
   arrangements = {},
@@ -55,6 +56,41 @@ createServer(async (req, res) => {
     res.end(JSON.stringify(data));
   };
   if (req.method === "OPTIONS") return send({});
+  // Logical one-hour stereo PCM files. Only the requested byte range is allocated.
+  if (/^\/__hour\/c\d+\.wav$/.test(url.pathname)) {
+    const dataBytes = 3600 * 48000 * 4,
+      total = dataBytes + 44;
+    const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range ?? "");
+    if (!match) return send({ error: "Byte range required" }, 416);
+    const from = Number(match[1]),
+      to = Math.min(total - 1, Number(match[2]));
+    if (from > to || to - from > 1048576)
+      return send({ error: "Range exceeds streaming budget" }, 416);
+    const chunk = Buffer.alloc(to - from + 1),
+      header = Buffer.alloc(44);
+    header.write("RIFF");
+    header.writeUInt32LE(total - 8, 4);
+    header.write("WAVEfmt ", 8);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(2, 22);
+    header.writeUInt32LE(48000, 24);
+    header.writeUInt32LE(192000, 28);
+    header.writeUInt16LE(4, 32);
+    header.writeUInt16LE(16, 34);
+    header.write("data", 36);
+    header.writeUInt32LE(dataBytes, 40);
+    if (from < 44) header.copy(chunk, 0, from, Math.min(44, to + 1));
+    res.writeHead(206, {
+      ...headers,
+      "Content-Type": "audio/wav",
+      "Content-Range": `bytes ${from}-${to}/${total}`,
+      "Accept-Ranges": "bytes",
+    });
+    res.end(chunk);
+    return;
+  }
+
   let text = "";
   for await (const chunk of req) text += chunk;
   let body;
@@ -66,7 +102,7 @@ createServer(async (req, res) => {
   if (url.pathname === "/__reset") {
     profile.role = "user";
     jobs = [];
-    podcasts = {};
+    podcasts = {};editors={};editorAssets={};editorVersions={};
     reports = {};
     arrangements = {};
     requests = [];
@@ -178,6 +214,32 @@ createServer(async (req, res) => {
     res.end(data);
     return;
   }
+  if (url.pathname === "/rest/v1/rpc/create_editor_project") {
+    const id=crypto.randomUUID(),source=body.p_source_kind,job=body.p_source_job;
+    let a=source==='studio'?structuredClone(arrangements[job]?.arrangement):source==='podcast'?structuredClone(podcasts[job]?.edits?.timeline):null;
+    if(!a){const duration=source==='podcast'?podcasts[job]?.duration??60:60;
+      a={version:2,job_id:id,sample_rate:48000,duration,snap:true,pan_law:'equal_power',legacy_mastering:false,tempo:120,time_signature:[4,4],markers:[],loop:{enabled:false,start:0,end:duration},master:{gain_db:0,inserts:[]},lanes:[],clips:[],regions:[],derived_clips:[],missing:[],unplaced:[],lines:[]};
+      if(source==='podcast')for(const m of podcasts[job].media){const lane='t'+m.media_index,clip='c'+m.media_index;a.lanes.push({id:lane,name:m.name,color:'#818CF8',pan:0,height:120,inserts:[],gain_db:0,mute:false,solo:false});a.clips.push({id:clip,name:m.name,duration:m.duration,offset:m.offset_sec});a.regions.push({id:'r'+m.media_index,lane,kind:'clip',clip,src_start:0,src_end:m.duration,start:m.offset_sec,gain_db:0,line:0,confidence:1,mute:false,fade_in:0,fade_out:0,fade_curve:'linear',lines:[]});}
+    }
+    const original=structuredClone(a);a.job_id=id;a.editor_project=true;
+    editors[id]={id,user_id:owner,name:body.p_name,revision:1,arrangement:a,source_kind:source,source_job_id:job,source_arrangement:source==='blank'?null:original,source_overlay:source==='podcast'?{edits:podcasts[job].edits,transcript:podcasts[job].transcript,duration:podcasts[job].duration,media:podcasts[job].media.map(m=>({index:m.media_index,name:m.name,offset:m.offset_sec,duration:m.duration,has_proxy:!!m.proxy_path}))}:null,exports_count:0,updated_at:new Date().toISOString()};editorAssets[id]=[];editorVersions[id]=[{revision:1,saved_at:new Date().toISOString(),arrangement:a}];return send(id);
+  }
+  if(url.pathname==='/rest/v1/editor_projects'){
+    const id=url.searchParams.get('id')?.slice(3);return send(id?editors[id]??null:Object.values(editors));
+  }
+  if(url.pathname==='/rest/v1/editor_assets')return send(editorAssets[url.searchParams.get('project_id')?.slice(3)]??[]);
+  if(url.pathname==='/rest/v1/editor_arrangement_versions'){
+    const rows=editorVersions[url.searchParams.get('project_id')?.slice(3)]??[],revision=url.searchParams.get('revision')?.slice(3);return send(revision?rows.find(r=>r.revision===Number(revision))??null:[...rows].reverse());
+  }
+  if(url.pathname==='/rest/v1/rpc/register_editor_asset'){
+    const id=body.p_project;if(!editors[id])return send({message:'Unavailable'},404);
+    if(!editorAssets[id].some(a=>a.id===body.p_asset))editorAssets[id].push({id:body.p_asset,project_id:id,user_id:owner,name:body.p_name,duration:body.p_duration,sample_rate:body.p_sample_rate,channels:body.p_channels,bytes:body.p_bytes,storage_path:body.p_storage_path,peaks_path:body.p_peaks_path});return send(body.p_asset);
+  }
+  if(url.pathname==='/rest/v1/rpc/save_editor_arrangement'){
+    const p=editors[body.p_project];if(!p)return send({message:'Unavailable'},404);if(p.revision!==body.p_revision)return send({code:'40001',message:'Revision conflict'},409);
+    for(const c of body.p_arrangement.clips)if(c.asset&&!editorAssets[p.id].some(a=>a.id===c.asset))return send({message:'Upload pending'},400);
+    if(JSON.stringify(p.arrangement)!==JSON.stringify(body.p_arrangement)){p.arrangement=body.p_arrangement;p.revision++;editorVersions[p.id].push({revision:p.revision,saved_at:new Date().toISOString(),arrangement:p.arrangement});}return send(p.revision);
+  }
   if (url.pathname === "/rest/v1/studio_arrangements")
     return send(arrangements[url.searchParams.get("job_id")?.slice(3)] ?? null);
   if (url.pathname === "/rest/v1/rpc/save_arrangement") {
@@ -206,7 +268,9 @@ createServer(async (req, res) => {
     url.pathname.includes("/object/public/outputs/") &&
     /(?:\/stems\/c\d+\.wav|\/podcast-preview\.mp3|\/podcast-source\.wav|\/podcast-clip-\d+\.wav)$/.test(url.pathname)
   ) {
-    const wave = Buffer.alloc(64044);
+    const sourceJob = /outputs\/[^/]+\/([^/]+)\/podcast-/.exec(url.pathname)?.[1];
+    const seconds = sourceJob ? (podcasts[sourceJob]?.duration ?? 4) : 4;
+    const wave = Buffer.alloc(44 + Math.ceil(seconds * 8000) * 2);
     wave.write("RIFF");
     wave.writeUInt32LE(wave.length - 8, 4);
     wave.write("WAVEfmt ", 8);
@@ -218,7 +282,7 @@ createServer(async (req, res) => {
     wave.writeUInt16LE(2, 32);
     wave.writeUInt16LE(16, 34);
     wave.write("data", 36);
-    wave.writeUInt32LE(64000, 40);
+    wave.writeUInt32LE(wave.length - 44, 40);
     res.writeHead(200, {
       "Content-Type": "audio/wav",
       "Access-Control-Allow-Origin": "*",

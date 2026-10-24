@@ -1,7 +1,22 @@
 import type { Arrangement } from "../arrangement";
 import { pcmWindow } from "../studio-preview";
+import {
+  SCHEDULER_INTERVAL_MS,
+  SCHEDULER_LOOKAHEAD_SECONDS,
+  STREAM_CHUNK_SECONDS,
+  schedulerChunks,
+  changedRegions,
+} from "./scheduler.ts";
 import { end, fadeValue, panGains } from "./commands";
+import { outputClockTime, PresentationClock } from "./output-clock.ts";
 /** Bounded PCM streaming: sample scheduling uses the AudioContext clock, never timers. */
+function releaseVoice(param: AudioParam, now: number) {
+  const value = param.value;
+  // This parameter belongs to a separate release node, never the fade curve.
+  param.cancelScheduledValues(0);
+  param.setValueAtTime(value, now);
+  param.setTargetAtTime(0, now, 0.001);
+}
 export class DawPlayback {
   derived: Arrangement["derived_clips"] = [];
   reader:
@@ -33,7 +48,7 @@ export class DawPlayback {
     if (derived) {
       const sourceUrl = this.sourceUrls[derived.source];
       if (!sourceUrl) throw Error("Bounce source unavailable");
-      const input = await pcmWindow(
+      const input = await (this.reader ?? pcmWindow)(
         ctx,
         sourceUrl,
         derived.src_start + start,
@@ -69,165 +84,268 @@ export class DawPlayback {
     this.running = false;
     this.epoch++;
     cancelAnimationFrame(this.frame);
-    for (const s of this.sources) {
+    this.clock?.terminate();
+    this.clock = null;
+    this.tickNow = null;
+    const now = this.context?.currentTime ?? 0;
+    for (const source of this.sources) {
+      const voice = this.voices.get(source);
+      if (voice) {
+        releaseVoice(voice.gain.gain, now);
+      }
       try {
-        s.stop();
+        source.stop(now + 0.005);
       } catch {}
     }
     this.sources.clear();
+    this.voices.clear();
+    const old = this.nodes;
+    this.nodes = [];
+    setTimeout(
+      () =>
+        old.forEach((n) => {
+          try {
+            n.disconnect();
+          } catch {}
+        }),
+      10,
+    );
     this.dispose?.();
     this.dispose = null;
+    this.active = null;
   }
   async close() {
     this.stop();
     await this.context?.close();
   }
+  clock: Worker | null = null;
+  active: Arrangement | null = null;
+  urlMap: Record<string, string> = {};
+  changed = new Map<string, number>();
+  voices = new Map<AudioBufferSourceNode, { region: string; gain: GainNode }>();
+  scheduled = new Set<string>();
+  tracks = new Map<
+    string,
+    { gain: GainNode; left: GainNode; right: GainNode; insert: GainNode }
+  >();
+  master: GainNode | null = null;
+  nodes: AudioNode[] = [];
+  tickNow: (() => void) | null = null;
+  /** Empty insert chain is a real passthrough graph node for PR D. */
+  insertChain(trackId: string): GainNode | undefined {
+    return this.tracks.get(trackId)?.insert;
+  }
+  update(a: Arrangement, urls = this.urlMap) {
+    const ctx = this.context;
+    if (!ctx || !this.active) return;
+    for (const id of changedRegions(this.active, a)) {
+      this.changed.set(id, (this.changed.get(id) ?? 0) + 1);
+      for (const key of this.scheduled)
+        if (key.startsWith(id + "/")) this.scheduled.delete(key);
+      for (const [source, v] of this.voices)
+        if (v.region === id) {
+          releaseVoice(v.gain.gain, ctx.currentTime);
+          try {
+            source.stop(ctx.currentTime + 0.005);
+          } catch {}
+        }
+    }
+    this.active = a;
+    this.derived = a.derived_clips;
+    this.sourceUrls = urls;
+    this.urlMap = urls;
+    const solo = a.lanes.some((l) => l.solo);
+    for (const lane of a.lanes) {
+      let track = this.tracks.get(lane.id);
+      if (!track) {
+        const gain = ctx.createGain(),
+          split = ctx.createChannelSplitter(2),
+          merge = ctx.createChannelMerger(2),
+          left = ctx.createGain(),
+          right = ctx.createGain(),
+          insert = ctx.createGain();
+        gain.channelCount = 2;
+        gain.channelCountMode = "explicit";
+        gain.connect(split);
+        split.connect(left, 0);
+        split.connect(right, 1);
+        left.connect(merge, 0, 0);
+        right.connect(merge, 0, 1);
+        merge.connect(insert).connect(this.master!);
+        track = { gain, left, right, insert };
+        this.tracks.set(lane.id, track);
+        this.nodes.push(gain, split, merge, left, right, insert);
+      }
+      track.gain.gain.setTargetAtTime(
+        lane.mute || (solo && !lane.solo) ? 0 : 10 ** (lane.gain_db / 20),
+        ctx.currentTime,
+        0.005,
+      );
+      const pan = panGains(lane.pan, a.pan_law);
+      track.left.gain.setTargetAtTime(pan[0], ctx.currentTime, 0.005);
+      track.right.gain.setTargetAtTime(pan[1], ctx.currentTime, 0.005);
+    }
+    for (const [id, track] of this.tracks)
+      if (!a.lanes.some((l) => l.id === id))
+        track.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.001);
+    this.master!.gain.setTargetAtTime(
+      10 ** ((a.master.gain_db + (a.master.reference_gain_db ?? 0)) / 20),
+      ctx.currentTime,
+      0.005,
+    );
+    this.tickNow?.();
+  }
   async play(
     a: Arrangement,
     position: number,
     urls: Record<string, string>,
-    tick: (t: number) => void,
+    tick: (t: number, presenting?: boolean) => void,
     finish: () => void,
   ) {
     this.stop();
+    if (this.context && this.context.sampleRate !== a.sample_rate) {
+      await this.context.close();
+      this.context = null;
+    }
+    const epoch = this.epoch,
+      ctx = (this.context ??= new AudioContext({ sampleRate: a.sample_rate }));
+    await ctx.resume();
     this.derived = a.derived_clips;
     this.sourceUrls = urls;
-    const epoch = this.epoch,
-      ctx = (this.context ??= new AudioContext());
-    await ctx.resume();
-    const master = ctx.createGain();
-    master.gain.value =
-      10 ** ((a.master.gain_db + (a.master.reference_gain_db ?? 0)) / 20);
-    const analyser = ctx.createAnalyser();
+    this.urlMap = urls;
+    const master = ctx.createGain(),
+      analyser = ctx.createAnalyser(),
+      split = ctx.createChannelSplitter(2);
     analyser.fftSize = 1024;
     master.connect(analyser).connect(ctx.destination);
+    master.connect(split);
+    this.master = master;
     this.analyser = analyser;
-    const meterSplit = ctx.createChannelSplitter(2);
-    master.connect(meterSplit);
     this.meters = [ctx.createAnalyser(), ctx.createAnalyser()];
     this.meters.forEach((m, i) => {
       m.fftSize = 1024;
-      meterSplit.connect(m, i);
+      split.connect(m, i);
     });
-    const tracks = new Map<string, GainNode>();
-    const nodes: AudioNode[] = [master, analyser, meterSplit, ...this.meters];
-    this.dispose = () =>
-      nodes.forEach((n) => {
-        try {
-          n.disconnect();
-        } catch {}
-      });
-    const solo = a.lanes.some((l) => l.solo);
-    for (const lane of a.lanes) {
-      const gain = ctx.createGain(),
-        split = ctx.createChannelSplitter(2),
-        merge = ctx.createChannelMerger(2);
-      gain.gain.value =
-        lane.mute || (solo && !lane.solo) ? 0 : 10 ** (lane.gain_db / 20);
-      const pan = panGains(lane.pan, a.pan_law),
-        left = ctx.createGain(),
-        right = ctx.createGain();
-      left.gain.value = pan[0];
-      right.gain.value = pan[1];
-      gain.connect(split);
-      split.connect(left, 0);
-      split.connect(right, 1);
-      left.connect(merge, 0, 0);
-      right.connect(merge, 0, 1);
-      merge.connect(master);
-      tracks.set(lane.id, gain);
-      nodes.push(gain, split, merge, left, right);
-    }
-    const scheduled = new Set<string>(),
-      loading = new Set<string>();
-    let origin = 0;
-    const schedule = async (now: number, preload = false) => {
+    this.nodes = [master, analyser, split, ...this.meters];
+    this.tracks.clear();
+    this.scheduled.clear();
+    this.voices.clear();
+    this.changed.clear();
+    this.active = a;
+    this.update(a, urls);
+    const loading = new Map<string, Promise<AudioBuffer>>();
+    let cycle = 0;
+    const read = (r: Arrangement["regions"][number], chunk: number) => {
+      const url = this.urlMap[r.clip] ?? r.clip,
+        offset = chunk * STREAM_CHUNK_SECONDS,
+        length = Math.min(
+          STREAM_CHUNK_SECONDS,
+          r.src_end - r.src_start - offset,
+        ),
+        key = `${url}/${r.src_start + offset}/${length}`;
+      let promise = loading.get(key);
+      if (!promise) {
+        promise = this.window(url, r.src_start + offset, length);
+        loading.set(key, promise);
+        promise.finally(() => loading.delete(key)).catch(() => {});
+      }
+      return promise;
+    };
+    const schedule = async (
+      now: number,
+      origin: number,
+      iteration: number,
+      preload = false,
+    ) => {
+      const current = this.active!;
       const tasks: Promise<void>[] = [];
-      for (const r of a.regions) {
-        if (r.mute || end(r) <= now || r.start > now + 8) continue;
-        const length = r.src_end - r.src_start;
-        for (
-          let chunk = Math.max(0, Math.floor((now - r.start) / 5));
-          chunk <=
-          Math.min(
-            Math.ceil(length / 5) - 1,
-            Math.floor((now + 8 - r.start) / 5),
-          );
-          chunk++
-        ) {
-          const key = `${r.id}/${chunk}`;
-          if (scheduled.has(key) || loading.has(key)) continue;
-          loading.add(key);
+      for (const r of current.regions) {
+        if (r.mute || !this.tracks.has(r.lane)) continue;
+        for (const chunk of schedulerChunks(
+          r.start,
+          r.src_end - r.src_start,
+          now,
+        )) {
+          const key = `${r.id}/${iteration}/${chunk}`,
+            at = r.start + chunk * STREAM_CHUNK_SECONDS;
+          if (this.scheduled.has(key)) continue;
+          if (!preload && at > now + SCHEDULER_LOOKAHEAD_SECONDS) {
+            void read(r, chunk).catch(() => {});
+            continue;
+          }
+          const version = this.changed.get(r.id) ?? 0;
+          if (!preload) this.scheduled.add(key);
           tasks.push(
             (async () => {
-              try {
-                if (
-                  !urls[r.clip] &&
-                  !a.derived_clips.some((c) => c.id === r.clip)
-                )
-                  throw Error("Preview source is unavailable");
-                const offset = chunk * 5,
-                  span = Math.min(5, length - offset),
-                  buffer = await this.window(
-                    urls[r.clip] ?? r.clip,
-                    r.src_start + offset,
-                    span,
-                  );
-                if (epoch !== this.epoch) return;
-                if (preload) return;
-                const at = r.start + offset,
-                  late = Math.max(0, ctx.currentTime - origin - at);
-                scheduled.add(key);
-                if (late >= buffer.duration) return;
-                const source = ctx.createBufferSource(),
-                  gain = ctx.createGain();
-                source.buffer = buffer;
-                source.connect(gain).connect(tracks.get(r.lane)!);
-                const when = Math.max(ctx.currentTime, origin + at),
-                  duration = buffer.duration - late,
-                  from = offset + late;
-                // Include exact fade breakpoints so a 5 ms fade is never stretched
-                // over an entire five-second streaming window.
-                const points = [
-                  ...new Set(
-                    [
-                      from,
-                      from + duration,
-                      r.fade_in,
-                      r.src_end - r.src_start - r.fade_out,
-                    ].filter((t) => t >= from && t <= from + duration),
+              const buffer = await read(r, chunk);
+              if (
+                preload ||
+                epoch !== this.epoch ||
+                (this.changed.get(r.id) ?? 0) !== version
+              )
+                return;
+              const late = Math.max(0, ctx.currentTime - origin - at, now - at),
+                from = chunk * STREAM_CHUNK_SECONDS + late;
+              const when = Math.max(
+                  ctx.currentTime + 0.001,
+                  origin + at + late,
+                ),
+                limit = current.loop.enabled
+                  ? current.loop.end
+                  : current.duration;
+              const duration = Math.min(
+                buffer.duration - late,
+                limit - at - late,
+              );
+              if (duration <= 0) return;
+              const source = ctx.createBufferSource(),
+                gain = ctx.createGain(),
+                release = ctx.createGain();
+              source.buffer = buffer;
+              source
+                .connect(gain)
+                .connect(release)
+                .connect(this.tracks.get(r.lane)!.gain);
+              const points = [
+                ...new Set(
+                  [
+                    from,
+                    from + duration,
+                    r.fade_in,
+                    r.src_end - r.src_start - r.fade_out,
+                  ].filter((t) => t >= from && t <= from + duration),
+                ),
+              ].sort((a, b) => a - b);
+              for (let segment = 0; segment < points.length - 1; segment++) {
+                const begin = points[segment],
+                  length = points[segment + 1] - begin;
+                if (length <= 0) continue;
+                const curve = new Float32Array(
+                  Math.max(
+                    2,
+                    Math.min(4096, Math.ceil(length * ctx.sampleRate)),
                   ),
-                ].sort((a, b) => a - b);
-                for (let segment = 0; segment < points.length - 1; segment++) {
-                  const begin = points[segment],
-                    length = points[segment + 1] - begin;
-                  if (length <= 0) continue;
-                  const curve = new Float32Array(
-                    Math.max(
-                      2,
-                      Math.min(4096, Math.ceil(length * ctx.sampleRate)),
-                    ),
-                  );
-                  for (let i = 0; i < curve.length; i++)
-                    curve[i] =
-                      10 ** (r.gain_db / 20) *
-                      fadeValue(r, begin + (length * i) / (curve.length - 1));
-                  gain.gain.setValueCurveAtTime(
-                    curve,
-                    when + begin - from,
-                    length,
-                  );
-                }
-                source.onended = () => {
-                  source.disconnect();
-                  gain.disconnect();
-                  this.sources.delete(source);
-                };
-                source.start(when, late, duration);
-                this.sources.add(source);
-              } finally {
-                loading.delete(key);
+                );
+                for (let i = 0; i < curve.length; i++)
+                  curve[i] =
+                    10 ** (r.gain_db / 20) *
+                    fadeValue(r, begin + (length * i) / (curve.length - 1));
+                gain.gain.setValueCurveAtTime(
+                  curve,
+                  when + begin - from,
+                  length,
+                );
               }
+              source.onended = () => {
+                source.disconnect();
+                gain.disconnect();
+                release.disconnect();
+                this.sources.delete(source);
+                this.voices.delete(source);
+              };
+              source.start(when, late, duration);
+              this.sources.add(source);
+              this.voices.set(source, { region: r.id, gain: release });
             })(),
           );
         }
@@ -235,51 +353,87 @@ export class DawPlayback {
       await Promise.all(tasks);
     };
     try {
-      await schedule(position, true);
+      await schedule(position, 0, 0, true);
       if (epoch !== this.epoch) return;
-      origin = ctx.currentTime + 0.06 - position;
-      this.origin = origin;
+      this.origin = ctx.currentTime + 0.04 - position;
+      const initialOrigin = this.origin;
       this.running = true;
-      await schedule(position);
-      let pending = false;
-      const draw = () => {
-        if (epoch !== this.epoch) {
-          nodes.forEach((n) => n.disconnect());
-          return;
-        }
-        const t = Math.max(position, ctx.currentTime - origin);
-        if (a.loop.enabled && t >= a.loop.end) {
+      // Resolve play only once the initial sources are scheduled, not on a later timer turn.
+      await schedule(position, this.origin, 0);
+      if (epoch !== this.epoch) return;
+      const fail = () => {
+        if (epoch === this.epoch) {
           this.stop();
-          nodes.forEach((n) => n.disconnect());
-          void this.play(a, a.loop.start, urls, tick, finish).catch(finish);
-          return;
+          finish();
         }
-        if (t >= a.duration) {
+      };
+      const clock = () => {
+        if (epoch !== this.epoch || !this.active) return;
+        const current = this.active;
+        let now = Math.max(
+          cycle === 0 ? position : current.loop.start,
+          ctx.currentTime - this.origin,
+        );
+        if (current.loop.enabled && now >= current.loop.end) {
+          this.origin += current.loop.end - current.loop.start;
+          cycle++;
+          now = ctx.currentTime - this.origin;
+        }
+        if (!current.loop.enabled && now >= current.duration) {
+          if (outputClockTime(ctx) - initialOrigin < current.duration) return;
+          tick(current.duration);
           this.stop();
-          nodes.forEach((n) => n.disconnect());
-          tick(a.duration);
           finish();
           return;
         }
-        tick(t);
-        if (!pending) {
-          pending = true;
-          void schedule(t)
-            .catch(() => {
-              this.stop();
-              finish();
-            })
-            .finally(() => {
-              pending = false;
-            });
+        void schedule(now, this.origin, cycle).catch(fail);
+        if (
+          current.loop.enabled &&
+          now + SCHEDULER_LOOKAHEAD_SECONDS >= current.loop.end
+        )
+          void schedule(
+            current.loop.start,
+            this.origin + current.loop.end - current.loop.start,
+            cycle + 1,
+          ).catch(fail);
+      };
+      this.tickNow = clock;
+      clock();
+      if (typeof Worker !== "undefined") {
+        this.clock = new Worker("/daw/clock-worker.js");
+        this.clock.onmessage = clock;
+        this.clock.postMessage({
+          running: true,
+          interval: SCHEDULER_INTERVAL_MS,
+        });
+      } else {
+        const timer = setInterval(clock, SCHEDULER_INTERVAL_MS);
+        this.dispose = () => clearInterval(timer);
+      }
+      const presentation = new PresentationClock();
+      const draw = () => {
+        if (epoch !== this.epoch || !this.active) return;
+        const current = this.active;
+        const sample = presentation.sample(ctx),
+          heard = sample.time;
+        let time = heard - initialOrigin;
+        if (cycle > 0 && current.loop.enabled && time >= current.loop.end) {
+          const length = current.loop.end - current.loop.start;
+          time =
+            current.loop.start +
+            ((((heard - this.origin - current.loop.start) % length) + length) %
+              length);
         }
+        tick(
+          Math.max(cycle === 0 ? position : current.loop.start, time),
+          sample.advancing && (cycle > 0 || heard - initialOrigin >= position),
+        );
         this.frame = requestAnimationFrame(draw);
       };
       this.frame = requestAnimationFrame(draw);
-    } catch (e) {
-      nodes.forEach((n) => n.disconnect());
+    } catch (error) {
       this.stop();
-      throw e;
+      throw error;
     }
   }
 }

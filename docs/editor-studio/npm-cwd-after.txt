@@ -1,0 +1,36 @@
+(node:41) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///workspace/scratch/2eab087e4a10/Timeline-Tools/lib/defaults.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /workspace/scratch/2eab087e4a10/Timeline-Tools/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ defaults accept partial clean: {} (6.799728ms)
+✔ defaults accept partial clean: {"noise":{"enabled":false},"hum":{"enabled":false},"reverb":{"enabled":false},"voice":false} (0.24323ms)
+✔ defaults accept partial master: {} (2.523476ms)
+✔ defaults accept partial master: {"loudness":{"enabled":false},"limiter":{"enabled":false},"compressor":{"enabled":false},"eq":{"enabled":false}} (0.241358ms)
+✔ defaults accept partial subtitles: {} (2.186519ms)
+✔ defaults accept partial subtitles: {"formats":[]} (0.214418ms)
+✔ defaults accept partial studio: {} (3.288366ms)
+✔ defaults accept partial studio: {"has_bed":false,"room_tone":{},"subtitles":{}} (0.470245ms)
+✔ defaults accept partial clean: {"noise":{"enabled":true},"hum":{"enabled":false},"reverb":{"enabled":false},"voice":false} (0.527695ms)
+✔ defaults accept partial master: {"loudness":{"enabled":false},"limiter":{"enabled":false},"compressor":{"enabled":true,"makeup":{}},"eq":{"enabled":false}} (1.391646ms)
+✔ defaults accept partial master: {"loudness":{"enabled":false},"limiter":{"enabled":false},"compressor":{"enabled":false},"eq":{"enabled":true,"bands":[{"enabled":false},{"enabled":false},{"enabled":false},{"enabled":false},{"enabled":false}]}} (0.956094ms)
+✔ defaults accept partial studio: {"has_bed":true,"room_tone":{"enabled":true},"subtitles":{"enabled":true,"formats":[]}} (1.694719ms)
+✔ defaults accept partial studio_export: {"revision":1} (1.339546ms)
+✔ defaults accept partial studio_export: {"revision":1,"formats":["wav"],"wav":{}} (1.090292ms)
+✔ client and Python apply the identical fixture, including omitted values (52.822316ms)
+✔ explicit values are preserved and range errors stay errors (1.779994ms)
+✔ nested union issues map to the actual cleanup field (10.682834ms)
+✔ unknown prototype-shaped keys stay own properties for strict rejection (0.827304ms)
+(node:42) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///workspace/scratch/2eab087e4a10/Timeline-Tools/lib/defaults.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /workspace/scratch/2eab087e4a10/Timeline-Tools/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ Podcast defaults preserve strictness and mirror Python (64.830876ms)
+✔ EDL unions overlapping cuts, remaps subtitle endpoints and insertion gaps identically to Python (70.184339ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 440.49028

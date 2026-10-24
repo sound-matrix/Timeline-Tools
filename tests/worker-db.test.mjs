@@ -178,17 +178,20 @@ test("worker SQL: RLS, state transitions, atomic success charging, ownership, ti
     await db.query("update public.profiles set minutes_balance=1 where id=$1", [
       a,
     ]);
-    await rpc(db, "worker_claim", ["x"]);
-    await rpc(db, "worker_claim", ["y"]);
-    await rpc(db, "worker_prepare", [x, "x", 60]);
-    await rpc(db, "worker_prepare", [y, "y", 60]);
+    // Deliberately reverse enqueue order: ownership/billing must not depend on which job is claimed first.
+    await db.query("update public.jobs set created_at=case when id=$1 then timestamp '2020-01-01 00:00:02' else timestamp '2020-01-01 00:00:01' end where id in ($1,$2)", [x,y]);
+    const claimedX = (await rpc(db, "worker_claim", ["x"]))[0].id;
+    const claimedY = (await rpc(db, "worker_claim", ["y"]))[0].id;
+    assert.deepEqual(new Set([claimedX, claimedY]), new Set([x, y]));
+    await rpc(db, "worker_prepare", [claimedX, "x", 60]);
+    await rpc(db, "worker_prepare", [claimedY, "y", 60]);
     assert.equal(
-      (await rpc(db, "worker_complete", [x, "x", await output(db, x)]))[0]
+      (await rpc(db, "worker_complete", [claimedX, "x", await output(db, claimedX)]))[0]
         .worker_complete,
       true,
     );
     assert.equal(
-      (await rpc(db, "worker_complete", [y, "y", await output(db, y)]))[0]
+      (await rpc(db, "worker_complete", [claimedY, "y", await output(db, claimedY)]))[0]
         .worker_complete,
       false,
     );

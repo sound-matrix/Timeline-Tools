@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { extensions, jobSchema } from "@/lib/settings";
 import { withDefaults, DEFAULT_HELP } from "@/lib/defaults";
@@ -22,6 +22,8 @@ export default function PodcastTool({
 }) {
   const router = useRouter(),
     submitting = useRef(false);
+  const [clientReady, setClientReady] = useState(false);
+  useEffect(() => setClientReady(true), []);
   const [files, setFiles] = useState<File[]>([]),
     [choices, setChoices] = useState<Choices>({}),
     [mics, setMics] = useState(false),
@@ -189,7 +191,7 @@ export default function PodcastTool({
     <div className="processing-desk">
       <details open={live?.status !== "done"}>
         <summary>Recordings and clean-up</summary>
-        <form onSubmit={submit} noValidate>
+        <form data-client-ready={clientReady} onSubmit={submit} noValidate>
           <fieldset disabled={locked}>
             <section className="card">
               <p className="eyebrow">01 · RECORDINGS</p>

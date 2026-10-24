@@ -381,7 +381,7 @@ def validate_arrangement(a):
         for line in r['lines']:
             if type(line['line']) is not int or not 0<=line['line']<len(a['lines']) or not 0<=real(line['src_start'],0,14400)<real(line['src_end'],0,14400)<=clips[r['clip']]+.001: raise ValueError('Invalid caption')
             real(line['confidence'],0,1)
-    if unique_source_seconds([dict(r,clip=c['source'],src_start=c['src_start']+r['src_start'],src_end=c['src_start']+r['src_end']) if (c:=next((c for c in a['derived_clips'] if c['id']==r['clip']),None)) else r for r in a['regions']])>14400: raise ValueError('Arrangement render budget exceeded')
+    if unique_source_seconds([dict(r,clip=c['source'],src_start=c['src_start']+r['src_start'],src_end=c['src_start']+r['src_end']) if (c:=next((c for c in a['derived_clips'] if c['id']==r['clip']),None)) else r for r in a['regions']])>(288000 if a.get('editor_project') else 14400): raise ValueError('Arrangement render budget exceeded')
     for l in a['lanes']:
         l['gain_db']=real(l['gain_db'],-60,24);l['pan']=real(l['pan'],-1,1);real(l['height'],60,400)
         if type(l['mute']) is not bool or type(l['solo']) is not bool or l['inserts']!=[]: raise ValueError('Invalid lane')
@@ -393,7 +393,7 @@ def validate_arrangement(a):
     if type(a['loop']['enabled']) is not bool or not 0<=real(a['loop']['start'],0,14400)<real(a['loop']['end'],0,14400)<=a['duration']+.001: raise ValueError('Invalid loop')
     if len(a['markers'])>1000: raise ValueError('Too many markers')
     for m in a['markers']: real(m['time'],0,a['duration'])
-    if len(json.dumps(a,ensure_ascii=False).encode())>524288: raise ValueError('Invalid arrangement size')
+    if len(json.dumps(a,ensure_ascii=False).encode())>(1000000 if a.get('editor_project') else 524288): raise ValueError('Invalid arrangement size')
     return a
 
 
