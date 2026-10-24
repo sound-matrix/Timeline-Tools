@@ -8,7 +8,7 @@ import {
   changedRegions,
 } from "./scheduler.ts";
 import { end, fadeValue, panGains } from "./commands";
-import { outputClockTime } from "./output-clock.ts";
+import { outputClockTime, PresentationClock } from "./output-clock.ts";
 /** Bounded PCM streaming: sample scheduling uses the AudioContext clock, never timers. */
 function releaseVoice(param: AudioParam, now: number) {
   const value = param.value;
@@ -410,10 +410,12 @@ export class DawPlayback {
         const timer = setInterval(clock, SCHEDULER_INTERVAL_MS);
         this.dispose = () => clearInterval(timer);
       }
+      const presentation = new PresentationClock();
       const draw = () => {
         if (epoch !== this.epoch || !this.active) return;
         const current = this.active;
-        const heard = outputClockTime(ctx);
+        const sample = presentation.sample(ctx),
+          heard = sample.time;
         let time = heard - initialOrigin;
         if (cycle > 0 && current.loop.enabled && time >= current.loop.end) {
           const length = current.loop.end - current.loop.start;
@@ -424,7 +426,7 @@ export class DawPlayback {
         }
         tick(
           Math.max(cycle === 0 ? position : current.loop.start, time),
-          cycle > 0 || heard - initialOrigin >= position,
+          sample.advancing && (cycle > 0 || heard - initialOrigin >= position),
         );
         this.frame = requestAnimationFrame(draw);
       };

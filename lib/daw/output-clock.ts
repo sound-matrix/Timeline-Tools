@@ -33,3 +33,20 @@ export function outputClockTime(
   }
   return Math.max(0, context.currentTime - latency);
 }
+
+/** A stalled audio device must hold video rather than repeatedly seeking a moving decoder. */
+export class PresentationClock {
+  private time = -1;
+  private changedAt = 0;
+  sample(
+    context: Parameters<typeof outputClockTime>[0],
+    wallTime = performance.now(),
+  ) {
+    const time = outputClockTime(context, wallTime);
+    if (Math.abs(time - this.time) > 0.00001) {
+      this.time = time;
+      this.changedAt = wallTime;
+    }
+    return { time, advancing: wallTime - this.changedAt <= 1000 / 30 };
+  }
+}

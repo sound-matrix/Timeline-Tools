@@ -28,7 +28,7 @@ The latter now tests the same balance race with either claimed job identity.
 
 Baseline stress: five runs x 184 tests pass. Revised stress: three serial and
 three parallel runs x 185 tests pass. Full suite after Python isolation: 185 pass. Later playback/clock regression
-coverage brings the suite to 194 passing tests; three parallel 188-test runs
+coverage brings the suite to 197 passing tests; three parallel 188-test runs
 also passed before the final clock additions. Three concurrent 191-test runs passed (573 passes, zero failures). After native
 seek-throttling coverage, three concurrent 192-test runs also passed
 (576 passes, zero failures).
@@ -75,10 +75,20 @@ media currentTime p95 remains within one frame (66.7 ms). Local runs and engines
 with valid device timestamps retain 66.7 ms for decoded PTS. No retry or skip is
 used. Functional seeks, held gaps, resume, audio offsets and stop remain required.
 The cross-engine native regression is repeated three times in CI. The reload
-regression imports a real OS fixture file kept alive until test teardown, rather
-than a protocol-created temporary File whose backing object WebKit may invalidate
-when the page reloads. It still interrupts peak generation and verifies the
-IndexedDB journal resumes, saves exactly one region, and exports nonzero audio.
+regression imports a real OS fixture kept alive through teardown. Run 40112837062
+still lost its IDB File backing object, so keeping the fixture path alive alone
+was insufficient. The app now snapshots owned bytes in sequential 1 MiB
+ArrayBuffer chunks, then commits the source manifest before exposing a region.
+Recovery assembles Blob parts from those bytes, without the old OS File handle
+or one full-file JavaScript buffer. Partial copies are cleaned up; the regression
+still requires exactly one saved region and a nonzero recovered WAV. Unit tests
+remove the original handle, verify byte-for-byte recovery and bounded reads, and
+verify a failed chunk write removes partial data.
+
+Raw clock records also show a prolonged constant presentation time in headless
+WebKit. The preview now pauses and holds its exact source frame after two stalled
+animation frames instead of repeatedly restarting a decoder against a stopped
+audio clock. It resumes when audio presentation time advances.
 
 Run 40111259029 then exceeded both budgets (decoded p95 228.33 ms; media clock
 p95 158.56 ms), so increasing the decoded allowance alone was insufficient.
@@ -88,8 +98,10 @@ lets cut jumps bypass that throttle, and permits only one pending play request.
 It retains small-drift rate correction with 50 ms rate-assignment throttling.
 The browser test retains all transition samples and additionally observes
 sustained playback to output time 5.5 s, persisting every frame sample for review.
-Both the original cut/gap interval and the full interval have separate assertions
-against the same budgets; extending playback cannot dilute a transition failure.
+For CI WebKit, the original cut/gap interval and full interval have separate
+assertions against the same decoded and media-clock budgets, so extending playback
+cannot dilute a transition failure. Other engines retain the original full-scenario
+one-frame assertion; their short-window values are additionally logged.
 Run 40111759977 passed the full matrix and five of six no-retry repetitions;
 all started WebKit runs measured decoded p95 158.2–160.1 ms and clock p95
 47.9–51.9 ms. One repetition exposed a start-guard regression: waiting for seeked

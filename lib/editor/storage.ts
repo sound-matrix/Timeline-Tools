@@ -82,3 +82,26 @@ export async function localEntries<T>(
       );
   });
 }
+
+/** Enumerate byte-journal keys without loading every audio chunk into JS memory. */
+export async function localKeys(prefix: string): Promise<string[]> {
+  const d = await db();
+  return new Promise((resolve, reject) => {
+    const values: string[] = [],
+      t = d.transaction("entries"),
+      r = t
+        .objectStore("entries")
+        .openKeyCursor(IDBKeyRange.bound(prefix, prefix + "\uffff"));
+    r.onsuccess = () => {
+      const cursor = r.result;
+      if (cursor) {
+        values.push(String(cursor.key));
+        cursor.continue();
+      }
+    };
+    t.oncomplete = () => resolve(values);
+    t.onerror = (event) => reject(storageError(event, t));
+    t.onabort = () =>
+      reject(t.error ?? new Error("Local audio storage was interrupted."));
+  });
+}

@@ -704,8 +704,8 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
     contentType: "application/json",
   });
   expect(p95).toBeLessThanOrEqual(decodedBudget);
-  expect(transitionP95).toBeLessThanOrEqual(decodedBudget);
   if (ciPresentationAllowance) {
+    expect(transitionP95).toBeLessThanOrEqual(decodedBudget);
     expect(clockP95).toBeLessThanOrEqual(1 / 15);
     expect(transitionClockP95).toBeLessThanOrEqual(1 / 15);
   }

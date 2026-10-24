@@ -1,6 +1,6 @@
 # Validation and acceptance boundaries
 
-Current suite: 194 npm tests pass, including deterministic scheduling and Python
+Current suite: 197 npm tests pass, including deterministic scheduling and Python
 parity independent of shell cwd/PYTHONPATH. CI uses Node 22 and Python 3.12; local
 Node 24 also passes typecheck. See CI-NOTES.md for the three-failure reproduction
 and repeated serial/parallel runs. Production builds pass in CI.

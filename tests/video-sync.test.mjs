@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { syncVideo } from "../lib/daw/video-sync.ts";
-import { outputClockTime } from "../lib/daw/output-clock.ts";
+import { outputClockTime, PresentationClock } from "../lib/daw/output-clock.ts";
 
 test("paused seeks are exact and metadata/loading never starts playback", () => {
   const video = {
@@ -203,4 +203,14 @@ test("a foreign time origin stays rejected when a later timestamp happens to loo
   assert.equal(outputClockTime(c, 1000), 3.99);
   stamp = { contextTime: 3.5, performanceTime: 1000 };
   assert.equal(outputClockTime(c, 1000), 3.99);
+});
+
+test("a stalled audio clock holds the preview and resumes when audio advances", () => {
+  const c = { currentTime: 2 },
+    clock = new PresentationClock();
+  assert.equal(clock.sample(c, 0).advancing, true);
+  assert.equal(clock.sample(c, 16).advancing, true);
+  assert.deepEqual(clock.sample(c, 50), { time: 2, advancing: false });
+  c.currentTime = 2.1;
+  assert.deepEqual(clock.sample(c, 60), { time: 2.1, advancing: true });
 });

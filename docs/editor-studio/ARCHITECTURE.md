@@ -49,8 +49,11 @@ workers in heavily suspended tabs; target-device/background-tab verification is
 still required. PCM window cache holds at most 64 windows (about 117 MiB for
 48 kHz stereo float windows), plus active sources and graph nodes.
 
-IndexedDB commits the original File and placement journal before showing a new
-region. Reload resumes peak generation/conversion with the same region ID; the
+IndexedDB commits owned original bytes in 1 MiB ArrayBuffer chunks and a placement
+manifest before showing a new region. Recovery assembles native Blob parts rather
+than retaining an OS File handle or allocating a full-file JavaScript buffer.
+Native Blob residency still needs the target-device memory measurements below.
+Interrupted copies have no visible region and their partial bytes are removed. Reload resumes peak generation/conversion with the same region ID; the
 completed canonical audio/peaks manifest replaces that journal only after its
 transaction commits. Pending arrangements and completed import blobs survive
 reload too. Server saves wait until every referenced asset is registered, retain
@@ -76,6 +79,8 @@ getOutputTimestamp projected onto performance time, accounting for output-device
 buffering. Invalid, stale or future timestamps use currentTime less reported
 base/output latency. Once a foreign time origin is observed, that context keeps
 the fallback instead of accepting later coincidentally plausible projections.
+If audio presentation time stalls for more than two animation frames, video
+holds its exact source frame until audio advances again.
 Initial video playback waits for the audio's presentation lead-in.
 Podcast video consumes a mutable source-clock sample on every playback frame;
 React transport labels remain capped at 10 Hz. Paused seeks update the preview,

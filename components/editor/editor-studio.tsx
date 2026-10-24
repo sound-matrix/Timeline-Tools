@@ -31,6 +31,12 @@ import {
   deleteEntry,
 } from "@/lib/editor/storage";
 import { importAudio, type ImportedAudio } from "@/lib/editor/import-audio";
+import {
+  snapshotSource,
+  restoreSource,
+  clearSource,
+  type SourceBytes,
+} from "@/lib/editor/source-journal";
 import { clientMixdown, type MixOptions } from "@/lib/editor/mixdown";
 import { pcmWindow } from "@/lib/studio-preview";
 import {
@@ -87,7 +93,9 @@ type Upload = {
 };
 type SourceImport = {
   id: string;
-  file: File;
+  file?: File; // Legacy journals.
+  source?: SourceBytes;
+  name?: string;
   point: Placement;
   placed?: boolean;
   clipId?: string;
@@ -252,10 +260,22 @@ export default function EditorStudio({
         if (cancelled) return;
         for (const entry of sources) {
           if (imports?.[entry.value.id]) {
+            await clearSource(entry.key);
             await deleteEntry(entry.key);
             continue;
           }
-          importFiles([entry.value.file], entry.value.point, entry.value);
+          const file = entry.value.source
+            ? await restoreSource(entry.key, entry.value.source)
+            : entry.value.file;
+          if (!file) {
+            await clearSource(entry.key);
+            await deleteEntry(entry.key);
+            setMessage(
+              "The original file copy was interrupted. Please import it again.",
+            );
+            continue;
+          }
+          importFiles([file], entry.value.point, entry.value);
         }
       } catch (e) {
         if (!cancelled) setMessage((e as Error).message);
@@ -442,7 +462,11 @@ export default function EditorStudio({
           for (const file of files) {
             if (!live.current) break;
             const id = recovery?.id ?? crypto.randomUUID();
-            const journal: SourceImport = recovery ?? { id, file, point };
+            const journal: SourceImport = recovery ?? {
+              id,
+              name: file.name,
+              point,
+            };
             const journalKey = `import-source/${key}/${id}`;
             setUploads((v) => [
               ...v,
@@ -458,8 +482,14 @@ export default function EditorStudio({
                 throw Error(`File exceeds your ${maxMb} MB plan limit.`);
               // A completed IDB transaction owns the source before it can appear on the timeline.
               await putEntry(journalKey, journal);
+              if (!journal.source) {
+                journal.source = await snapshotSource(journalKey, file);
+                delete journal.file;
+                await putEntry(journalKey, journal);
+              }
+              const original = await restoreSource(journalKey, journal.source);
               const result = await importAudio(
-                file,
+                original,
                 current.current!.sample_rate,
                 maxMb,
                 userId,
@@ -512,6 +542,7 @@ export default function EditorStudio({
                       : u,
                   ),
                 );
+                await clearSource(journalKey);
                 await deleteEntry(journalKey);
                 continue;
               }
@@ -522,6 +553,7 @@ export default function EditorStudio({
               const item = { ...result, id, name: file.name };
               localImports.current[id] = item;
               await putEntry(`imports/${key}`, localImports.current);
+              await clearSource(journalKey);
               await deleteEntry(journalKey);
               const wave = URL.createObjectURL(result.waveform);
               localUrls.current.push(wave);
@@ -538,8 +570,10 @@ export default function EditorStudio({
                       e ??
                         "Your browser could not save this audio on the device.",
                     );
-              if (!journal.placed)
+              if (!journal.placed) {
+                await clearSource(journalKey).catch(() => {});
                 await deleteEntry(journalKey).catch(() => {});
+              }
               setUploads((v) =>
                 v.map((u) =>
                   u.id === id
