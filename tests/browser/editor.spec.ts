@@ -62,6 +62,9 @@ test.afterEach(async ({ page }, info) => {
           when: s.when,
           now: s.context.currentTime,
           state: s.context.state,
+          timestamp: s.context.getOutputTimestamp?.(),
+          baseLatency: s.context.baseLatency,
+          outputLatency: s.context.outputLatency,
         })),
       })),
     );
@@ -544,18 +547,37 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
     const start = (window as any).__audioStarts[0],
       samples: number[] = [],
       clockSamples: number[] = [];
-    // Let frames queued by the preceding rapid seeks drain before measuring playback.
-    await new Promise((r) => setTimeout(r, 200));
+    const outputAt = (wall: number) => {
+      const stamp = start.context.getOutputTimestamp?.();
+      const audioTime =
+        stamp?.contextTime > 0 && stamp?.performanceTime > 0
+          ? stamp.contextTime + (wall - stamp.performanceTime) / 1000
+          : Math.max(
+              0,
+              start.context.currentTime -
+                (start.context.baseLatency ?? 0) -
+                (start.context.outputLatency ?? 0),
+            );
+      return Math.max(0.5, audioTime - start.when + 0.5);
+    };
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = performance.now() + 10000;
+      while (!condition()) {
+        if (performance.now() >= deadline)
+          throw Error(
+            "Audio presentation clock did not reach the required preview state",
+          );
+        await new Promise(requestAnimationFrame);
+      }
+    };
+    await waitFor(
+      () =>
+        outputAt(performance.now()) >= 0.7 && !v.seeking && v.readyState >= 2,
+    );
     let stopped = false;
     const sample = (_now: number, meta: VideoFrameCallbackMetadata) => {
       if (stopped) return;
-      const stamp = start.context.getOutputTimestamp?.();
-      const audioTime =
-        stamp?.performanceTime > 0
-          ? stamp.contextTime +
-            (meta.expectedDisplayTime - stamp.performanceTime) / 1000
-          : start.context.currentTime;
-      const output = Math.max(0.5, audioTime - start.when + 0.5);
+      const output = outputAt(meta.expectedDisplayTime);
       const source =
         output < 1 ? output : output < 2 ? output + 1 : output < 3 ? 3 : output;
       if (!v.seeking) {
@@ -565,9 +587,14 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       v.requestVideoFrameCallback(sample);
     };
     v.requestVideoFrameCallback(sample);
-    await new Promise((r) => setTimeout(r, 1600));
+    await waitFor(() => {
+      const output = outputAt(performance.now());
+      return output >= 2.2 && output < 2.8 && v.paused && !v.seeking;
+    });
     const held = { paused: v.paused, time: v.currentTime };
-    await new Promise((r) => setTimeout(r, 1100));
+    await waitFor(
+      () => outputAt(performance.now()) >= 3.4 && !v.paused && !v.seeking,
+    );
     stopped = true;
     return { samples, clockSamples, held, resumed: !v.paused };
   });

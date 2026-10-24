@@ -94,3 +94,13 @@ test("presentation clock falls back before an output timestamp is available", ()
     2,
   );
 });
+
+test("a zero device timestamp uses reported output latency instead of freezing video", () => {
+  const c = {
+    currentTime: 2,
+    baseLatency: 0.05,
+    outputLatency: 0.1,
+    getOutputTimestamp: () => ({ contextTime: 0, performanceTime: 1000 }),
+  };
+  assert.ok(Math.abs(outputClockTime(c, 1100) - 1.85) < 1e-9);
+});

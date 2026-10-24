@@ -19,6 +19,10 @@ jobs:
           python-version: "3.12"
       - run: npm ci
       - run: npm test
+      - name: Verify Python parity independent of shell working directory
+        run: |
+          cd "$RUNNER_TEMP"
+          PYTHONPATH="$RUNNER_TEMP" node --test "$GITHUB_WORKSPACE/tests/defaults.test.mjs" "$GITHUB_WORKSPACE/tests/podcast.test.mjs"
       - run: npm run typecheck
       - run: npm run build
   worker:
