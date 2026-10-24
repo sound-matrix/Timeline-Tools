@@ -45,6 +45,7 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ page }, info) => {
   if (info.status !== info.expectedStatus && !page.isClosed()) {
+    console.log("EDITOR_VIDEO_FAILURE", await page.evaluate(() => ({ errors: (window as any).__videoPlayErrors, video: Array.from(document.querySelectorAll("video")).map(v => ({src:v.currentSrc, time:v.currentTime, paused:v.paused, muted:v.muted, ready:v.readyState, seeking:v.seeking})), audio: ((window as any).__audioStarts ?? []).map((s: any) => ({offset:s.offset, when:s.when, now:s.context.currentTime, state:s.context.state})) })));
     console.log(
       "EDITOR_FAILURE_STATE",
       await page.locator(".editor-upload, [role=alert]").allTextContents(),
@@ -450,6 +451,14 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
   });
   await page.addInitScript(() => {
     const Original = window.AudioContext;
+    (window as any).__videoPlayErrors = [];
+    const nativePlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      return nativePlay.call(this).catch((e) => {
+        (window as any).__videoPlayErrors.push({name:e.name, message:e.message, muted:this.muted});
+        throw e;
+      });
+    };
     (window as any).__audioStarts = [];
     window.AudioContext = new Proxy(Original, {
       construct(Target, args) {
@@ -492,10 +501,10 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
   await page.evaluate(() => {
     (window as any).__audioStarts = [];
   });
-  await seek(2.6);
+  await seek(2.1);
   await expect
     .poll(() => page.evaluate(() => (window as any).__audioStarts[0]?.offset))
-    .toBeCloseTo(1.6, 2);
+    .toBeCloseTo(1.1, 2);
   // Restart near the cut, then measure decoded frames across the jump and silence.
   await page.evaluate(() => {
     (window as any).__audioStarts = [];
