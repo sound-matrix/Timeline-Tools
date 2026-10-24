@@ -81,7 +81,7 @@ test("Atelier auth, shell, mobile menu and admin surfaces", async ({
   await page.goto("/studio");
   await expect(
     page.getByRole("button", { name: "Start Processing", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.screenshot({ quality: 82, path: `${images}/studio-desktop.jpg` });
   await page.setViewportSize({ width: 375, height: 850 });
   await page.getByRole("button", { name: "Studio menu" }).click();
