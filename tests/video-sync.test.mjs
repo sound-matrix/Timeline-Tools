@@ -104,3 +104,13 @@ test("a zero device timestamp uses reported output latency instead of freezing v
   };
   assert.ok(Math.abs(outputClockTime(c, 1100) - 1.85) < 1e-9);
 });
+
+test("a timestamp from a foreign time origin cannot pin the presentation clock to zero", () => {
+  const c = {
+    currentTime: 4,
+    baseLatency: 0.01,
+    outputLatency: 0,
+    getOutputTimestamp: () => ({ contextTime: 1, performanceTime: 100000 }),
+  };
+  assert.equal(outputClockTime(c, 1000), 3.99);
+});

@@ -47,26 +47,28 @@ test.afterEach(async ({ page }, info) => {
   if (info.status !== info.expectedStatus && !page.isClosed()) {
     console.log(
       "EDITOR_VIDEO_FAILURE",
-      await page.evaluate(() => ({
-        errors: (window as any).__videoPlayErrors,
-        video: Array.from(document.querySelectorAll("video")).map((v) => ({
-          src: v.currentSrc,
-          time: v.currentTime,
-          paused: v.paused,
-          muted: v.muted,
-          ready: v.readyState,
-          seeking: v.seeking,
+      JSON.stringify(
+        await page.evaluate(() => ({
+          errors: (window as any).__videoPlayErrors,
+          video: Array.from(document.querySelectorAll("video")).map((v) => ({
+            src: v.currentSrc,
+            time: v.currentTime,
+            paused: v.paused,
+            muted: v.muted,
+            ready: v.readyState,
+            seeking: v.seeking,
+          })),
+          audio: ((window as any).__audioStarts ?? []).map((s: any) => ({
+            offset: s.offset,
+            when: s.when,
+            now: s.context.currentTime,
+            state: s.context.state,
+            timestamp: s.context.getOutputTimestamp?.(),
+            baseLatency: s.context.baseLatency,
+            outputLatency: s.context.outputLatency,
+          })),
         })),
-        audio: ((window as any).__audioStarts ?? []).map((s: any) => ({
-          offset: s.offset,
-          when: s.when,
-          now: s.context.currentTime,
-          state: s.context.state,
-          timestamp: s.context.getOutputTimestamp?.(),
-          baseLatency: s.context.baseLatency,
-          outputLatency: s.context.outputLatency,
-        })),
-      })),
+      ),
     );
     console.log(
       "EDITOR_FAILURE_STATE",
@@ -548,16 +550,19 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       samples: number[] = [],
       clockSamples: number[] = [];
     const outputAt = (wall: number) => {
-      const stamp = start.context.getOutputTimestamp?.();
-      const audioTime =
+      const ctx = start.context,
+        stamp = ctx.getOutputTimestamp?.();
+      const latency = (ctx.baseLatency ?? 0) + (ctx.outputLatency ?? 0);
+      const projected =
         stamp?.contextTime > 0 && stamp?.performanceTime > 0
           ? stamp.contextTime + (wall - stamp.performanceTime) / 1000
-          : Math.max(
-              0,
-              start.context.currentTime -
-                (start.context.baseLatency ?? 0) -
-                (start.context.outputLatency ?? 0),
-            );
+          : -1;
+      const audioTime =
+        projected >= 0 &&
+        projected <= ctx.currentTime + 0.1 &&
+        ctx.currentTime - projected <= Math.max(1, latency + 0.25)
+          ? projected
+          : Math.max(0, ctx.currentTime - latency);
       return Math.max(0.5, audioTime - start.when + 0.5);
     };
     const waitFor = async (condition: () => boolean) => {
@@ -596,7 +601,17 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       () => outputAt(performance.now()) >= 3.4 && !v.paused && !v.seeking,
     );
     stopped = true;
-    return { samples, clockSamples, held, resumed: !v.paused };
+    return {
+      samples,
+      clockSamples,
+      held,
+      resumed: !v.paused,
+      timestamp: start.context.getOutputTimestamp?.(),
+      renderTime: start.context.currentTime,
+      wallTime: performance.now(),
+      baseLatency: start.context.baseLatency,
+      outputLatency: start.context.outputLatency,
+    };
   });
   expect(result.held.paused).toBe(true);
   expect(result.held.time).toBeCloseTo(3, 2);
@@ -611,6 +626,11 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       samples: sorted.length,
       p95_seconds: p95,
       max_seconds: sorted.at(-1),
+      timestamp: result.timestamp,
+      renderTime: result.renderTime,
+      wallTime: result.wallTime,
+      baseLatency: result.baseLatency,
+      outputLatency: result.outputLatency,
       clock_p95_seconds: result.clockSamples.toSorted((a, b) => a - b)[
         Math.floor(result.clockSamples.length * 0.95)
       ],
