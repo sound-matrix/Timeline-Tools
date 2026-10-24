@@ -14,9 +14,12 @@ export default async function Page() {
     .order("created_at", { ascending: false })
     .limit(100);
   if (error) throw error;
+  const {data:editors}=await db.from("editor_projects").select("id,name,updated_at").eq("user_id",user.id).order("updated_at",{ascending:false}).limit(10);
   return (
     <>
       <h2>Dashboard</h2>
+      <section className="card"><h3>Editor Studio</h3><a className="btn" href="/editor/new">New Editor project</a>
+      <ul>{(editors??[]).map(p=><li key={p.id}><a href={`/editor/${p.id}`}>{p.name}</a></li>)}</ul></section>
       <div className="grid">
         <div className="card stat">
           <b>{profile.minutes_balance}</b>

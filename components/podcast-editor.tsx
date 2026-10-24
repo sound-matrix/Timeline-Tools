@@ -23,6 +23,7 @@ import {
   podcastOutputTime,
   podcastWindow,
 } from "@/lib/daw/podcast-audio";
+import OpenEditor from "./editor/open-editor";
 import VideoPreview from "./daw/video-preview";
 type Media = {
   index: number;
@@ -169,6 +170,18 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     setViewHead(view);
     transport.current?.seek(view);
   }, []);
+  async function flushEditor() {
+    const deadline=Date.now()+15000;
+    while(saving.current && Date.now()<deadline)await new Promise(r=>setTimeout(r,25));
+    if(saving.current || conflict.current)throw Error("Resolve the save conflict before opening Editor Studio.");
+    saving.current=true;
+    try {
+      const snapshot=JSON.stringify(current.current);
+      const r=await fetch(`/api/podcast/${jobId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision:revision.current,edits:current.current})});
+      if(!r.ok)throw Error("Could not save the latest word edits. Retry opening Editor Studio.");
+      revision.current=(await r.json()).revision;lastSaved.current=snapshot;setSaved("Saved");
+    } finally {saving.current=false;}
+  }
   function toggle() {
     transport.current?.toggle();
   }
@@ -947,6 +960,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
           setState={setExportLive}
         />
       )}
+      <OpenEditor source="podcast" jobId={jobId} flush={flushEditor}/>
     </section>
   );
 }

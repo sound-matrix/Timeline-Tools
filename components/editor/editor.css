@@ -1,0 +1,215 @@
+.editor-studio {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas, #0f1220);
+  color: var(--text, #f4f4f8);
+  overflow: hidden;
+  z-index: 10;
+}
+.editor-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border, #2a3148);
+  background: var(--panel, #1a2136);
+}
+.editor-top > div {
+  flex: 1;
+  min-width: 140px;
+}
+.editor-top h1 {
+  font-size: 18px;
+  margin: 0;
+}
+.editor-top small {
+  font-size: 10px;
+  letter-spacing: 0.17em;
+  color: #a8b0c4;
+}
+.editor-top .btn {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.editor-top [role="status"] {
+  font-size: 12px;
+}
+.editor-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  min-height: 0;
+  flex: 1;
+}
+.editor-desk {
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+.editor-desk > .pro-daw {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+}
+.editor-desk .pro-scroll {
+  flex: 1;
+  min-height: 160px;
+  height: auto;
+}
+.editor-desk .pro-toolbar {
+  padding: 5px 9px;
+  gap: 6px;
+}
+.editor-desk .pro-toolbar .btn {
+  padding: 5px 8px;
+}
+.editor-desk .pro-region-list {
+  max-height: 120px;
+  overflow: auto;
+}
+.editor-bin {
+  padding: 16px;
+  overflow: auto;
+  border-left: 1px solid #2a3148;
+  background: #161b2e;
+  font-size: 12px;
+}
+.editor-bin h2 {
+  font-size: 17px;
+  margin: 0 0 10px;
+}
+.editor-bin .muted {
+  font-size: 11px;
+  line-height: 1.6;
+}
+.editor-clip,
+.editor-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid #2a3148;
+}
+.editor-clip b,
+.editor-upload b {
+  overflow-wrap: anywhere;
+}
+.editor-clip .btn {
+  font-size: 11px;
+  padding: 5px;
+}
+.editor-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 100;
+  width: min(520px, 94vw);
+  max-height: 88dvh;
+  overflow: auto;
+  padding: 24px;
+  background: #1a2136;
+  border: 1px solid #818cf8;
+  border-radius: 18px;
+  box-shadow: 0 20px 150px #000c;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.editor-panel label {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.editor-panel p {
+  font-size: 13px;
+}
+.editor-panel h2 {
+  margin: 0;
+}
+.editor-message {
+  padding: 8px 18px;
+  margin: 0;
+  background: #222a42;
+  font-size: 12px;
+}
+.editor-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+.editor-mobile {
+  display: none;
+}
+.editor-processing {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: min(420px, 90vw);
+  max-height: 40vh;
+  overflow: auto;
+}
+.pro-drop-ghost {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  padding: 12px;
+  border: 1px dashed #a78bfa;
+  background: #818cf840;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.editor-entry {
+  padding-top: 18px;
+}
+.pro-toolbar svg {
+  vertical-align: middle;
+  margin-right: 5px;
+}
+@media (max-width: 800px) {
+  .editor-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .editor-bin {
+    max-height: 160px;
+    border-top: 1px solid #2a3148;
+  }
+  .editor-workspace {
+    display: flex;
+    flex-direction: column;
+  }
+  .editor-desk {
+    flex: 1;
+  }
+  .editor-mobile {
+    display: block;
+    font-size: 12px;
+    padding: 6px 12px;
+    background: #222a42;
+  }
+  .editor-top {
+    padding: 8px;
+    gap: 5px;
+  }
+  .editor-top > div {
+    min-width: 110px;
+  }
+  .editor-top h1 {
+    font-size: 14px;
+  }
+}
+/* Compact controls remain visible at the default 120 px track height. */
+.editor-desk .pro-header input,.editor-desk .pro-header button{min-height:0;margin:0}
+.editor-desk .pro-header>input{height:23px;line-height:19px}
+.editor-desk .pro-header label{margin:0;line-height:18px;min-height:18px}
+.editor-desk .pro-header label input{height:18px;min-height:18px}
+.editor-desk .pro-track-row{height:23px;align-items:center}
+.editor-desk .pro-track-row button{height:21px;padding:1px 8px;font-size:10px}
+.editor-desk .pro-track-row input{height:20px;min-height:20px}

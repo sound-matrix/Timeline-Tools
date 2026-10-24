@@ -1,7 +1,8 @@
+import "./editor-db.test.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-test("database RLS integration suite", () => {
+test("database RLS integration suite", {skip:!process.env.DATABASE_URL}, () => {
   assert.ok(
     process.env.DATABASE_URL,
     "Set DATABASE_URL to a local/test Supabase PostgreSQL URL",

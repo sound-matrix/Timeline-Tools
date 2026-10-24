@@ -220,4 +220,5 @@ export type JobType =
   | "studio"
   | "studio_export"
   | "podcast"
-  | "podcast_export";
+  | "podcast_export"
+  | "editor_export";
