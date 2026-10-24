@@ -73,7 +73,8 @@ uses throttled rate correction. Continuous seek corrections are capped at the
 pending. React transport labels update at most 10 Hz.
 
 The cross-engine test checks paused seeks, audio offsets, live jumps, an inserted
-silence frame hold, resume, stop/return, and decoded-frame PTS against the actual
+silence frame hold, resume, stop/return, an independently timed 250 ms cut-recovery deadline, and
+decoded-frame PTS against the actual
 15 fps MP4 fixture. Local and valid-timestamp engine budgets remain 66.7 ms.
 CI WebKit with a timestamp >100 ms in the future uses a documented 200 ms
 (empirical shared-runner ceiling) decoded-PTS allowance and a separate

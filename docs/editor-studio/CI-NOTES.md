@@ -98,10 +98,10 @@ lets cut jumps bypass that throttle, and permits only one pending play request.
 It retains small-drift rate correction with 50 ms rate-assignment throttling.
 The browser test retains all transition samples and additionally observes
 sustained playback to output time 5.5 s, persisting every frame sample for review.
-For CI WebKit, the original cut/gap interval and full interval have separate
-assertions against the same decoded and media-clock budgets, so extending playback
-cannot dilute a transition failure. Other engines retain the original full-scenario
-one-frame assertion; their short-window values are additionally logged.
+Every engine retains a full-scenario decoded percentile including all transition
+samples. Cut recovery is separately timed from an independent animation-frame
+observer of audio output crossing the cut, with a 250 ms deadline to reach an
+aligned displayed frame. Short-window percentiles remain logged as diagnostics.
 Run 40111759977 passed the full matrix and five of six no-retry repetitions;
 all started WebKit runs measured decoded p95 158.2–160.1 ms and clock p95
 47.9–51.9 ms. One repetition exposed a start-guard regression: waiting for seeked
@@ -133,8 +133,17 @@ ceiling. The old one-frame currentTime diagnostic failed at 92.27 ms sustained
 120–130 ms ahead of the same element's reported currentTime, so treating those
 two reported clocks as interchangeable was invalid on this runner. The diagnostic
 now uses two 15 fps frames (133.3 ms), still only for CI WebKit with a proven
-foreign timestamp origin. Both short/full intervals are asserted, and the PTS
-versus currentTime offset is logged. This does not relax healthy-engine/local
+foreign timestamp origin. The full-scenario budgets and a separate 250 ms cut-recovery deadline are
+asserted, and the PTS versus currentTime offset is logged. This does not relax healthy-engine/local
 decoded 66.7 ms acceptance or certify target Safari. The 200 ms decoded ceiling
 remains unchanged; paused seeks, silence hold, resume and stop remain exact
 functional requirements.
+
+Run 40131679402 measured Firefox decoded p95 39.31 ms and WebKit decoded p95
+108.00 ms / media clock 92.63 ms. Its extra short-window percentile failed, but
+the raw cut frames showed alignment recovered in 32 ms (Firefox 50 ms). A large
+source-time jump can dominate a small sample percentile even when the seek
+completes within one frame. That extra check is replaced by the independent
+250 ms wall-clock cut-recovery deadline; all samples, including cut frames,
+remain in the full-scenario percentile. No samples are filtered and no retries
+are added.
