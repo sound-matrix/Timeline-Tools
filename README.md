@@ -382,3 +382,11 @@ Language checking happens only with a script: probe/decode → optional language
 gate → worker_prepare → ASR → arrangement. Before worker_prepare, failures charge
 zero. No SQL migration is needed: script/mode live in the existing stored manifest.
 A human redeploys Modal after merge. Do not merge or deploy without owner approval.
+
+### Podcast
+
+`/podcast` adds multi-recording clean-up, automatic word transcription and speaker
+lanes, editable transcript/EDL, synchronized video preview, and audio + subtitle
+exports. The first successful export is included; re-exports charge edited output
+length. See [Podcast setup, defaults, migration and verification](docs/PODCAST.md).
+No SQL or Modal deployment is run by this change.

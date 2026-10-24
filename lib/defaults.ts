@@ -12,12 +12,34 @@ function merge(base: ObjectValue, partial: ObjectValue): ObjectValue {
   const out = structuredClone(base);
   for (const [key, value] of Object.entries(partial)) {
     if (value === undefined) continue;
-    Object.defineProperty(out,key,{value:object(value) && Object.hasOwn(out,key) && object(out[key]) ? merge(out[key],value) : value,writable:true,enumerable:true,configurable:true});
+    Object.defineProperty(out, key, {
+      value:
+        object(value) && Object.hasOwn(out, key) && object(out[key])
+          ? merge(out[key], value)
+          : value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   }
   return out;
 }
 export function withDefaults(type: string, partial: unknown): unknown {
-  if(typeof type!=="string")return partial;
+  if (typeof type !== "string") return partial;
+  if (type === "podcast") {
+    if (partial !== undefined && !object(partial)) return partial;
+    const p = partial as ObjectValue | undefined;
+    return {
+      ...DEFAULTS.podcast,
+      ...p,
+      cleanup: withDefaults("clean", p?.cleanup),
+    };
+  }
+  if (type === "podcast_export") {
+    const merged = withDefaults("studio_export", partial);
+    return object(merged) ? { ...DEFAULTS.podcast_export, ...merged } : merged;
+  }
+
   if (!object(partial))
     return partial === undefined ? withDefaults(type, {}) : partial;
   // Legacy queue settings are already complete and must retain their meaning.
@@ -39,7 +61,7 @@ export function withDefaults(type: string, partial: unknown): unknown {
       }
     return merge(base, { ...partial, formats });
   }
-  if (!Object.hasOwn(DEFAULTS,type) || type === "export") return partial;
+  if (!Object.hasOwn(DEFAULTS, type) || type === "export") return partial;
   const base = DEFAULTS[type as "studio" | "clean" | "master" | "subtitles"];
   const p = { ...partial };
   if (type === "subtitles" && Array.isArray(p.formats) && !p.formats.length)
@@ -69,7 +91,7 @@ export function withDefaults(type: string, partial: unknown): unknown {
   }
   const result = merge(base, p);
   for (const [key, value] of Object.entries(p)) {
-    if (!object(value) || !Object.hasOwn(STAGE_DEFAULTS,key)) continue;
+    if (!object(value) || !Object.hasOwn(STAGE_DEFAULTS, key)) continue;
     const stage = merge(
       STAGE_DEFAULTS[key as keyof typeof STAGE_DEFAULTS],
       value,

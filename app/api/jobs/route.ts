@@ -26,7 +26,10 @@ export async function POST(request: Request) {
       },
       { status: 400 },
     );
-  if (parsed.success && parsed.data.type === "studio_export") {
+  if (
+    parsed.success &&
+    ["studio_export", "podcast_export"].includes(parsed.data.type)
+  ) {
     if (!Number.isInteger(body.expected_cost) || body.expected_cost < 0)
       return NextResponse.json(
         { error: "Confirm the export cost" },
@@ -37,7 +40,7 @@ export async function POST(request: Request) {
       .select("id")
       .eq("id", body.parent_job_id)
       .eq("user_id", user.id)
-      .eq("type", "studio")
+      .eq("type", parsed.data.type === "podcast_export" ? "podcast" : "studio")
       .eq("status", "done")
       .maybeSingle();
     if (!parent)
@@ -51,7 +54,10 @@ export async function POST(request: Request) {
         ...parsed.data,
         parent_job_id: parent.id,
         confirmed_export_minutes: body.expected_cost,
-        file_name: "Studio export",
+        file_name:
+          parsed.data.type === "podcast_export"
+            ? "Podcast export"
+            : "Studio export",
         input_path: `${user.id}/${parent.id}/export-${crypto.randomUUID()}.json`,
       })
       .select("id")
@@ -67,8 +73,12 @@ export async function POST(request: Request) {
           .in("status", ["queued", "processing", "done"])
           .limit(1);
         const { data: arr } = await db
-          .from("studio_arrangements")
-          .select("arrangement")
+          .from(
+            parsed.data.type === "podcast_export"
+              ? "podcast_projects"
+              : "studio_arrangements",
+          )
+          .select("*")
           .eq("job_id", parent.id)
           .eq("user_id", user.id)
           .maybeSingle();
@@ -79,7 +89,9 @@ export async function POST(request: Request) {
               ? "price_changed"
               : "revision_conflict",
             expected_cost: active?.length
-              ? Math.ceil((arr?.arrangement.duration ?? 0) / 60)
+              ? Math.ceil(
+                  (arr?.arrangement?.duration ?? arr?.duration ?? 0) / 60,
+                )
               : 0,
           },
           { status: 409 },
@@ -99,7 +111,7 @@ export async function POST(request: Request) {
     !body.file_name.length ||
     typeof body.input_path !== "string" ||
     !body.input_path.startsWith(user.id + "/") ||
-    !(parsed.data.type === "studio"
+    !(["studio", "podcast"].includes(parsed.data.type)
       ? new RegExp(`^${user.id}/[0-9a-f-]+\\.zip$`).test(body.input_path)
       : extensions.includes(body.input_path.split(".").pop()?.toLowerCase()))
   )

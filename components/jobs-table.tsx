@@ -52,9 +52,13 @@ export default function JobsTable({
                 <td>
                   {j.type === "studio"
                     ? "Audio Studio"
-                    : j.type === "studio_export"
-                      ? "Studio export"
-                      : j.type}
+                    : j.type === "podcast"
+                      ? "Podcast"
+                      : j.type === "podcast_export"
+                        ? "Podcast export"
+                        : j.type === "studio_export"
+                          ? "Studio export"
+                          : j.type}
                 </td>
                 <td>
                   <span
@@ -80,6 +84,11 @@ export default function JobsTable({
                   {j.error && <p>{j.error}</p>}
                 </td>
                 <td>
+                  {j.type === "podcast" && j.status === "done" && (
+                    <Link className="btn sm" href={`/podcast?session=${j.id}`}>
+                      Open Podcast session
+                    </Link>
+                  )}
                   {j.status === "done" && Array.isArray(j.output_paths)
                     ? j.output_paths.map((path, i) =>
                         typeof path === "string" &&

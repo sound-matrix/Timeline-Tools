@@ -19,7 +19,7 @@ export default async function ToolJobs({
   return (
     <JobsTable
       jobs={data ?? []}
-      title={type === "studio_export" ? "Recent exports" : "Recent jobs"}
+      title={type.endsWith("_export") ? "Recent exports" : "Recent jobs"}
     />
   );
 }

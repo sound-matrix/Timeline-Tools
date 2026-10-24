@@ -6,40 +6,88 @@
       "dialogue_lufs": -18,
       "master_lufs": -16,
       "has_bed": false,
-      "room_tone": { "enabled": false },
-      "subtitles": { "enabled": false }
+      "room_tone": {
+        "enabled": false
+      },
+      "subtitles": {
+        "enabled": false
+      }
     },
     "clean": {
-      "noise": { "enabled": true, "method": "speech", "amount": 60 },
-      "hum": { "enabled": true, "amount": 30 },
-      "reverb": { "enabled": false },
+      "noise": {
+        "enabled": true,
+        "method": "speech",
+        "amount": 60
+      },
+      "hum": {
+        "enabled": true,
+        "amount": 30
+      },
+      "reverb": {
+        "enabled": false
+      },
       "voice": true
     },
     "master": {
-      "loudness": { "enabled": true, "lufs": -16 },
+      "loudness": {
+        "enabled": true,
+        "lufs": -16
+      },
       "limiter": {
         "enabled": true,
         "ceiling": -1,
         "knee": "soft",
         "release": 180
       },
-      "compressor": { "enabled": false },
-      "eq": { "enabled": false }
+      "compressor": {
+        "enabled": false
+      },
+      "eq": {
+        "enabled": false
+      }
     },
-    "subtitles": { "language": "auto", "formats": ["srt"] },
+    "subtitles": {
+      "language": "auto",
+      "formats": ["srt"]
+    },
     "export": {
       "formats": ["mp3"],
-      "mp3": { "bitrate_kbps": 320, "sample_rate": 48000 },
-      "wav": { "bit_depth": 24, "sample_rate": 48000 },
+      "mp3": {
+        "bitrate_kbps": 320,
+        "sample_rate": 48000
+      },
+      "wav": {
+        "bit_depth": 24,
+        "sample_rate": 48000
+      },
       "subtitles": [],
       "missing_lines": "exclude"
+    },
+    "podcast": {
+      "mode": "sequential"
+    },
+    "podcast_export": {
+      "speaker_labels": false
     }
   },
   "stages": {
-    "noise": { "enabled": true, "amount": 60, "method": "speech" },
-    "hum": { "enabled": true, "amount": 60 },
-    "reverb": { "enabled": true, "amount": 60 },
-    "loudness": { "enabled": true, "lufs": -16 },
+    "noise": {
+      "enabled": true,
+      "amount": 60,
+      "method": "speech"
+    },
+    "hum": {
+      "enabled": true,
+      "amount": 60
+    },
+    "reverb": {
+      "enabled": true,
+      "amount": 60
+    },
+    "loudness": {
+      "enabled": true,
+      "lufs": -16
+    },
     "limiter": {
       "enabled": true,
       "ceiling": -1,
@@ -53,19 +101,38 @@
       "attack": 20,
       "release": 180,
       "knee": "soft",
-      "makeup": { "mode": "auto" }
+      "makeup": {
+        "mode": "auto"
+      }
     },
     "eq": {
       "enabled": true,
       "bands": [
-        { "enabled": true, "gain": 0 },
-        { "enabled": false },
-        { "enabled": false },
-        { "enabled": false },
-        { "enabled": false }
+        {
+          "enabled": true,
+          "gain": 0
+        },
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false
+        }
       ]
     },
-    "room_tone": { "enabled": true, "amount": 60 },
-    "subtitles": { "enabled": true, "formats": ["srt"] }
+    "room_tone": {
+      "enabled": true,
+      "amount": 60
+    },
+    "subtitles": {
+      "enabled": true,
+      "formats": ["srt"]
+    }
   }
 }

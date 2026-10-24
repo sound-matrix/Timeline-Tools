@@ -11,8 +11,15 @@ def merge(base, partial):
         result[key] = merge(result[key], value) if isinstance(value, dict) and isinstance(result.get(key), dict) else copy.deepcopy(value)
     return result
 
-def with_defaults(kind, partial=None):
-    if partial is None: partial = {}
+_MISSING=object()
+def with_defaults(kind, partial=_MISSING):
+    if partial is _MISSING: partial = {}
+    if kind == 'podcast':
+        if not isinstance(partial,dict): return partial
+        return {**DEFAULTS['podcast'],**partial,'cleanup':with_defaults('clean',partial.get('cleanup',_MISSING))}
+    if kind == 'podcast_export':
+        value=with_defaults('studio_export',partial)
+        return {**DEFAULTS['podcast_export'],**value} if isinstance(value,dict) else value
     if not isinstance(partial, dict): return partial
     if kind == 'clean' and 'strength' in partial: return partial
     p = copy.deepcopy(partial)
