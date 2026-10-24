@@ -56,12 +56,17 @@ This measures A/V source-clock delta across edits, not JavaScript drawing time.
 
 Only when CI is set, the engine is WebKit, and the returned device timestamp is
 more than 100 ms in the future relative to the page clock, the decoded-PTS budget
-is two source frames (133.3 ms). This covers one media frame plus one compositor
-presentation frame on the software runner. That branch additionally asserts the
+is two source frames plus one 128-sample audio render quantum (136.0 ms at 48 kHz).
+This covers one media frame plus one compositor presentation frame, and the
+quantization of currentTime when the software runner needs the fallback clock. That branch additionally asserts the
 media currentTime p95 remains within one frame (66.7 ms). Local runs and engines
 with valid device timestamps retain 66.7 ms for decoded PTS. No retry or skip is
 used. Functional seeks, held gaps, resume, audio offsets and stop remain required.
-The cross-engine native regression is repeated three times in CI.
+The cross-engine native regression is repeated three times in CI. The reload
+regression imports a real OS fixture file kept alive until test teardown, rather
+than a protocol-created temporary File whose backing object WebKit may invalidate
+when the page reloads. It still interrupts peak generation and verifies the
+IndexedDB journal resumes, saves exactly one region, and exports nonzero audio.
 
 The native preview now corrects drift beyond 33.3 ms immediately, uses continuous
 rate correction for smaller drift, and throttles rate assignments to 50 ms.

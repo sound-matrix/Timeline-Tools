@@ -1,5 +1,5 @@
 import { test as base, expect } from "@playwright/test";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 // WebKit's ephemeral sessions cannot persist IDB File/Blob values (upstream
 // microsoft/playwright#42795). A fresh persistent profile models normal Safari.
 const test = base.extend({
@@ -331,7 +331,7 @@ with tempfile.TemporaryDirectory() as tmp:
 test("reload during peak generation resumes the original file and saves exactly one region", async ({
   page,
   request,
-}) => {
+}, info) => {
   await signin(page, request);
   await page.getByRole("link", { name: "New Editor project" }).click();
   await expect(page).toHaveURL(/editor\/[0-9a-f-]{36}/);
@@ -343,11 +343,13 @@ test("reload during peak generation resumes the original file and saves exactly 
       body: `const post=self.postMessage.bind(self);self.postMessage=(data,...args)=>{if(data.waveform)return;post(data,...args);};\n${source}`,
     }),
   );
-  await page.getByLabel("Import audio files", { exact: true }).setInputFiles({
-    name: "recover.wav",
-    mimeType: "audio/wav",
-    buffer: wave(2, 550),
-  });
+  // Keep the OS file alive across reload; WebKit can invalidate protocol-created temporary Files.
+  await mkdir(info.outputDir, { recursive: true });
+  const sourcePath = info.outputPath("recover.wav");
+  await writeFile(sourcePath, wave(2, 550));
+  await page
+    .getByLabel("Import audio files", { exact: true })
+    .setInputFiles(sourcePath);
   await expect(
     page.getByText("Regions (1) · select with keyboard"),
   ).toBeVisible();
@@ -629,7 +631,7 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
     !!process.env.CI && browserName === "webkit" && invalidDeviceTimestamp;
   // CI WebKit's foreign time origin cannot support an exact compositor/device-clock comparison.
   // Retain one-frame media-clock alignment, and allow one additional decoded presentation frame.
-  const decodedBudget = ciPresentationAllowance ? 2 / 15 : 1 / 15;
+  const decodedBudget = ciPresentationAllowance ? 2 / 15 + 128 / 48000 : 1 / 15;
   console.log(
     "EDITOR_VIDEO_SYNC",
     JSON.stringify({
