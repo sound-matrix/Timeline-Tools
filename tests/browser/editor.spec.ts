@@ -45,7 +45,26 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ page }, info) => {
   if (info.status !== info.expectedStatus && !page.isClosed()) {
-    console.log("EDITOR_VIDEO_FAILURE", await page.evaluate(() => ({ errors: (window as any).__videoPlayErrors, video: Array.from(document.querySelectorAll("video")).map(v => ({src:v.currentSrc, time:v.currentTime, paused:v.paused, muted:v.muted, ready:v.readyState, seeking:v.seeking})), audio: ((window as any).__audioStarts ?? []).map((s: any) => ({offset:s.offset, when:s.when, now:s.context.currentTime, state:s.context.state})) })));
+    console.log(
+      "EDITOR_VIDEO_FAILURE",
+      await page.evaluate(() => ({
+        errors: (window as any).__videoPlayErrors,
+        video: Array.from(document.querySelectorAll("video")).map((v) => ({
+          src: v.currentSrc,
+          time: v.currentTime,
+          paused: v.paused,
+          muted: v.muted,
+          ready: v.readyState,
+          seeking: v.seeking,
+        })),
+        audio: ((window as any).__audioStarts ?? []).map((s: any) => ({
+          offset: s.offset,
+          when: s.when,
+          now: s.context.currentTime,
+          state: s.context.state,
+        })),
+      })),
+    );
     console.log(
       "EDITOR_FAILURE_STATE",
       await page.locator(".editor-upload, [role=alert]").allTextContents(),
@@ -455,7 +474,11 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
     const nativePlay = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function () {
       return nativePlay.call(this).catch((e) => {
-        (window as any).__videoPlayErrors.push({name:e.name, message:e.message, muted:this.muted});
+        (window as any).__videoPlayErrors.push({
+          name: e.name,
+          message: e.message,
+          muted: this.muted,
+        });
         throw e;
       });
     };
@@ -519,9 +542,10 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
   expect(offset).toBeCloseTo(0.5, 2);
   const result = await video.evaluate(async (v: HTMLVideoElement) => {
     const start = (window as any).__audioStarts[0],
-      samples: number[] = [];
+      samples: number[] = [],
+      clockSamples: number[] = [];
     // Let frames queued by the preceding rapid seeks drain before measuring playback.
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 200));
     let stopped = false;
     const sample = (_now: number, meta: VideoFrameCallbackMetadata) => {
       if (stopped) return;
@@ -531,7 +555,10 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       );
       const source =
         output < 1 ? output : output < 2 ? output + 1 : output < 3 ? 3 : output;
-      if (!v.seeking) samples.push(Math.abs(meta.mediaTime - source));
+      if (!v.seeking) {
+        samples.push(Math.abs(meta.mediaTime - source));
+        clockSamples.push(Math.abs(v.currentTime - source));
+      }
       v.requestVideoFrameCallback(sample);
     };
     v.requestVideoFrameCallback(sample);
@@ -539,7 +566,7 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
     const held = { paused: v.paused, time: v.currentTime };
     await new Promise((r) => setTimeout(r, 1100));
     stopped = true;
-    return { samples, held, resumed: !v.paused };
+    return { samples, clockSamples, held, resumed: !v.paused };
   });
   expect(result.held.paused).toBe(true);
   expect(result.held.time).toBeCloseTo(3, 2);
@@ -554,6 +581,9 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       samples: sorted.length,
       p95_seconds: p95,
       max_seconds: sorted.at(-1),
+      clock_p95_seconds: result.clockSamples.toSorted((a, b) => a - b)[
+        Math.floor(result.clockSamples.length * 0.95)
+      ],
     }),
   );
   await info.attach("editor-video-sync.json", {
