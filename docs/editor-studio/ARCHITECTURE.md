@@ -1,0 +1,62 @@
+# Editor Studio architecture and release
+
+Always fork (brief option b). Source entry links serialize a flush-save before
+opening a separate editor_project. Studio/Podcast records keep their original
+immutable-source contracts. Podcast word edits/transcript are snapshotted as
+non-destructive overlays; there is no send-back operation. Source forks share
+cloud export billing with the source, so opening another fork cannot reset the
+included export. Blank projects have their own included export. Local exports
+never create jobs or consume minutes.
+
+Apply supabase/migrations/20261024093524_editor_studio.sql manually before
+releasing this app. The migration is not applied by this work. It adds owner-only
+RLS and RPC writes, version retention (last 50 plus hourly checkpoints for 24h),
+Editor assets and job snapshots, Storage validation and shared export accounting.
+Redeploy timeline-tools-worker manually after review/merge: the worker dispatches
+editor_export to workers/editor_export.py. No secrets or environment changes.
+
+The v2 schema is retained. Existing lane colour, inserts, master gain, tempo,
+time_signature, loop and markers are reused. The optional editor_project flag
+permits empty blank projects and a 1,000,000-byte arrangement budget. Each new
+clip has an optional asset UUID. Studio/Podcast continue using their 512 KiB
+budget and source immutability. Editor source material can total 80 hours while
+output length stays capped at four hours (20 one-hour tracks fit that budget).
+
+The current plans have max_file_mb but no independent total-storage allowance.
+This migration explicitly reuses max_file_mb as both the per-file and aggregate
+Editor quota. Final uploads lock the owner's profile before counting actual
+Storage metadata, including peaks and unfinished assets. This is intentionally
+conservative; no new plan prices/allowances are invented. The UI displays both
+limits. Existing non-Editor Storage limits remain unchanged.
+
+PCM WAV import is bounded: peak extraction/hash runs in a worker and preview
+reads five-second PCM ranges. Compressed formats use native decodeAudioData,
+convert to float WAV in acknowledged 65,536-frame worker messages and release
+the decoded source afterwards. Cache keys include owner, SHA-256 and rate.
+Large compressed files still require a full native decode; memory for the
+20-track/hour scenario needs measurement on an 8 GB target laptop. Folder drops
+are not implemented. Imported canonical WAVs can exceed the compressed original's
+size and must fit the displayed plan quota.
+
+The lookahead tick runs in a dedicated worker (25 ms / 100 ms scheduling window),
+with 8-second prefetch and bounded five-second PCM reads. Active edits invalidate
+only changed region schedules. Track/master changes use short gain ramps;
+stop/seek cancel voices with a 5 ms ramp. The browser may throttle even dedicated
+workers in heavily suspended tabs; target-device/background-tab verification is
+still required. PCM window cache holds at most 64 windows (about 117 MiB for
+48 kHz stereo float windows), plus active sources and graph nodes.
+
+IndexedDB stores pending arrangements and local import blobs. Saves debounce for
+2 seconds, flush on blur/visibility/pagehide and retry on online; users can retry
+Save. Revision conflicts load a server snapshot, keep the local draft, and show
+Keep mine (default) / Keep theirs. Restoring a version is a normal undoable edit.
+
+OfflineAudioContext renders bounded blocks with the shared fade/pan formulas.
+WAV encoding and lamejs MP3 encoding run in a dedicated worker. The unmodified,
+replaceable lamejs 1.2.1 encoder, LGPL license and source notice are under
+public/daw/vendor. Cloud exports use immutable DB snapshots and success-only
+worker_prepare/worker_complete accounting. Source paths are verified before
+service-role downloads. PluginSlot[] is typed but empty; insertChain is a real
+passthrough node and apply_inserts is a no-op that rejects unimplemented slots.
+
+Validation evidence and remaining acceptance limits belong in VALIDATION.md.

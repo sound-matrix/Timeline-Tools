@@ -25,6 +25,13 @@ import {
 import { DawPlayback } from "@/lib/daw/playback";
 import { usePeaks } from "./peaks";
 import "./daw.css";
+import {
+  TimelineRenderer,
+  IntervalIndex,
+} from "../../public/daw/render-core.js";
+import ToolIcon from "./icons/tool-icon";
+import { shortcutTool, type ShortcutPreset } from "@/lib/daw/shortcuts";
+import type { Placement } from "@/lib/editor/model";
 import VideoStrip from "./video-strip";
 export type DawOverlay = {
   id: string;
@@ -48,6 +55,9 @@ export type DawTransport = {
   stop: () => void;
 };
 type Props = {
+  onImport?: (files: File[], placement: Placement) => void;
+  onRangeChange?: (span: [number, number] | null) => void;
+  shortcutPreset?: ShortcutPreset;
   transport?: RefObject<DawTransport | null>;
   onPlayingChange?: (playing: boolean) => void;
   readWindow?: DawPlayback["reader"];
@@ -70,7 +80,12 @@ type Props = {
   readOnly?: boolean;
 };
 const EMPTY = {};
+const EMPTY_OVERLAYS: DawOverlay[] = [];
+const EMPTY_VIDEOS: DawVideo[] = [];
 export default function DawTimeline({
+  onImport,
+  onRangeChange,
+  shortcutPreset = "timeline",
   transport,
   onPlayingChange,
   readWindow,
@@ -84,14 +99,21 @@ export default function DawTimeline({
   onRedo,
   assets = EMPTY,
   audioUrls = EMPTY,
-  overlays = [],
-  videos = [],
+  overlays = EMPTY_OVERLAYS,
+  videos = EMPTY_VIDEOS,
   playhead: externalHead,
   onSeek,
   playing: externalPlaying,
   onToggle,
   readOnly = false,
 }: Props) {
+  const [dropHint, setDropHint] = useState<{
+    x: number;
+    y: number;
+    time: number;
+    lane: string;
+  } | null>(null);
+  const [ripple, setRipple] = useState(false);
   const [tool, setTool] = useState<Tool>("pointer"),
     [selection, setSelection] = useState<string[]>([]),
     [head, setHead] = useState(0),
@@ -136,15 +158,19 @@ export default function DawTimeline({
     root = useRef<HTMLElement>(null),
     meter = useRef<HTMLCanvasElement>(null),
     clipIndicator = useRef(false);
+  const geometry = useRef({ left: 0, top: 0 });
   const [canvasEpoch, setCanvasEpoch] = useState(0);
   const painter = useRef<Worker | null>(null),
     paintCache = useRef<Record<string, unknown>>({});
+  const renderer = useRef(new TimelineRenderer());
+  const regionIndex = useMemo(() => new IntervalIndex(a.regions), [a.regions]);
+  const overlayCanvas = useRef<HTMLCanvasElement>(null);
   const peaks = usePeaks(assets);
   useEffect(() => {
     const c = canvas.current;
     if (!c?.transferControlToOffscreen || typeof Worker === "undefined") return;
     try {
-      const worker = new Worker("/daw/paint-worker.js");
+      const worker = new Worker("/daw/paint-worker.js", { type: "module" });
       const offscreen = c.transferControlToOffscreen();
       worker.postMessage({ canvas: offscreen }, [offscreen]);
       painter.current = worker;
@@ -164,6 +190,8 @@ export default function DawTimeline({
     }
   }, []);
   state.current = a;
+  const paintHead = useRef<(t: number) => void>(() => {});
+  const lastClock = useRef(0);
   const position = externalHead ?? head,
     isPlaying = externalPlaying ?? playing;
   headRef.current = position;
@@ -175,6 +203,7 @@ export default function DawTimeline({
       return row;
     });
   }, [a.lanes, videos.length]);
+  useEffect(() => onRangeChange?.(range), [range, onRangeChange]);
   const totalHeight = (rows.at(-1)?.y ?? 36) + (rows.at(-1)?.height ?? 120);
   const totalWidth = Math.max(view.w, 180 + a.duration * zoom + 100);
   function stop() {
@@ -183,10 +212,25 @@ export default function DawTimeline({
   }
   const seek = useCallback(
     (t: number) => {
+      const wasPlaying = engine.current?.running;
       stop();
       t = Math.max(0, Math.min(state.current.duration, t));
       setHead(t);
       onSeek?.(t);
+      if (wasPlaying)
+        void engine.current
+          ?.play(
+            state.current,
+            t,
+            audioUrls,
+            (time) => {
+              paintHead.current(time);
+              headRef.current = time;
+            },
+            () => setPlaying(false),
+          )
+          .then(() => setPlaying(true))
+          .catch((e) => setMessage(e.message));
     },
     [onSeek],
   );
@@ -197,10 +241,11 @@ export default function DawTimeline({
     }
     const result = arrangementSchema.safeParse(duration(next));
     if (!result.success) {
+      (onPreview ?? onChange)(before);
       setMessage(result.error.issues[0]?.message ?? "Invalid edit");
       return;
     }
-    stop();
+    if (engine.current?.running) engine.current.update(result.data, audioUrls);
     onChange(history.current.execute(label, before, result.data), before);
     setHistoryTick((n) => n + 1);
     setMessage("");
@@ -232,6 +277,10 @@ export default function DawTimeline({
       stop();
       return;
     }
+    if (!a.regions.length) {
+      setMessage("Import or place audio before playing.");
+      return;
+    }
     try {
       const player = (engine.current ??= new DawPlayback());
       if (player.reader !== readWindow) {
@@ -246,8 +295,13 @@ export default function DawTimeline({
           : (playbackPosition ?? position),
         audioUrls,
         (t) => {
-          setHead(t);
-          (onPlaybackTick ?? onSeek)?.(t);
+          headRef.current = t;
+          paintHead.current(t);
+          if (performance.now() - lastClock.current > 100) {
+            lastClock.current = performance.now();
+            setHead(t);
+            (onPlaybackTick ?? onSeek)?.(t);
+          }
         },
         () => setPlaying(false),
       );
@@ -256,6 +310,10 @@ export default function DawTimeline({
       setMessage((e as Error).message);
     }
   }
+  useEffect(() => {
+    if (engine.current?.running)
+      engine.current.update(playbackArrangement ?? a, audioUrls);
+  }, [a, playbackArrangement, audioUrls]);
   useEffect(() => {
     if (transport)
       transport.current = { toggle: () => void toggle(), seek, stop };
@@ -272,13 +330,16 @@ export default function DawTimeline({
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const measure = () =>
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      geometry.current = { left: rect.left, top: rect.top };
       setView({
         x: el.scrollLeft,
         y: el.scrollTop,
         w: el.clientWidth,
         h: el.clientHeight,
       });
+    };
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     measure();
@@ -297,9 +358,8 @@ export default function DawTimeline({
         e.preventDefault();
         const row = rows.find(
           (l) =>
-            l.y <= e.clientY - el.getBoundingClientRect().top + el.scrollTop &&
-            l.y + l.height >
-              e.clientY - el.getBoundingClientRect().top + el.scrollTop,
+            l.y <= e.clientY - geometry.current.top + el.scrollTop &&
+            l.y + l.height > e.clientY - geometry.current.top + el.scrollTop,
         );
         if (row)
           commit("Track height", {
@@ -336,7 +396,6 @@ export default function DawTimeline({
           view,
           zoom,
           selection,
-          position,
           range,
           ruler,
           rows,
@@ -361,237 +420,19 @@ export default function DawTimeline({
     const draw = () => {
       const c = canvas.current;
       if (!c) return;
-      const ctx = c.getContext("2d");
-      if (!ctx) return;
-      const dpr = Math.min(devicePixelRatio || 1, 2),
-        { x: sx, y: sy, w, h } = view;
-      if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
-        c.width = Math.round(w * dpr);
-        c.height = Math.round(h * dpr);
-      }
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = "#0F1220";
-      ctx.fillRect(0, 0, w, h);
-      const x = (t: number) => 180 + t * zoom - sx,
-        visibleStart = Math.max(0, (sx - 180) / zoom),
-        visibleEnd = (sx + w - 180) / zoom;
-      const step = 10 ** Math.floor(Math.log10(100 / zoom));
-      ctx.font = "11px ui-monospace";
-      for (
-        let t = Math.floor(visibleStart / step) * step;
-        t <= visibleEnd;
-        t += step
-      ) {
-        const px = x(t);
-        if (px < 180) continue;
-        ctx.strokeStyle = "#303952";
-        ctx.beginPath();
-        ctx.moveTo(px, 0);
-        ctx.lineTo(px, h);
-        ctx.stroke();
-        ctx.fillStyle = "#ABB3CE";
-        ctx.fillText(rulerStamp(t, ruler, a), px + 3, 16);
-      }
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(180, 36, w - 180, h - 36);
-      ctx.clip();
-      if (videos.length) {
-        ctx.fillStyle = "#1A2136";
-        ctx.fillRect(180, 36 - sy, w, 72);
-        ctx.fillStyle = "#E0E7FF";
-        for (const video of videos) {
-          ctx.fillRect(
-            x(video.start),
-            60 - sy,
-            Math.max(2, video.duration * zoom),
-            20,
-          );
-        }
-      }
-      for (const lane of rows) {
-        const y = lane.y - sy;
-        if (y + lane.height < 36 || y > h) continue;
-        ctx.fillStyle = "#161B2E";
-        ctx.fillRect(180, y, w, lane.height - 1);
-        for (const r of a.regions) {
-          if (
-            r.lane !== lane.id ||
-            end(r) < visibleStart ||
-            r.start > visibleEnd
-          )
-            continue;
-          const left = x(r.start),
-            right = x(end(r)),
-            top = y + 6,
-            rh = lane.height - 12,
-            color = r.color ?? lane.color;
-          ctx.fillStyle = selection.includes(r.id) ? "#303E68" : "#222A42";
-          ctx.fillRect(left, top, right - left, rh);
-          ctx.strokeStyle = selection.includes(r.id) ? "#E0E7FF" : color;
-          ctx.strokeRect(left + 0.5, top + 0.5, right - left - 1, rh - 1);
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(
-            Math.max(180, left + 1),
-            top + 1,
-            Math.max(0, right - Math.max(180, left + 1) - 1),
-            rh - 2,
-          );
-          ctx.clip();
-          const derived = a.derived_clips.find((c) => c.id === r.clip);
-          const asset = peaks[derived?.source ?? r.clip];
-          let level = asset?.levels[0];
-          if (asset)
-            for (const candidate of asset.levels)
-              if (candidate.rate >= zoom * 0.6) level = candidate;
-          const center = top + rh * 0.55,
-            amp = Math.max(5, rh * 0.31);
-          ctx.strokeStyle = color;
-          ctx.globalAlpha = r.mute ? 0.25 : 1;
-          // Continuous per-pixel min/max: sample all bins represented by the pixel.
-          ctx.beginPath();
-          for (
-            let px = Math.max(180, Math.floor(left));
-            px < Math.min(w, Math.ceil(right));
-            px++
-          ) {
-            const source = r.src_start + (px - left) / zoom;
-            let lo = 0,
-              hi = 0;
-            if (level) {
-              const i = Math.max(
-                  0,
-                  Math.floor((source + (derived?.src_start ?? 0)) * level.rate),
-                ),
-                last = Math.min(
-                  level.values.length / 2 - 1,
-                  Math.max(
-                    i,
-                    Math.ceil(
-                      (source + 1 / zoom + (derived?.src_start ?? 0)) *
-                        level.rate,
-                    ),
-                  ),
-                );
-              lo = 127;
-              hi = -128;
-              for (let k = i; k <= last; k++) {
-                lo = Math.min(lo, level.values[2 * k] ?? 0);
-                hi = Math.max(hi, level.values[2 * k + 1] ?? 0);
-              }
-            }
-            const env = fadeValue(r, source - r.src_start);
-            ctx.moveTo(px, center + (lo / 128) * amp * env);
-            ctx.lineTo(px, center + (hi / 128) * amp * env + 1);
-          }
-          ctx.stroke();
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = "#E0E7FF";
-          ctx.fillText(
-            `${r.confidence < 0.7 ? "⚑ " : ""}${r.name ?? [...a.clips, ...a.derived_clips].find((c) => c.id === r.clip)?.name ?? r.id}`,
-            left + 6,
-            top + 14,
-          );
-          ctx.strokeStyle = "#FCD34D";
-          for (const [seconds, inward] of [
-            [r.fade_in, 1],
-            [r.fade_out, -1],
-          ]) {
-            if (seconds <= 0) continue;
-            const edge = inward === 1 ? left : right;
-            ctx.beginPath();
-            for (let i = 0; i <= 30; i++) {
-              const xx = edge + (inward * seconds * zoom * i) / 30,
-                yy =
-                  top +
-                  rh *
-                    (1 -
-                      (r.fade_curve === "equal_power"
-                        ? Math.sin(((i / 30) * Math.PI) / 2)
-                        : i / 30));
-              i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
-            }
-            ctx.stroke();
-          }
-          ctx.fillStyle = "#FCD34D";
-          ctx.fillRect(left + 2, top + 2, 7, 7);
-          ctx.fillRect(right - 9, top + 2, 7, 7);
-          for (const line of r.lines) {
-            const at = r.start + line.src_start - r.src_start;
-            if (at < r.start || at > end(r)) continue;
-            ctx.fillStyle = line.confidence < 0.7 ? "#FCD34D" : "#ABB3CE";
-            ctx.fillText(
-              a.lines[line.line]?.text ?? "",
-              x(at) + 4,
-              top + rh - 5,
-            );
-          }
-          ctx.restore();
-        }
-        for (const m of a.missing.filter((m) => m.lane === lane.id)) {
-          ctx.fillStyle = "#F8717140";
-          ctx.fillRect(x(m.start), y + 20, m.length * zoom, lane.height - 28);
-          ctx.fillStyle = "#FCA5A5";
-          ctx.fillText(`Missing: ${m.text}`, x(m.start) + 4, y + 35);
-        }
-        for (const o of overlays) {
-          if (
-            o.lane !== lane.id ||
-            o.end < visibleStart ||
-            o.start > visibleEnd
-          )
-            continue;
-          ctx.fillStyle = o.selected
-            ? "#818CF8"
-            : o.muted
-              ? "#7F1D1D"
-              : "#3B4666";
-          ctx.fillRect(
-            x(o.start),
-            y + lane.height - 30,
-            Math.max(2, (o.end - o.start) * zoom),
-            24,
-          );
-          ctx.fillStyle = "#FFFFFF";
-          ctx.fillText(o.text, x(o.start) + 3, y + lane.height - 13);
-        }
-      }
-      if (range) {
-        ctx.fillStyle = "#818CF833";
-        ctx.fillRect(x(range[0]), 36, (range[1] - range[0]) * zoom, h);
-      }
-      if (a.loop.enabled) {
-        ctx.fillStyle = "#FCD34D12";
-        ctx.fillRect(
-          x(a.loop.start),
-          36,
-          (a.loop.end - a.loop.start) * zoom,
-          h,
-        );
-      }
-      ctx.restore();
-      ctx.fillStyle = "#161B2E";
-      ctx.fillRect(0, 0, 180, h);
-      ctx.fillStyle = "#ABB3CE";
-      ctx.fillText(videos.length ? "VIDEO / TRACKS" : "TRACKS", 10, 20);
-      for (const m of a.markers) {
-        const px = x(m.time);
-        if (px < 180 || px > w) continue;
-        ctx.fillStyle = m.color;
-        ctx.fillRect(px, 20, 2, h);
-        ctx.fillText(`◆ ${m.name}`, px + 4, 30);
-      }
-      const px = x(position);
-      if (px >= 180 && px <= w) {
-        ctx.fillStyle = "#F472B6";
-        ctx.fillRect(px, 0, 2, h);
-        ctx.beginPath();
-        ctx.moveTo(px - 6, 0);
-        ctx.lineTo(px + 6, 0);
-        ctx.lineTo(px, 8);
-        ctx.fill();
-      }
+      renderer.current.draw(c, {
+        a,
+        peaks,
+        view,
+        zoom,
+        selection,
+        range,
+        ruler,
+        rows,
+        overlays,
+        videos,
+        dpr: Math.min(devicePixelRatio || 1, 2),
+      });
     };
     cancelAnimationFrame(drawFrame.current);
     drawFrame.current = requestAnimationFrame(draw);
@@ -603,13 +444,33 @@ export default function DawTimeline({
     view,
     zoom,
     selection,
-    position,
     range,
     ruler,
     rows,
     overlays,
     videos,
   ]);
+  paintHead.current = (time: number) => {
+    const c = overlayCanvas.current,
+      ctx = c?.getContext("2d");
+    if (!c || !ctx) return;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    if (
+      c.width !== Math.round(view.w * dpr) ||
+      c.height !== Math.round(view.h * dpr)
+    ) {
+      c.width = Math.round(view.w * dpr);
+      c.height = Math.round(view.h * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, view.w, view.h);
+    const px = 180 + time * zoom - view.x;
+    if (px >= 180 && px <= view.w) {
+      ctx.fillStyle = "#F472B6";
+      ctx.fillRect(px, 0, 2, view.h);
+    }
+  };
+  useEffect(() => paintHead.current(position), [position, view, zoom]);
   useEffect(() => {
     let frame = 0;
     const values = new Float32Array(1024);
@@ -646,7 +507,7 @@ export default function DawTimeline({
   }, []);
 
   function coordinates(e: { clientX: number; clientY: number }) {
-    const rect = scroller.current!.getBoundingClientRect();
+    const rect = geometry.current;
     const x = e.clientX - rect.left,
       y = e.clientY - rect.top;
     return {
@@ -655,15 +516,16 @@ export default function DawTimeline({
       time: Math.max(0, (x + view.x - 180) / zoom),
       lane:
         rows.find((l) => y + view.y >= l.y && y + view.y < l.y + l.height)
-          ?.id ?? a.lanes[0].id,
+          ?.id ?? "",
     };
   }
   function hit(time: number, lane: string) {
-    return [...a.regions]
+    return regionIndex
+      .query(lane, time, time)
       .reverse()
       .find((r) => r.lane === lane && time >= r.start && time <= end(r));
   }
-  function split(time = position, ids = selection) {
+  function split(time = headRef.current, ids = selection) {
     commit(
       "Split",
       splitRegions(
@@ -677,10 +539,10 @@ export default function DawTimeline({
       ),
     );
   }
-  function remove(ripple = false) {
+  function remove(follow = ripple) {
     commit(
-      ripple ? "Ripple delete" : "Delete",
-      deleteRegions(a, selection, ripple),
+      follow ? "Ripple delete" : "Delete",
+      deleteRegions(a, selection, follow),
     );
     setSelection([]);
   }
@@ -776,6 +638,8 @@ export default function DawTimeline({
     if (e.button !== 0) return;
     setMenu(null);
     root.current?.focus({ preventScroll: true });
+    const rect = scroller.current!.getBoundingClientRect();
+    geometry.current = { left: rect.left, top: rect.top };
     const p = coordinates(e);
     if (p.x < 180) return;
     const r = hit(p.time, p.lane),
@@ -842,6 +706,18 @@ export default function DawTimeline({
           Math.abs(p.time - r.start) < Math.abs(p.time - end(r))
             ? "fade_in"
             : "fade_out";
+      else if (
+        tool === "pointer" &&
+        p.y + view.y < (rows.find((l) => l.id === r.lane)?.y ?? 0) + 22 &&
+        p.time - r.start < Math.max(edge, 15 / zoom)
+      )
+        mode = "fade_in";
+      else if (
+        tool === "pointer" &&
+        p.y + view.y < (rows.find((l) => l.id === r.lane)?.y ?? 0) + 22 &&
+        end(r) - p.time < Math.max(edge, 15 / zoom)
+      )
+        mode = "fade_out";
       else if (Math.abs(p.time - r.start) < edge) mode = "trim_start";
       else if (Math.abs(p.time - end(r)) < edge) mode = "trim_end";
       drag.current = {
@@ -973,6 +849,21 @@ export default function DawTimeline({
       return { ...r, start: r.start + Math.max(-minStart, snapped), lane };
     });
     // Gesture preview doesn't create history entries. Stable duplicate IDs per gesture.
+    if (ripple && d.mode === "move" && !d.clone) {
+      for (const old of d.before.regions) {
+        if (d.ids.includes(old.id)) continue;
+        const selected = d.before.regions.filter(
+          (r) => d.ids.includes(r.id) && r.lane === old.lane,
+        );
+        if (selected.length && old.start >= Math.max(...selected.map(end))) {
+          const i = altered.findIndex((r) => r.id === old.id);
+          altered[i] = {
+            ...old,
+            start: Math.max(0, old.start + Math.max(-minStart, snapped)),
+          };
+        }
+      }
+    }
     const regions = d.clone
       ? [
           ...d.before.regions,
@@ -1025,6 +916,7 @@ export default function DawTimeline({
             const overlap = end(first) - second.start;
             first.fade_out = overlap;
             second.fade_in = overlap;
+            first.fade_curve = second.fade_curve = "equal_power";
           }
       }
       commit("Edit regions", next, d.before);
@@ -1186,12 +1078,14 @@ export default function DawTimeline({
     }
     if (k === "enter") {
       e.preventDefault();
-      seek(0);
+      stop();
+      setHead(0);
+      onSeek?.(0);
       return;
     }
     if (k === "delete" || k === "backspace") {
       e.preventDefault();
-      remove(e.shiftKey);
+      remove(e.shiftKey || ripple);
       return;
     }
     if (k === "s") {
@@ -1207,7 +1101,10 @@ export default function DawTimeline({
       return;
     }
     if (k === "l") {
-      commit("Cycle", { ...a, loop: { ...a.loop, enabled: !a.loop.enabled } });
+      commit("Loop Window", {
+        ...a,
+        loop: { ...a.loop, enabled: !a.loop.enabled },
+      });
       return;
     }
     if (k === "?" || k === "/") {
@@ -1240,7 +1137,12 @@ export default function DawTimeline({
       z: "zoom",
       h: "hand",
     };
-    if (tools[k]) setTool(tools[k]);
+    const mapped = shortcutTool(k, shortcutPreset);
+    if (mapped) {
+      e.preventDefault();
+      setTool(mapped as Tool);
+    }
+    if (k === "x" && !mod) setMessage("Mixer · Coming soon");
   }
   return (
     <section
@@ -1255,7 +1157,15 @@ export default function DawTimeline({
         <button type="button" className="btn" onClick={() => void toggle()}>
           {isPlaying ? "Pause" : "Play"}
         </button>
-        <button type="button" className="btn ghost" onClick={() => seek(0)}>
+        <button
+          type="button"
+          className="btn ghost"
+          onClick={() => {
+            stop();
+            setHead(0);
+            onSeek?.(0);
+          }}
+        >
           Stop / return
         </button>
         <output aria-label="Current time">
@@ -1274,6 +1184,31 @@ export default function DawTimeline({
         >
           Shortcuts (?)
         </button>
+        <button
+          type="button"
+          className="btn ghost"
+          disabled
+          title="Recording coming soon"
+        >
+          Record arm · Coming soon
+        </button>
+        <button
+          type="button"
+          className="btn ghost"
+          onClick={() => setMessage("Mixer · Coming soon")}
+        >
+          Mixer (X)
+        </button>
+        <label>
+          Edit movement
+          <select
+            value={ripple ? "ripple" : "free"}
+            onChange={(e) => setRipple(e.target.value === "ripple")}
+          >
+            <option value="free">Free Place (default)</option>
+            <option value="ripple">Ripple Follow</option>
+          </select>
+        </label>
         <label>
           Autoscroll
           <select
@@ -1289,13 +1224,13 @@ export default function DawTimeline({
       <div className="pro-toolbar" role="toolbar" aria-label="Timeline tools">
         {(
           [
-            ["pointer", "Move V"],
-            ["razor", "Razor C"],
+            ["pointer", "Shape V"],
+            ["razor", "Blade C"],
             ["trim", "Trim T"],
             ["fade", "Fade F"],
-            ["range", "Range R"],
-            ["zoom", "Zoom Z"],
-            ["hand", "Hand H"],
+            ["range", "Span R"],
+            ["zoom", "Lens Z"],
+            ["hand", "Pan Hand H"],
           ] as const
         ).map(([id, name]) => (
           <button
@@ -1305,6 +1240,7 @@ export default function DawTimeline({
             aria-pressed={tool === id}
             onClick={() => setTool(id)}
           >
+            <ToolIcon tool={id} />
             {name}
           </button>
         ))}
@@ -1339,6 +1275,8 @@ export default function DawTimeline({
               "seconds",
               "milliseconds",
               "beats",
+              "bars",
+              "markers",
             ].map((s) => (
               <option key={s}>{s}</option>
             ))}
@@ -1432,9 +1370,32 @@ export default function DawTimeline({
           const el = e.currentTarget;
           setView((v) => ({ ...v, x: el.scrollLeft, y: el.scrollTop }));
         }}
-        onDragOver={(e) => e.preventDefault()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (e.dataTransfer.types.includes("Files")) {
+            const p = coordinates(e);
+            e.dataTransfer.dropEffect = "copy";
+            setDropHint(p);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node))
+            setDropHint(null);
+        }}
         onDrop={(e) => {
           e.preventDefault();
+          setDropHint(null);
+          if (e.dataTransfer.files.length) {
+            const p = coordinates(e);
+            const point = {
+              time: snapTime(a, p.time, snap, zoom),
+              lane: p.lane || undefined,
+            };
+            if (onImport) onImport(Array.from(e.dataTransfer.files), point);
+            else setMessage("Open in Editor Studio to import audio files.");
+            return;
+          }
+          if (!e.dataTransfer.getData("text/plain")) return;
           const u = a.unplaced[Number(e.dataTransfer.getData("text/plain"))];
           if (!u) return;
           const p = coordinates(e);
@@ -1481,6 +1442,23 @@ export default function DawTimeline({
               onPointerUp={up}
               onPointerCancel={up}
               onContextMenu={context}
+            />
+            {dropHint && (
+              <div
+                className="pro-drop-ghost"
+                style={{
+                  left: Math.max(180, dropHint.x),
+                  top: Math.max(36, dropHint.y),
+                }}
+              >
+                Import at {dropHint.time.toFixed(2)} s{" "}
+                {dropHint.lane ? "" : "· New tracks"}
+              </div>
+            )}
+            <canvas
+              className="pro-overlay"
+              ref={overlayCanvas}
+              aria-hidden="true"
             />
             {videos.length > 0 && (
               <VideoStrip
@@ -1785,7 +1763,7 @@ export default function DawTimeline({
                         [
                           "Remove track",
                           () => {
-                            if (a.lanes.length > 1)
+                            if (a.editor_project || a.lanes.length > 1)
                               commit("Remove track", {
                                 ...a,
                                 lanes: a.lanes.filter(
@@ -1898,13 +1876,13 @@ export default function DawTimeline({
           className="btn ghost"
           aria-pressed={a.loop.enabled}
           onClick={() =>
-            commit("Cycle", {
+            commit("Loop Window", {
               ...a,
               loop: { ...a.loop, enabled: !a.loop.enabled },
             })
           }
         >
-          Cycle (L)
+          Loop Window (L)
         </button>
         <button type="button" className="btn ghost" onClick={loopSelection}>
           Set loop to selection
@@ -2072,10 +2050,10 @@ export default function DawTimeline({
         <div className="card" role="dialog" aria-label="Timeline shortcuts">
           <h3>Timeline shortcuts</h3>
           <p>
-            V Move · C Razor · T Trim · F Fade · R Range · Z Zoom · H Hand ·
+            V Shape · C Blade · T Trim · F Fade · R Span · Z Lens · H Pan Hand ·
             Space Play/pause · Enter Stop/return · S Split · N Snap · M Marker ·
-            L Cycle · Shift+Z Fit · Arrow keys Nudge · Shift+arrows 100 ms · Del
-            Delete · Shift+Del Ripple delete · Cmd/Ctrl+C/X/V/D
+            L Loop Window · Shift+Z Fit · Arrow keys Nudge · Shift+arrows 100 ms
+            · Del Delete · Shift+Del Ripple delete · Cmd/Ctrl+C/X/V/D
             Copy/Cut/Paste/Duplicate · Cmd/Ctrl+Z Undo · Cmd/Ctrl+Shift+Z or
             Ctrl+Y Redo · Cmd/Ctrl +/− Zoom · Ctrl-wheel / pinch Zoom ·
             Alt-wheel Track height · Alt-drag Duplicate · Shift/Cmd-click

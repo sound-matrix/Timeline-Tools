@@ -13,3 +13,10 @@ def validate_export(s):
         if fmt=='mp3':
             if set(o)!={'bitrate_kbps','sample_rate'} or type(o['bitrate_kbps']) is not int or o['bitrate_kbps'] not in (128,192,256,320) or type(o['sample_rate']) is not int or o['sample_rate'] not in (44100,48000): raise ValueError('Invalid MP3')
         elif set(o)!={'bit_depth','sample_rate'} or o['bit_depth'] not in (16,24,'32f') or isinstance(o['bit_depth'],bool) or type(o['sample_rate']) is not int or o['sample_rate'] not in (44100,48000,96000): raise ValueError('Invalid WAV')
+
+
+def apply_inserts(samples, slots):
+    """PR D hook. Empty chain is a passthrough; unimplemented DSP never runs silently."""
+    if slots:
+        raise ValueError('Insert plugins require PR D')
+    return samples
