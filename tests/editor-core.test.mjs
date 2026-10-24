@@ -131,3 +131,35 @@ test("autosave persists offline, detects conflicts, and keep-mine rebases on the
   assert.equal(status, "Saved");
   saver.close();
 });
+
+test("autosave keeps pending imports local without claiming offline or sending invalid assets", async () => {
+  let persisted,
+    status,
+    calls = 0;
+  const a = blankArrangement(id),
+    saver = new EditorSaver(
+      id,
+      { revision: 1, arrangement: a },
+      {
+        put: async (v) => (persisted = v),
+        clear: async () => (persisted = undefined),
+      },
+      (v) => (status = v),
+      () => {},
+      async () => {
+        calls++;
+        return Response.json({ revision: 2 });
+      },
+    );
+  saver.ready = () => false;
+  saver.change({ ...a, tempo: 140 });
+  await assert.rejects(saver.flush(), /still uploading/);
+  assert.equal(calls, 0);
+  assert.equal(status, "Saving…");
+  assert.equal(persisted.arrangement.tempo, 140);
+  saver.ready = () => true;
+  await saver.flush();
+  assert.equal(calls, 1);
+  assert.equal(status, "Saved");
+  saver.close();
+});

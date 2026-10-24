@@ -355,7 +355,10 @@ export class DawPlayback {
       const clock = () => {
         if (epoch !== this.epoch || !this.active) return;
         const current = this.active;
-        let now = Math.max(0, ctx.currentTime - this.origin);
+        let now = Math.max(
+          cycle === 0 ? position : current.loop.start,
+          ctx.currentTime - this.origin,
+        );
         if (current.loop.enabled && now >= current.loop.end) {
           this.origin += current.loop.end - current.loop.start;
           cycle++;
@@ -393,7 +396,12 @@ export class DawPlayback {
       }
       const draw = () => {
         if (epoch !== this.epoch) return;
-        tick(Math.max(0, ctx.currentTime - this.origin));
+        tick(
+          Math.max(
+            cycle === 0 ? position : (this.active?.loop.start ?? 0),
+            ctx.currentTime - this.origin,
+          ),
+        );
         this.frame = requestAnimationFrame(draw);
       };
       this.frame = requestAnimationFrame(draw);

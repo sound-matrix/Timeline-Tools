@@ -56,6 +56,41 @@ createServer(async (req, res) => {
     res.end(JSON.stringify(data));
   };
   if (req.method === "OPTIONS") return send({});
+  // Logical one-hour stereo PCM files. Only the requested byte range is allocated.
+  if (/^\/__hour\/c\d+\.wav$/.test(url.pathname)) {
+    const dataBytes = 3600 * 48000 * 4,
+      total = dataBytes + 44;
+    const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range ?? "");
+    if (!match) return send({ error: "Byte range required" }, 416);
+    const from = Number(match[1]),
+      to = Math.min(total - 1, Number(match[2]));
+    if (from > to || to - from > 1048576)
+      return send({ error: "Range exceeds streaming budget" }, 416);
+    const chunk = Buffer.alloc(to - from + 1),
+      header = Buffer.alloc(44);
+    header.write("RIFF");
+    header.writeUInt32LE(total - 8, 4);
+    header.write("WAVEfmt ", 8);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(2, 22);
+    header.writeUInt32LE(48000, 24);
+    header.writeUInt32LE(192000, 28);
+    header.writeUInt16LE(4, 32);
+    header.writeUInt16LE(16, 34);
+    header.write("data", 36);
+    header.writeUInt32LE(dataBytes, 40);
+    if (from < 44) header.copy(chunk, 0, from, Math.min(44, to + 1));
+    res.writeHead(206, {
+      ...headers,
+      "Content-Type": "audio/wav",
+      "Content-Range": `bytes ${from}-${to}/${total}`,
+      "Accept-Ranges": "bytes",
+    });
+    res.end(chunk);
+    return;
+  }
+
   let text = "";
   for await (const chunk of req) text += chunk;
   let body;

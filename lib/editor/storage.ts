@@ -36,3 +36,25 @@ export async function deleteEntry(key: string) {
     t.onerror = () => reject(t.error);
   });
 }
+/** Enumerate only one owner's/project's journal namespace, including original File blobs. */
+export async function localEntries<T>(
+  prefix: string,
+): Promise<{ key: string; value: T }[]> {
+  const d = await db();
+  return new Promise((resolve, reject) => {
+    const values: { key: string; value: T }[] = [],
+      t = d.transaction("entries"),
+      r = t
+        .objectStore("entries")
+        .openCursor(IDBKeyRange.bound(prefix, prefix + "\uffff"));
+    r.onsuccess = () => {
+      const cursor = r.result;
+      if (cursor) {
+        values.push({ key: String(cursor.key), value: cursor.value });
+        cursor.continue();
+      }
+    };
+    t.oncomplete = () => resolve(values);
+    t.onerror = () => reject(t.error);
+  });
+}

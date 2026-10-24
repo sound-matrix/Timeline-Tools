@@ -1,5 +1,11 @@
 import { arrangementSchema, type Arrangement } from "../arrangement.ts";
-import { duration, crossfadeRegions, snapTime, uid, type SnapMode } from "../daw/commands.ts";
+import {
+  duration,
+  crossfadeRegions,
+  snapTime,
+  uid,
+  type SnapMode,
+} from "../daw/commands.ts";
 export const AUDIO_EXTENSIONS = [
   "wav",
   "mp3",
@@ -18,7 +24,12 @@ export const COLORS = [
   "#F472B6",
   "#38BDF8",
 ];
-export type Placement = { time: number; lane?: string; bin?: boolean };
+export type Placement = {
+  time: number;
+  lane?: string;
+  bin?: boolean;
+  regionId?: string;
+};
 export function audioType(name: string) {
   return AUDIO_EXTENSIONS.includes(name.split(".").pop()?.toLowerCase() ?? "");
 }
@@ -94,7 +105,7 @@ export function importPlacement(
             regions: [
               ...a.regions,
               {
-                id: uid(),
+                id: point.regionId ?? uid(),
                 lane: lane!,
                 kind: "clip",
                 clip: clip.id,

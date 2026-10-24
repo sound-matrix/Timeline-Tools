@@ -103,9 +103,13 @@ export class TimelineRenderer {
     this.tiles = new TileCache();
     this.index = new IntervalIndex();
     this.arrangement = null;
+    this.grid = null;
+    this.gridKey = "";
   }
   close() {
     this.tiles.clear();
+    this.grid?.close?.();
+    this.grid = null;
   }
   draw(surface, state) {
     if (this.arrangement !== state.a) {
@@ -138,29 +142,54 @@ export class TimelineRenderer {
       c.height = Math.round(h * dpr);
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#0F1220";
-    ctx.fillRect(0, 0, w, h);
+
     const x = (t) => 180 + t * zoom - sx,
       visibleStart = Math.max(0, (sx - 180) / zoom),
       visibleEnd = (sx + w - 180) / zoom;
-    const base = 10 ** Math.floor(Math.log10(100 / zoom));
-    const step = [1,2,5,10].map(n=>n*base).find(s=>s*zoom>=100)??base*10;
-    ctx.font = "11px ui-monospace";
-    for (
-      let t = Math.floor(visibleStart / step) * step;
-      t <= visibleEnd;
-      t += step
-    ) {
-      const px = x(t);
-      if (px < 180) continue;
-      ctx.strokeStyle = "#303952";
-      ctx.beginPath();
-      ctx.moveTo(px, 0);
-      ctx.lineTo(px, h);
-      ctx.stroke();
-      ctx.fillStyle = "#ABB3CE";
-      ctx.fillText(rulerStamp(t, ruler, a), px + 3, 16);
+    const gridKey = JSON.stringify([
+      sx,
+      sy,
+      w,
+      h,
+      dpr,
+      zoom,
+      ruler,
+      a.tempo,
+      a.time_signature,
+    ]);
+    if (this.gridKey !== gridKey) {
+      const grid = makeSurface(Math.round(w * dpr), Math.round(h * dpr)),
+        gridCtx = grid.getContext("2d");
+      gridCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      gridCtx.fillStyle = "#0F1220";
+      gridCtx.fillRect(0, 0, w, h);
+      const base = 10 ** Math.floor(Math.log10(100 / zoom));
+      const step =
+        [1, 2, 5, 10].map((n) => n * base).find((s) => s * zoom >= 100) ??
+        base * 10;
+      gridCtx.font = "11px ui-monospace";
+      for (
+        let t = Math.floor(visibleStart / step) * step;
+        t <= visibleEnd;
+        t += step
+      ) {
+        const px = x(t);
+        if (px < 180) continue;
+        gridCtx.strokeStyle = "#303952";
+        gridCtx.beginPath();
+        gridCtx.moveTo(px, 0);
+        gridCtx.lineTo(px, h);
+        gridCtx.stroke();
+        gridCtx.fillStyle = "#ABB3CE";
+        gridCtx.fillText(rulerStamp(t, ruler, a), px + 3, 16);
+      }
+
+      this.grid?.close?.();
+      this.grid = grid.transferToImageBitmap?.() ?? grid;
+      this.gridKey = gridKey;
     }
+    ctx.drawImage(this.grid, 0, 0, w, h);
+    ctx.font = "11px ui-monospace";
     ctx.save();
     ctx.beginPath();
     ctx.rect(180, 36, w - 180, h - 36);

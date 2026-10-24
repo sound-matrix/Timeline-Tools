@@ -132,7 +132,7 @@ test("blank Editor: OS drop three clips, split/move/fade/history, save/reload, f
   await page.getByRole("button", { name: "Export", exact: true }).click();
   await page
     .getByRole("dialog", { name: "Export Editor project" })
-    .getByRole("combobox", { name:"Format", exact: true })
+    .getByRole("combobox", { name: "Format", exact: true })
     .selectOption("mp3");
   const mp3 = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download local mix · free" }).click();
@@ -251,4 +251,155 @@ with tempfile.TemporaryDirectory() as tmp:
     contentType: "application/json",
   });
   expect(rms).toBeLessThan(-60);
+});
+
+test("reload during peak generation resumes the original file and saves exactly one region", async ({
+  page,
+  request,
+}) => {
+  await signin(page, request);
+  await page.getByRole("link", { name: "New Editor project" }).click();
+  await expect(page).toHaveURL(/editor\/[0-9a-f-]{36}/);
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync("public/daw/import-worker.js", "utf8");
+  await page.route("**/daw/import-worker.js", (route) =>
+    route.fulfill({
+      contentType: "text/javascript",
+      body: `const post=self.postMessage.bind(self);self.postMessage=(data,...args)=>{if(data.waveform)return;post(data,...args);};\n${source}`,
+    }),
+  );
+  await page.getByLabel("Import audio files", { exact: true }).setInputFiles({
+    name: "recover.wav",
+    mimeType: "audio/wav",
+    buffer: wave(2, 550),
+  });
+  await expect(
+    page.getByText("Regions (1) · select with keyboard"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "still uploading" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("status", { name: "Editor save status" }),
+  ).toHaveText("Saving…");
+  await page.unroute("**/daw/import-worker.js");
+  await page.reload();
+  await expect(
+    page.getByRole("status", { name: "Editor save status" }),
+  ).toHaveText("Saved", { timeout: 20000 });
+  await expect(
+    page.getByText("Regions (1) · select with keyboard"),
+  ).toBeVisible();
+  await expect(page.locator(".pro-header")).toHaveCount(1);
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download local mix · free" }).click();
+  const file = await download;
+  const bytes = await readFile((await file.path())!);
+  expect(bytes.readUInt32LE(40) / (48000 * 6)).toBeCloseTo(2, 3);
+  expect(bytes.subarray(44).some((v) => v !== 0)).toBe(true);
+});
+
+test("twenty independent one-hour PCM sources retain a bounded decoded window cache", async ({
+  page,
+  request,
+  browserName,
+}, info) => {
+  test.skip(
+    browserName !== "chromium",
+    "Memory reporting uses Chromium CDP; functional import/export runs on all engines.",
+  );
+  const { build } = await import("esbuild");
+  const bundle = await build({
+    stdin: {
+      contents:
+        'export {DawPlayback} from "./lib/daw/playback.ts";export {blankArrangement,importPlacement} from "./lib/editor/model.ts";',
+      resolveDir: process.cwd(),
+      loader: "ts",
+    },
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    write: false,
+  });
+  await signin(page, request);
+  const ranges: number[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/__hour/")) {
+      const m = /bytes=(\d+)-(\d+)/.exec(r.headers().range ?? "");
+      if (m) ranges.push(Number(m[2]) - Number(m[1]) + 1);
+    }
+  });
+  const measurement = await page.evaluate(async (source) => {
+    const moduleUrl = URL.createObjectURL(
+      new Blob([source], { type: "text/javascript" }),
+    );
+    const { DawPlayback, blankArrangement, importPlacement } = await import(
+      moduleUrl
+    );
+    URL.revokeObjectURL(moduleUrl);
+    let a = blankArrangement("33333333-3333-4333-8333-333333333333");
+    a.duration = 3600;
+    a.loop.end = 3600;
+    const urls: Record<string, string> = {};
+    for (let i = 0; i < 20; i++) {
+      a = importPlacement(
+        a,
+        { id: "c" + i, name: `Hour ${i + 1}.wav`, duration: 3600 },
+        { time: 0 },
+      );
+      urls["c" + i] = `http://127.0.0.1:54331/__hour/c${i}.wav`;
+    }
+    const engine = new DawPlayback();
+    (window as any).__memoryEngine = engine;
+    for (const time of [0, 1200, 2400]) {
+      await engine.play(
+        a,
+        time,
+        urls,
+        () => {},
+        () => {},
+      );
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      engine.stop();
+    }
+    const bytes = Array.from(
+      engine.buffers.values() as Iterable<AudioBuffer>,
+    ).reduce((sum, b) => sum + b.length * b.numberOfChannels * 4, 0);
+    return {
+      tracks: 20,
+      source_duration_seconds: 3600,
+      total_source_hours: 20,
+      decoded_cache_bytes: bytes,
+      decoded_cache_windows: engine.buffers.size,
+    };
+  }, bundle.outputFiles[0].text);
+  await page.requestGC();
+  const session = await page.context().newCDPSession(page),
+    heap = await session.send("Runtime.getHeapUsage");
+  await session.detach();
+  const result = {
+    ...measurement,
+    max_range_bytes: Math.max(...ranges),
+    range_requests: ranges.length,
+    js_heap_bytes: heap.usedSize,
+    scope:
+      "Chromium shared Linux container; three seeks across twenty logical one-hour range-served WAV sources; not total browser RSS or an 8 GB Mac certification",
+  };
+  console.log("EDITOR_STREAMING_MEMORY " + JSON.stringify(result));
+  await info.attach("editor-streaming-memory.json", {
+    body: JSON.stringify(result, null, 2),
+    contentType: "application/json",
+  });
+  expect(result.decoded_cache_windows).toBeLessThanOrEqual(64);
+  expect(result.decoded_cache_bytes).toBeLessThanOrEqual(
+    64 * 5 * 48000 * 2 * 4,
+  );
+  expect(result.max_range_bytes).toBeLessThanOrEqual(1048576);
+  expect(result.range_requests).toBeGreaterThan(100);
+  await page.evaluate(async () => {
+    await (window as any).__memoryEngine.close();
+    delete (window as any).__memoryEngine;
+  });
 });

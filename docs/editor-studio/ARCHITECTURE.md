@@ -41,15 +41,26 @@ size and must fit the displayed plan quota.
 The lookahead tick runs in a dedicated worker (25 ms / 100 ms scheduling window),
 with 8-second prefetch and bounded five-second PCM reads. Active edits invalidate
 only changed region schedules. Track/master changes use short gain ramps;
-stop/seek cancel voices with a 5 ms ramp. The browser may throttle even dedicated
+stop/seek cancel voices with a 5 ms ramp. The playback clock is clamped to the
+requested seek position during the initial scheduling lead-in, so a seek does not
+replay the preceding 40 ms. The browser may throttle even dedicated
 workers in heavily suspended tabs; target-device/background-tab verification is
 still required. PCM window cache holds at most 64 windows (about 117 MiB for
 48 kHz stereo float windows), plus active sources and graph nodes.
 
-IndexedDB stores pending arrangements and local import blobs. Saves debounce for
-2 seconds, flush on blur/visibility/pagehide and retry on online; users can retry
-Save. Revision conflicts load a server snapshot, keep the local draft, and show
+IndexedDB commits the original File and placement journal before showing a new
+region. Reload resumes peak generation/conversion with the same region ID; the
+completed canonical audio/peaks manifest replaces that journal only after its
+transaction commits. Pending arrangements and completed import blobs survive
+reload too. Server saves wait until every referenced asset is registered, retain
+the local draft and show Saving rather than misreporting an upload as offline.
+Saves debounce for 2 seconds, flush on blur/visibility/pagehide and retry on
+online; users can retry Save. Revision conflicts load a server snapshot, keep the local draft, and show
 Keep mine (default) / Keep theirs. Restoring a version is a normal undoable edit.
+
+The timeline retains a grid bitmap separately from cached region/waveform tiles
+and the playhead overlay. Edits reuse the grid; viewport, ruler, tempo and scale
+changes invalidate it. Worker and main-thread painters share the same renderer.
 
 OfflineAudioContext renders bounded blocks with the shared fade/pan formulas.
 WAV encoding and lamejs MP3 encoding run in a dedicated worker. The unmodified,

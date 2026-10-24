@@ -20,6 +20,7 @@ export class EditorSaver {
   notify: (status: SaveStatus) => void;
   onConflict: (server: PendingSave) => void;
   request: typeof fetch;
+  ready: () => boolean = () => true;
   constructor(
     project: string,
     initial: PendingSave,
@@ -61,6 +62,16 @@ export class EditorSaver {
     if (JSON.stringify(this.current) === this.last) {
       this.notify("Saved");
       return;
+    }
+    if (!this.ready()) {
+      await this.storage.put({
+        revision: this.revision,
+        arrangement: this.current,
+      });
+      this.notify("Saving…");
+      throw Error(
+        "Audio is still uploading. Your edits are stored on this device and will save when the upload finishes.",
+      );
     }
     const snapshot = this.current,
       text = JSON.stringify(snapshot),

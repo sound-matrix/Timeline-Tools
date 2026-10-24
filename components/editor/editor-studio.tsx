@@ -14,6 +14,7 @@ import { CommandHistory } from "@/lib/daw/commands";
 import type { ShortcutPreset } from "@/lib/daw/shortcuts";
 import {
   importPlacement,
+  audioType,
   exportSpan,
   type Placement,
 } from "@/lib/editor/model";
@@ -22,7 +23,12 @@ import {
   type PendingSave,
   type SaveStatus,
 } from "@/lib/editor/autosave";
-import { localEntry, putEntry, deleteEntry } from "@/lib/editor/storage";
+import {
+  localEntry,
+  localEntries,
+  putEntry,
+  deleteEntry,
+} from "@/lib/editor/storage";
 import { importAudio, type ImportedAudio } from "@/lib/editor/import-audio";
 import { clientMixdown, type MixOptions } from "@/lib/editor/mixdown";
 import { pcmWindow } from "@/lib/studio-preview";
@@ -76,6 +82,13 @@ type Upload = {
   progress: number;
   status: string;
   error?: string;
+};
+type SourceImport = {
+  id: string;
+  file: File;
+  point: Placement;
+  placed?: boolean;
+  clipId?: string;
 };
 type LocalImport = ImportedAudio & {
   id: string;
@@ -132,6 +145,7 @@ export default function EditorStudio({
     localUrls = useRef<string[]>([]),
     localImports = useRef<Record<string, LocalImport>>({}),
     hashes = useRef(new Map<string, string>()),
+    registeredAssets = useRef(new Set<string>()),
     importQueue = useRef(Promise.resolve()),
     live = useRef(true);
   const key = `${userId}/${projectId}`;
@@ -171,6 +185,13 @@ export default function EditorStudio({
           },
         );
         saver.current = manager;
+        registeredAssets.current = new Set(
+          data.assets.map((asset) => asset.id),
+        );
+        manager.ready = () =>
+          manager.current.clips.every(
+            (c) => !c.asset || registeredAssets.current.has(c.asset),
+          );
         const pending = await localEntry<PendingSave>(`pending/${key}`).catch(
             () => undefined,
           ),
@@ -216,6 +237,17 @@ export default function EditorStudio({
         if (imports)
           for (const item of Object.values(imports))
             if (!item.registered) void upload(item);
+        const sources = await localEntries<SourceImport>(
+          `import-source/${key}/`,
+        ).catch(() => []);
+        if (cancelled) return;
+        for (const entry of sources) {
+          if (imports?.[entry.value.id]) {
+            await deleteEntry(entry.key);
+            continue;
+          }
+          importFiles([entry.value.file], entry.value.point, entry.value);
+        }
       } catch (e) {
         if (!cancelled) setMessage((e as Error).message);
       }
@@ -383,36 +415,48 @@ export default function EditorStudio({
       });
       if (!r.ok) throw Error((await r.json()).error);
       item.registered = true;
+      registeredAssets.current.add(item.id);
       await putEntry(`imports/${key}`, localImports.current);
       set({ progress: 100, status: "Ready" });
       if (saver.current && !saver.current.conflict) {
         saver.current.change(current.current!);
-        await saver.current.flush();
+        void saver.current.flush().catch(() => {});
       }
     } catch (e) {
       set({ status: "Needs retry", error: (e as Error).message });
     }
   }
   const importFiles = useCallback(
-    (files: File[], point: Placement) => {
+    (files: File[], point: Placement, recovery?: SourceImport) => {
       importQueue.current = importQueue.current
         .then(async () => {
           for (const file of files) {
             if (!live.current) break;
-            const id = crypto.randomUUID();
+            const id = recovery?.id ?? crypto.randomUUID();
+            const journal: SourceImport = recovery ?? { id, file, point };
+            const journalKey = `import-source/${key}/${id}`;
             setUploads((v) => [
               ...v,
               { id, name: file.name, progress: 0, status: "Reading audio" },
             ]);
             let clipId = id;
             try {
+              if (!audioType(file.name))
+                throw Error(
+                  "Unsupported type. Use WAV, MP3, FLAC, M4A/AAC, AIFF or OGG.",
+                );
+              if (file.size > maxMb * 1048576)
+                throw Error(`File exceeds your ${maxMb} MB plan limit.`);
+              // A completed IDB transaction owns the source before it can appear on the timeline.
+              await putEntry(journalKey, journal);
               const result = await importAudio(
                 file,
                 current.current!.sample_rate,
                 maxMb,
                 userId,
                 (audio, metadata) => {
-                  const prior = hashes.current.get(metadata.hash);
+                  const prior =
+                    journal.clipId ?? hashes.current.get(metadata.hash);
                   if (
                     prior &&
                     current.current?.clips.some((c) => c.id === prior)
@@ -420,15 +464,31 @@ export default function EditorStudio({
                     clipId = prior;
                   else {
                     hashes.current.set(metadata.hash, id);
-                    showLocal(id, audio, metadata.hash);
                   }
+                  if (clipId === id) showLocal(id, audio, metadata.hash);
                   const clip = {
                     id: clipId,
                     asset: clipId,
                     name: file.name,
                     duration: metadata.duration,
                   };
-                  update(importPlacement(current.current!, clip, point, "off"));
+                  const alreadyPlaced =
+                    journal.placed ||
+                    (point.bin
+                      ? current.current!.unplaced.some((u) => u.clip === clipId)
+                      : current.current!.regions.some((r) => r.id === id));
+                  if (!alreadyPlaced)
+                    update(
+                      importPlacement(
+                        current.current!,
+                        clip,
+                        { ...point, regionId: id },
+                        "off",
+                      ),
+                    );
+                  journal.placed = true;
+                  journal.clipId = clipId;
+                  void putEntry(journalKey, journal).catch(() => {});
                 },
               );
               if (clipId !== id) {
@@ -443,6 +503,7 @@ export default function EditorStudio({
                       : u,
                   ),
                 );
+                await deleteEntry(journalKey);
                 continue;
               }
               if (result.audio.size > maxMb * 1048576)
@@ -452,6 +513,7 @@ export default function EditorStudio({
               const item = { ...result, id, name: file.name };
               localImports.current[id] = item;
               await putEntry(`imports/${key}`, localImports.current);
+              await deleteEntry(journalKey);
               const wave = URL.createObjectURL(result.waveform);
               localUrls.current.push(wave);
               setPeaks((v) => ({
@@ -460,6 +522,8 @@ export default function EditorStudio({
               }));
               void upload(item);
             } catch (e) {
+              if (!journal.placed)
+                await deleteEntry(journalKey).catch(() => {});
               setUploads((v) =>
                 v.map((u) =>
                   u.id === id
