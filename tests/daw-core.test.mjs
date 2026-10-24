@@ -167,7 +167,9 @@ test("podcast output clock maps moved clips back to their original video positio
 
 test("standalone browser worker assets are syntactically valid JavaScript", async () => {
   const { Script } = await import("node:vm");
-  for (const name of ["audio", "peaks", "paint"])
+  const { transformSync } = await import("esbuild");
+  assert.doesNotThrow(() => transformSync(readFileSync("public/daw/paint-worker.js", "utf8"), {format:"esm"}));
+  for (const name of ["audio", "peaks"])
     assert.doesNotThrow(
       () => new Script(readFileSync(`public/daw/${name}-worker.js`, "utf8")),
     );

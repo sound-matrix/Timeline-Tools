@@ -245,3 +245,5 @@
 .pro-playhead-handle:focus {
   outline: 2px solid #f472b6;
 }
+
+.pro-viewport > canvas.pro-overlay {position:absolute;inset:0;pointer-events:none;}

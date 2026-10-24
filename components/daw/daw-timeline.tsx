@@ -25,6 +25,7 @@ import {
 import { DawPlayback } from "@/lib/daw/playback";
 import { usePeaks } from "./peaks";
 import "./daw.css";
+import { TimelineRenderer, IntervalIndex } from "../../public/daw/render-core.js";
 import VideoStrip from "./video-strip";
 export type DawOverlay = {
   id: string;
@@ -136,15 +137,19 @@ export default function DawTimeline({
     root = useRef<HTMLElement>(null),
     meter = useRef<HTMLCanvasElement>(null),
     clipIndicator = useRef(false);
+  const geometry = useRef({left:0,top:0});
   const [canvasEpoch, setCanvasEpoch] = useState(0);
   const painter = useRef<Worker | null>(null),
     paintCache = useRef<Record<string, unknown>>({});
+  const renderer = useRef(new TimelineRenderer());
+  const regionIndex = useMemo(() => new IntervalIndex(a.regions), [a.regions]);
+  const overlayCanvas = useRef<HTMLCanvasElement>(null);
   const peaks = usePeaks(assets);
   useEffect(() => {
     const c = canvas.current;
     if (!c?.transferControlToOffscreen || typeof Worker === "undefined") return;
     try {
-      const worker = new Worker("/daw/paint-worker.js");
+      const worker = new Worker("/daw/paint-worker.js", { type: "module" });
       const offscreen = c.transferControlToOffscreen();
       worker.postMessage({ canvas: offscreen }, [offscreen]);
       painter.current = worker;
@@ -164,6 +169,8 @@ export default function DawTimeline({
     }
   }, []);
   state.current = a;
+  const paintHead = useRef<(t:number)=>void>(()=>{});
+  const lastClock = useRef(0);
   const position = externalHead ?? head,
     isPlaying = externalPlaying ?? playing;
   headRef.current = position;
@@ -246,8 +253,13 @@ export default function DawTimeline({
           : (playbackPosition ?? position),
         audioUrls,
         (t) => {
-          setHead(t);
-          (onPlaybackTick ?? onSeek)?.(t);
+          headRef.current = t;
+          paintHead.current(t);
+          if (performance.now() - lastClock.current > 100) {
+            lastClock.current = performance.now();
+            setHead(t);
+            (onPlaybackTick ?? onSeek)?.(t);
+          }
         },
         () => setPlaying(false),
       );
@@ -272,13 +284,15 @@ export default function DawTimeline({
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const measure = () =>
+    const measure = () => {
+      const rect = el.getBoundingClientRect(); geometry.current = {left:rect.left,top:rect.top};
       setView({
         x: el.scrollLeft,
         y: el.scrollTop,
         w: el.clientWidth,
         h: el.clientHeight,
       });
+    };
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     measure();
@@ -297,9 +311,9 @@ export default function DawTimeline({
         e.preventDefault();
         const row = rows.find(
           (l) =>
-            l.y <= e.clientY - el.getBoundingClientRect().top + el.scrollTop &&
+            l.y <= e.clientY - geometry.current.top + el.scrollTop &&
             l.y + l.height >
-              e.clientY - el.getBoundingClientRect().top + el.scrollTop,
+              e.clientY - geometry.current.top + el.scrollTop,
         );
         if (row)
           commit("Track height", {
@@ -336,7 +350,6 @@ export default function DawTimeline({
           view,
           zoom,
           selection,
-          position,
           range,
           ruler,
           rows,
@@ -361,237 +374,7 @@ export default function DawTimeline({
     const draw = () => {
       const c = canvas.current;
       if (!c) return;
-      const ctx = c.getContext("2d");
-      if (!ctx) return;
-      const dpr = Math.min(devicePixelRatio || 1, 2),
-        { x: sx, y: sy, w, h } = view;
-      if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
-        c.width = Math.round(w * dpr);
-        c.height = Math.round(h * dpr);
-      }
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = "#0F1220";
-      ctx.fillRect(0, 0, w, h);
-      const x = (t: number) => 180 + t * zoom - sx,
-        visibleStart = Math.max(0, (sx - 180) / zoom),
-        visibleEnd = (sx + w - 180) / zoom;
-      const step = 10 ** Math.floor(Math.log10(100 / zoom));
-      ctx.font = "11px ui-monospace";
-      for (
-        let t = Math.floor(visibleStart / step) * step;
-        t <= visibleEnd;
-        t += step
-      ) {
-        const px = x(t);
-        if (px < 180) continue;
-        ctx.strokeStyle = "#303952";
-        ctx.beginPath();
-        ctx.moveTo(px, 0);
-        ctx.lineTo(px, h);
-        ctx.stroke();
-        ctx.fillStyle = "#ABB3CE";
-        ctx.fillText(rulerStamp(t, ruler, a), px + 3, 16);
-      }
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(180, 36, w - 180, h - 36);
-      ctx.clip();
-      if (videos.length) {
-        ctx.fillStyle = "#1A2136";
-        ctx.fillRect(180, 36 - sy, w, 72);
-        ctx.fillStyle = "#E0E7FF";
-        for (const video of videos) {
-          ctx.fillRect(
-            x(video.start),
-            60 - sy,
-            Math.max(2, video.duration * zoom),
-            20,
-          );
-        }
-      }
-      for (const lane of rows) {
-        const y = lane.y - sy;
-        if (y + lane.height < 36 || y > h) continue;
-        ctx.fillStyle = "#161B2E";
-        ctx.fillRect(180, y, w, lane.height - 1);
-        for (const r of a.regions) {
-          if (
-            r.lane !== lane.id ||
-            end(r) < visibleStart ||
-            r.start > visibleEnd
-          )
-            continue;
-          const left = x(r.start),
-            right = x(end(r)),
-            top = y + 6,
-            rh = lane.height - 12,
-            color = r.color ?? lane.color;
-          ctx.fillStyle = selection.includes(r.id) ? "#303E68" : "#222A42";
-          ctx.fillRect(left, top, right - left, rh);
-          ctx.strokeStyle = selection.includes(r.id) ? "#E0E7FF" : color;
-          ctx.strokeRect(left + 0.5, top + 0.5, right - left - 1, rh - 1);
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(
-            Math.max(180, left + 1),
-            top + 1,
-            Math.max(0, right - Math.max(180, left + 1) - 1),
-            rh - 2,
-          );
-          ctx.clip();
-          const derived = a.derived_clips.find((c) => c.id === r.clip);
-          const asset = peaks[derived?.source ?? r.clip];
-          let level = asset?.levels[0];
-          if (asset)
-            for (const candidate of asset.levels)
-              if (candidate.rate >= zoom * 0.6) level = candidate;
-          const center = top + rh * 0.55,
-            amp = Math.max(5, rh * 0.31);
-          ctx.strokeStyle = color;
-          ctx.globalAlpha = r.mute ? 0.25 : 1;
-          // Continuous per-pixel min/max: sample all bins represented by the pixel.
-          ctx.beginPath();
-          for (
-            let px = Math.max(180, Math.floor(left));
-            px < Math.min(w, Math.ceil(right));
-            px++
-          ) {
-            const source = r.src_start + (px - left) / zoom;
-            let lo = 0,
-              hi = 0;
-            if (level) {
-              const i = Math.max(
-                  0,
-                  Math.floor((source + (derived?.src_start ?? 0)) * level.rate),
-                ),
-                last = Math.min(
-                  level.values.length / 2 - 1,
-                  Math.max(
-                    i,
-                    Math.ceil(
-                      (source + 1 / zoom + (derived?.src_start ?? 0)) *
-                        level.rate,
-                    ),
-                  ),
-                );
-              lo = 127;
-              hi = -128;
-              for (let k = i; k <= last; k++) {
-                lo = Math.min(lo, level.values[2 * k] ?? 0);
-                hi = Math.max(hi, level.values[2 * k + 1] ?? 0);
-              }
-            }
-            const env = fadeValue(r, source - r.src_start);
-            ctx.moveTo(px, center + (lo / 128) * amp * env);
-            ctx.lineTo(px, center + (hi / 128) * amp * env + 1);
-          }
-          ctx.stroke();
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = "#E0E7FF";
-          ctx.fillText(
-            `${r.confidence < 0.7 ? "⚑ " : ""}${r.name ?? [...a.clips, ...a.derived_clips].find((c) => c.id === r.clip)?.name ?? r.id}`,
-            left + 6,
-            top + 14,
-          );
-          ctx.strokeStyle = "#FCD34D";
-          for (const [seconds, inward] of [
-            [r.fade_in, 1],
-            [r.fade_out, -1],
-          ]) {
-            if (seconds <= 0) continue;
-            const edge = inward === 1 ? left : right;
-            ctx.beginPath();
-            for (let i = 0; i <= 30; i++) {
-              const xx = edge + (inward * seconds * zoom * i) / 30,
-                yy =
-                  top +
-                  rh *
-                    (1 -
-                      (r.fade_curve === "equal_power"
-                        ? Math.sin(((i / 30) * Math.PI) / 2)
-                        : i / 30));
-              i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
-            }
-            ctx.stroke();
-          }
-          ctx.fillStyle = "#FCD34D";
-          ctx.fillRect(left + 2, top + 2, 7, 7);
-          ctx.fillRect(right - 9, top + 2, 7, 7);
-          for (const line of r.lines) {
-            const at = r.start + line.src_start - r.src_start;
-            if (at < r.start || at > end(r)) continue;
-            ctx.fillStyle = line.confidence < 0.7 ? "#FCD34D" : "#ABB3CE";
-            ctx.fillText(
-              a.lines[line.line]?.text ?? "",
-              x(at) + 4,
-              top + rh - 5,
-            );
-          }
-          ctx.restore();
-        }
-        for (const m of a.missing.filter((m) => m.lane === lane.id)) {
-          ctx.fillStyle = "#F8717140";
-          ctx.fillRect(x(m.start), y + 20, m.length * zoom, lane.height - 28);
-          ctx.fillStyle = "#FCA5A5";
-          ctx.fillText(`Missing: ${m.text}`, x(m.start) + 4, y + 35);
-        }
-        for (const o of overlays) {
-          if (
-            o.lane !== lane.id ||
-            o.end < visibleStart ||
-            o.start > visibleEnd
-          )
-            continue;
-          ctx.fillStyle = o.selected
-            ? "#818CF8"
-            : o.muted
-              ? "#7F1D1D"
-              : "#3B4666";
-          ctx.fillRect(
-            x(o.start),
-            y + lane.height - 30,
-            Math.max(2, (o.end - o.start) * zoom),
-            24,
-          );
-          ctx.fillStyle = "#FFFFFF";
-          ctx.fillText(o.text, x(o.start) + 3, y + lane.height - 13);
-        }
-      }
-      if (range) {
-        ctx.fillStyle = "#818CF833";
-        ctx.fillRect(x(range[0]), 36, (range[1] - range[0]) * zoom, h);
-      }
-      if (a.loop.enabled) {
-        ctx.fillStyle = "#FCD34D12";
-        ctx.fillRect(
-          x(a.loop.start),
-          36,
-          (a.loop.end - a.loop.start) * zoom,
-          h,
-        );
-      }
-      ctx.restore();
-      ctx.fillStyle = "#161B2E";
-      ctx.fillRect(0, 0, 180, h);
-      ctx.fillStyle = "#ABB3CE";
-      ctx.fillText(videos.length ? "VIDEO / TRACKS" : "TRACKS", 10, 20);
-      for (const m of a.markers) {
-        const px = x(m.time);
-        if (px < 180 || px > w) continue;
-        ctx.fillStyle = m.color;
-        ctx.fillRect(px, 20, 2, h);
-        ctx.fillText(`◆ ${m.name}`, px + 4, 30);
-      }
-      const px = x(position);
-      if (px >= 180 && px <= w) {
-        ctx.fillStyle = "#F472B6";
-        ctx.fillRect(px, 0, 2, h);
-        ctx.beginPath();
-        ctx.moveTo(px - 6, 0);
-        ctx.lineTo(px + 6, 0);
-        ctx.lineTo(px, 8);
-        ctx.fill();
-      }
+      renderer.current.draw(c, { a, peaks, view, zoom, selection, range, ruler, rows, overlays, videos, dpr: Math.min(devicePixelRatio || 1, 2) });
     };
     cancelAnimationFrame(drawFrame.current);
     drawFrame.current = requestAnimationFrame(draw);
@@ -603,13 +386,22 @@ export default function DawTimeline({
     view,
     zoom,
     selection,
-    position,
     range,
     ruler,
     rows,
     overlays,
     videos,
   ]);
+  paintHead.current = (time:number) => {
+    const c = overlayCanvas.current, ctx = c?.getContext("2d");
+    if (!c || !ctx) return;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    c.width = Math.round(view.w * dpr); c.height = Math.round(view.h * dpr);
+    ctx.scale(dpr,dpr);
+    const px = 180 + time * zoom - view.x;
+    if (px >= 180 && px <= view.w) {ctx.fillStyle = "#F472B6";ctx.fillRect(px,0,2,view.h);}
+  };
+  useEffect(() => paintHead.current(position), [position,view,zoom]);
   useEffect(() => {
     let frame = 0;
     const values = new Float32Array(1024);
@@ -646,7 +438,7 @@ export default function DawTimeline({
   }, []);
 
   function coordinates(e: { clientX: number; clientY: number }) {
-    const rect = scroller.current!.getBoundingClientRect();
+    const rect = geometry.current;
     const x = e.clientX - rect.left,
       y = e.clientY - rect.top;
     return {
@@ -659,7 +451,7 @@ export default function DawTimeline({
     };
   }
   function hit(time: number, lane: string) {
-    return [...a.regions]
+    return regionIndex.query(lane, time, time)
       .reverse()
       .find((r) => r.lane === lane && time >= r.start && time <= end(r));
   }
@@ -776,6 +568,7 @@ export default function DawTimeline({
     if (e.button !== 0) return;
     setMenu(null);
     root.current?.focus({ preventScroll: true });
+    const rect = scroller.current!.getBoundingClientRect(); geometry.current = {left:rect.left,top:rect.top};
     const p = coordinates(e);
     if (p.x < 180) return;
     const r = hit(p.time, p.lane),
@@ -1482,6 +1275,7 @@ export default function DawTimeline({
               onPointerCancel={up}
               onContextMenu={context}
             />
+            <canvas className="pro-overlay" ref={overlayCanvas} aria-hidden="true" />
             {videos.length > 0 && (
               <VideoStrip
                 videos={videos}
