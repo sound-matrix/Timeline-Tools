@@ -8,6 +8,7 @@ import {
   changedRegions,
 } from "./scheduler.ts";
 import { end, fadeValue, panGains } from "./commands";
+import { outputClockTime } from "./output-clock.ts";
 /** Bounded PCM streaming: sample scheduling uses the AudioContext clock, never timers. */
 function releaseVoice(param: AudioParam, now: number) {
   const value = param.value;
@@ -198,7 +199,7 @@ export class DawPlayback {
     a: Arrangement,
     position: number,
     urls: Record<string, string>,
-    tick: (t: number) => void,
+    tick: (t: number, presenting?: boolean) => void,
     finish: () => void,
   ) {
     this.stop();
@@ -355,6 +356,7 @@ export class DawPlayback {
       await schedule(position, 0, 0, true);
       if (epoch !== this.epoch) return;
       this.origin = ctx.currentTime + 0.04 - position;
+      const initialOrigin = this.origin;
       this.running = true;
       // Resolve play only once the initial sources are scheduled, not on a later timer turn.
       await schedule(position, this.origin, 0);
@@ -378,6 +380,7 @@ export class DawPlayback {
           now = ctx.currentTime - this.origin;
         }
         if (!current.loop.enabled && now >= current.duration) {
+          if (outputClockTime(ctx) - initialOrigin < current.duration) return;
           tick(current.duration);
           this.stop();
           finish();
@@ -408,12 +411,20 @@ export class DawPlayback {
         this.dispose = () => clearInterval(timer);
       }
       const draw = () => {
-        if (epoch !== this.epoch) return;
+        if (epoch !== this.epoch || !this.active) return;
+        const current = this.active;
+        const heard = outputClockTime(ctx);
+        let time = heard - initialOrigin;
+        if (cycle > 0 && current.loop.enabled && time >= current.loop.end) {
+          const length = current.loop.end - current.loop.start;
+          time =
+            current.loop.start +
+            ((((heard - this.origin - current.loop.start) % length) + length) %
+              length);
+        }
         tick(
-          Math.max(
-            cycle === 0 ? position : (this.active?.loop.start ?? 0),
-            ctx.currentTime - this.origin,
-          ),
+          Math.max(cycle === 0 ? position : current.loop.start, time),
+          cycle > 0 || heard - initialOrigin >= position,
         );
         this.frame = requestAnimationFrame(draw);
       };

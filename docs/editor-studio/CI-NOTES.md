@@ -39,6 +39,13 @@ Small preview drift adjusts native playback rate instead of seeking every frame;
 rate updates are quantized and throttled. The preview is explicitly muted.
 The existing thumbnail memory/IndexedDB cache remains bounded and reused.
 Native video is used directly; no per-frame JavaScript video decode is introduced.
+The presentation-clock follow-up uses AudioContext.getOutputTimestamp to project
+the device clock onto performance time. Scheduling still uses currentTime.
+Video waits until the initial audio sample reaches the device; the benchmark
+compares against requestVideoFrameCallback.expectedDisplayTime. This distinguishes
+render-ahead buffering from actual A/V alignment. The 66.7 ms assertion is retained.
+Reference: https://www.w3.org/TR/webaudio-1.1/#dom-audiocontext-getoutputtimestamp
+Two deterministic output-clock tests bring the local suite to 187 passing tests.
 WebKit budget verification is still in progress. No relaxed budget is claimed yet.
 
 ## Merge dependency

@@ -875,12 +875,12 @@ export default function EditorStudio({
               setVideoTime(mapped.source);
               return mapped.output;
             }}
-            onPlaybackFrame={(t) => {
+            onPlaybackFrame={(t, presenting) => {
               if (podcastEdits && rendered) {
                 const mapped = podcastOutputTime(a, rendered, podcastEdits, t);
                 videoClock.current = {
                   time: mapped.source,
-                  playing: true,
+                  playing: presenting ?? true,
                   gap: mapped.gap,
                 };
                 return mapped.view;

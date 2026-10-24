@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { syncVideo } from "../lib/daw/video-sync.ts";
+import { outputClockTime } from "../lib/daw/output-clock.ts";
 
 test("paused seeks are exact and metadata/loading never starts playback", () => {
   const video = {
@@ -70,4 +71,26 @@ test("small clock drift adjusts native playback rate without restarting decoding
   assert.ok(video.playbackRate > 1 && video.playbackRate <= 1.1);
   syncVideo(video, 2, false);
   assert.equal(video.playbackRate, 1);
+});
+
+test("presentation time uses the device timestamp rather than the render-ahead cursor", () => {
+  const context = {
+    currentTime: 10.5,
+    getOutputTimestamp: () => ({ contextTime: 10, performanceTime: 1000 }),
+  };
+  assert.ok(Math.abs(outputClockTime(context, 1100) - 10.1) < 1e-9);
+  assert.ok(Math.abs(outputClockTime(context, 1016) - 10.016) < 1e-9);
+});
+test("presentation clock falls back before an output timestamp is available", () => {
+  assert.equal(outputClockTime({ currentTime: 2 }, 1000), 2);
+  assert.equal(
+    outputClockTime(
+      {
+        currentTime: 2,
+        getOutputTimestamp: () => ({ contextTime: 0, performanceTime: 0 }),
+      },
+      1000,
+    ),
+    2,
+  );
 });

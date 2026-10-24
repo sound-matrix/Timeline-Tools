@@ -70,6 +70,9 @@ worker_prepare/worker_complete accounting. Source paths are verified before
 service-role downloads. PluginSlot[] is typed but empty; insertChain is a real
 passthrough node and apply_inserts is a no-op that rejects unimplemented slots.
 
+Audio scheduling uses the AudioContext render clock; video and the playhead use
+getOutputTimestamp projected onto performance time, accounting for output-device
+buffering. Initial video playback waits for the audio's presentation lead-in.
 Podcast video consumes a mutable source-clock sample on every playback frame;
 React transport labels remain capped at 10 Hz. Paused seeks update the preview,
 running seeks restart the edited audio arrangement at the remapped output time,

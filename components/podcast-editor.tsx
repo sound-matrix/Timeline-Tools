@@ -696,7 +696,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
               };
               return mapped.output;
             }}
-            onPlaybackFrame={(t) => {
+            onPlaybackFrame={(t, presenting) => {
               const mapped = podcastOutputTime(
                 podcastTimeline!,
                 podcastRender!,
@@ -705,7 +705,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
               );
               videoClock.current = {
                 time: mapped.source,
-                playing: true,
+                playing: presenting ?? true,
                 gap: mapped.gap,
               };
               return mapped.view;

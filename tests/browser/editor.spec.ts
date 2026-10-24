@@ -549,10 +549,13 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
     let stopped = false;
     const sample = (_now: number, meta: VideoFrameCallbackMetadata) => {
       if (stopped) return;
-      const output = Math.max(
-        0.5,
-        start.context.currentTime - start.when + 0.5,
-      );
+      const stamp = start.context.getOutputTimestamp?.();
+      const audioTime =
+        stamp?.performanceTime > 0
+          ? stamp.contextTime +
+            (meta.expectedDisplayTime - stamp.performanceTime) / 1000
+          : start.context.currentTime;
+      const output = Math.max(0.5, audioTime - start.when + 0.5);
       const source =
         output < 1 ? output : output < 2 ? output + 1 : output < 3 ? 3 : output;
       if (!v.seeking) {

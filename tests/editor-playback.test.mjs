@@ -61,7 +61,8 @@ function context() {
   };
 }
 test("seek schedules the requested source offset and live gain edits leave other voices running", async () => {
-  const frames = [];
+  const frames = [],
+    ticks = [];
   const previousFrame = globalThis.requestAnimationFrame,
     previousCancel = globalThis.cancelAnimationFrame;
   globalThis.requestAnimationFrame = (fn) => {
@@ -91,7 +92,7 @@ test("seek schedules the requested source offset and live gain edits leave other
       a,
       1.2,
       { voice: "fixture.wav" },
-      () => {},
+      (time, presenting) => ticks.push({ time, presenting }),
       () => {},
     );
     assert.equal(ctx.sources.length, 2);
@@ -99,6 +100,15 @@ test("seek schedules the requested source offset and live gain edits leave other
       assert.ok(Math.abs(source.started[1] - 1.2) < 1e-9);
       assert.ok(source.started[0] >= 10.039);
     }
+    frames[0]();
+    assert.equal(
+      ticks.at(-1).presenting,
+      false,
+      "video must wait for the audio lead-in",
+    );
+    ctx.currentTime += 0.06;
+    frames.at(-1)();
+    assert.equal(ticks.at(-1).presenting, true);
     const next = {
       ...a,
       regions: a.regions.map((r, i) => (i ? r : { ...r, gain_db: -3 })),
