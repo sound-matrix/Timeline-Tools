@@ -11,7 +11,7 @@ import { end, fadeValue, panGains } from "./commands";
 /** Bounded PCM streaming: sample scheduling uses the AudioContext clock, never timers. */
 function releaseVoice(param: AudioParam, now: number) {
   const value = param.value;
-  // Cancel from the beginning: Firefox retains a curve that started before `now`.
+  // This parameter belongs to a separate release node, never the fade curve.
   param.cancelScheduledValues(0);
   param.setValueAtTime(value, now);
   param.setTargetAtTime(0, now, 0.001);
@@ -298,9 +298,13 @@ export class DawPlayback {
               );
               if (duration <= 0) return;
               const source = ctx.createBufferSource(),
-                gain = ctx.createGain();
+                gain = ctx.createGain(),
+                release = ctx.createGain();
               source.buffer = buffer;
-              source.connect(gain).connect(this.tracks.get(r.lane)!.gain);
+              source
+                .connect(gain)
+                .connect(release)
+                .connect(this.tracks.get(r.lane)!.gain);
               const points = [
                 ...new Set(
                   [
@@ -334,12 +338,13 @@ export class DawPlayback {
               source.onended = () => {
                 source.disconnect();
                 gain.disconnect();
+                release.disconnect();
                 this.sources.delete(source);
                 this.voices.delete(source);
               };
               source.start(when, late, duration);
               this.sources.add(source);
-              this.voices.set(source, { region: r.id, gain });
+              this.voices.set(source, { region: r.id, gain: release });
             })(),
           );
         }
@@ -351,6 +356,9 @@ export class DawPlayback {
       if (epoch !== this.epoch) return;
       this.origin = ctx.currentTime + 0.04 - position;
       this.running = true;
+      // Resolve play only once the initial sources are scheduled, not on a later timer turn.
+      await schedule(position, this.origin, 0);
+      if (epoch !== this.epoch) return;
       const fail = () => {
         if (epoch === this.epoch) {
           this.stop();

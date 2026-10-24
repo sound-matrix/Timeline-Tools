@@ -18,8 +18,13 @@ function context() {
   const param = () => ({
     value: 1,
     setTargetAtTime() {},
-    setValueAtTime() {},
-    setValueCurveAtTime() {},
+    curve: false,
+    setValueAtTime() {
+      if (this.curve) throw Error("Cannot add events during an active curve");
+    },
+    setValueCurveAtTime() {
+      this.curve = true;
+    },
     cancelScheduledValues() {},
   });
   const node = () => ({
@@ -57,6 +62,8 @@ function context() {
 }
 test("seek schedules the requested source offset and live gain edits leave other voices running", async () => {
   const frames = [];
+  const previousFrame = globalThis.requestAnimationFrame,
+    previousCancel = globalThis.cancelAnimationFrame;
   globalThis.requestAnimationFrame = (fn) => {
     frames.push(fn);
     return frames.length;
@@ -87,7 +94,6 @@ test("seek schedules the requested source offset and live gain edits leave other
       () => {},
       () => {},
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(ctx.sources.length, 2);
     for (const source of ctx.sources) {
       assert.ok(Math.abs(source.started[1] - 1.2) < 1e-9);
@@ -98,12 +104,13 @@ test("seek schedules the requested source offset and live gain edits leave other
       regions: a.regions.map((r, i) => (i ? r : { ...r, gain_db: -3 })),
     };
     engine.update(next);
-    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.ok(ctx.sources[0].stopped);
     assert.equal(ctx.sources[1].stopped, undefined);
   } finally {
-    engine.stop();
-    delete globalThis.requestAnimationFrame;
-    delete globalThis.cancelAnimationFrame;
+    await engine.close();
+    if (previousFrame) globalThis.requestAnimationFrame = previousFrame;
+    else delete globalThis.requestAnimationFrame;
+    if (previousCancel) globalThis.cancelAnimationFrame = previousCancel;
+    else delete globalThis.cancelAnimationFrame;
   }
 });

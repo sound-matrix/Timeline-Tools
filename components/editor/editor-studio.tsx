@@ -612,6 +612,18 @@ export default function EditorStudio({
       })),
     [project?.source_overlay, project?.source_job_id],
   );
+  const videos = useMemo(
+    () =>
+      media
+        .filter((m) => m.proxy)
+        .map((m) => ({
+          id: String(m.index),
+          start: m.offset,
+          duration: m.duration,
+          url: m.proxy!,
+        })),
+    [media],
+  );
   const wordOverlays = useMemo(() => {
     if (!a || !project?.source_overlay || !podcastEdits) return [];
     const transcript = transcriptSchema.safeParse(
@@ -882,14 +894,7 @@ export default function EditorStudio({
                 setOutputTime(t);
               }
             }}
-            videos={media
-              .filter((m) => m.proxy)
-              .map((m) => ({
-                id: String(m.index),
-                start: m.offset,
-                duration: m.duration,
-                url: m.proxy!,
-              }))}
+            videos={videos}
           />
         </div>
         <aside

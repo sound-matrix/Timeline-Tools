@@ -49,3 +49,25 @@ test("clock drift seeks wait for an in-flight seek and inserted silence holds th
   assert.equal(video.currentTime, 3);
   assert.equal(video.paused, true);
 });
+
+test("small clock drift adjusts native playback rate without restarting decoding", () => {
+  const video = {
+    readyState: 4,
+    duration: 8,
+    currentTime: 2,
+    paused: false,
+    seeking: false,
+    playbackRate: 1,
+    pause() {
+      this.paused = true;
+    },
+    async play() {
+      this.paused = false;
+    },
+  };
+  for (let i = 0; i < 60; i++) syncVideo(video, 2.03, true);
+  assert.equal(video.currentTime, 2);
+  assert.ok(video.playbackRate > 1 && video.playbackRate <= 1.1);
+  syncVideo(video, 2, false);
+  assert.equal(video.playbackRate, 1);
+});
