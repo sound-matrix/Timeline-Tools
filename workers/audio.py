@@ -96,7 +96,7 @@ def validate(kind, s):
         from workers.studio_audio import validate_studio
         valid = validate_studio(s)
     elif kind == 'subtitles':
-        valid = (shape(s, ['language', 'formats']) and s['language'] in ('English', 'Hindi', 'Telugu', 'Tamil')
+        valid = (shape(s, ['language', 'formats']) and s['language'] in ('auto', 'English', 'Hindi', 'Telugu', 'Tamil')
                  and isinstance(s['formats'], list) and 1 <= len(s['formats']) <= 2
                  and all(v in ('srt', 'vtt') for v in s['formats']))
     else:
@@ -255,7 +255,7 @@ def subtitles(source, folder, s):
     run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
          '-protocol_whitelist', 'file,pipe', '-i', str(source), '-map', '0:a:0', '-vn', '-ar', '16000', '-ac', '1', str(decoded)])
     model = WhisperModel('small', device='cpu', compute_type='int8', download_root='/models')
-    segments, _ = model.transcribe(str(decoded), language={'English': 'en', 'Hindi': 'hi', 'Telugu': 'te', 'Tamil': 'ta'}[s['language']],
+    segments, _ = model.transcribe(str(decoded), language={'auto': None, 'English': 'en', 'Hindi': 'hi', 'Telugu': 'te', 'Tamil': 'ta'}[s['language']],
                                   vad_filter=True, beam_size=5, condition_on_previous_text=False)
     return write_subtitles(list(segments), folder, s['formats'])
 

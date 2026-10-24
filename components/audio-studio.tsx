@@ -1,6 +1,8 @@
 "use client";
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { withDefaults, DEFAULT_HELP } from "@/lib/defaults";
+import { fieldErrors, CONTROL_DEFAULTS } from "@/lib/validation";
 import { extensions, jobSchema } from "@/lib/settings";
 import { processingSettings, type Choices } from "@/lib/processing-form";
 import {
@@ -32,6 +34,8 @@ export default function AudioStudio({
     [bed, setBed] = useState<File | null>(null),
     [script, setScript] = useState(""),
     [title, setTitle] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [ignoredScript, setIgnoredScript] = useState(false);
   const [choices, setChoices] = useState<Choices>({}),
     [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false),
@@ -47,7 +51,7 @@ export default function AudioStudio({
         lines: [],
         error: script.trim()
           ? (e as Error).message
-          : "Add your script to continue.",
+          : "No script: clips will be auto-transcribed.",
       };
     }
   }, [script]);
@@ -57,16 +61,17 @@ export default function AudioStudio({
     new TextEncoder().encode(script).length +
     65536;
   const filesReady =
-    clips.length > 0 &&
-    clips.length <= 200 &&
-    preview.lines.length > 0 &&
-    bytes <= maxBytes;
+    clips.length > 0 && clips.length <= 200 && bytes <= maxBytes;
   const selection = jobSchema.safeParse({
     type: "studio",
-    settings: processingSettings("studio", { ...choices, hasBed: !!bed }),
+    settings: withDefaults(
+      "studio",
+      processingSettings("studio", { ...choices, hasBed: !!bed }),
+    ),
   });
   function changed() {
     setMessage("");
+    setIgnoredScript(false);
     setLive(null);
   }
   function update(key: string, value: string | boolean) {
@@ -106,8 +111,27 @@ export default function AudioStudio({
   }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!filesReady || !selection.success || locked || submitting.current)
+    if (locked || submitting.current) return;
+    setErrors({});
+    if (!clips.length) {
+      setMessage("Choose at least one audio or video file.");
       return;
+    }
+    if (!filesReady) {
+      setMessage("Check the project file count and upload limit.");
+      return;
+    }
+    if (!selection.success) {
+      setErrors(fieldErrors(selection.error.issues));
+      setMessage("Check the highlighted processing settings.");
+      return;
+    }
+    if (script.trim() && preview.error && !ignoredScript) {
+      setMessage(
+        `Script ignored: ${preview.error}. Clips will be auto-transcribed. Confirm below before starting.`,
+      );
+      return;
+    }
     submitting.current = true;
     scriptRead.current++;
     setBusy(true);
@@ -134,13 +158,15 @@ export default function AudioStudio({
           speaker: c.speaker.trim(),
         });
       const bedPath = bed ? await add(bed, "bed") : null;
-      entries["script.txt"] = strToU8(script);
+      const hasScript = preview.lines.length > 0;
+      if (hasScript) entries["script.txt"] = strToU8(script);
       entries["manifest.json"] = strToU8(
         JSON.stringify({
           version: 2,
           clips: manifestClips,
           bed: bedPath,
-          script: "script.txt",
+          script: hasScript ? "script.txt" : null,
+          mode: hasScript ? "script" : "transcribe",
         }),
       );
       const bundle = new File(
@@ -209,9 +235,12 @@ export default function AudioStudio({
         min={min}
         max={max}
         step={step}
+        aria-label={label}
+        placeholder={`Default (${CONTROL_DEFAULTS[key] ?? 0})`}
         value={String(choices[key] ?? "")}
         onChange={(e) => update(key, e.target.value)}
       />
+      {errors[key] && <small role="alert">{errors[key]}</small>}
     </label>
   );
   const select = (label: string, key: string, values: string[]) => (
@@ -222,13 +251,14 @@ export default function AudioStudio({
         value={String(choices[key] ?? "")}
         onChange={(e) => update(key, e.target.value)}
       >
-        <option value="">Select…</option>
+        <option value="">Select… Default ({CONTROL_DEFAULTS[key]})</option>
         {values.map((v) => (
           <option key={v} value={v}>
             {v}
           </option>
         ))}
       </select>
+      {errors[key] && <small role="alert">{errors[key]}</small>}
     </label>
   );
   return (
@@ -237,20 +267,20 @@ export default function AudioStudio({
         <div className="card">
           <Visualizer compact />
           <p className="muted">
-            Script-driven arrangement · your clips, your timing.
+            Arrange from a script or automatically transcribe your clips.
           </p>
         </div>
       )}
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <fieldset disabled={locked}>
           <section className="card" aria-label="Studio files">
             <p className="eyebrow">01 · YOUR FILES</p>
             <h3>Build your session</h3>
             <p className="muted">
-              Script + 1–200 audio clips; speaker labels are optional. Up to{" "}
-              {Math.floor(maxBytes / 1048576)} MB total, 60 minutes per file /
-              120 minutes combined. Output timing comes from speech and your
-              chosen gaps.
+              Optional script + 1–200 audio/video clips; speaker labels are
+              optional. Up to {Math.floor(maxBytes / 1048576)} MB total, 60
+              minutes per file / 120 minutes combined. Output timing comes from
+              speech and your chosen gaps.
             </p>
             <label>
               Project title (optional)
@@ -350,7 +380,7 @@ export default function AudioStudio({
               </div>
             </div>
             <label>
-              Script file (TXT, SRT or VTT)
+              Script file (TXT, SRT or VTT, optional)
               <input
                 type="file"
                 accept=".txt,.srt,.vtt"
@@ -373,7 +403,9 @@ export default function AudioStudio({
             <p className="muted">
               {preview.lines.length
                 ? `${preview.lines.length} script lines. Timestamps set order only.`
-                : preview.error}
+                : script.trim()
+                  ? `Script ignored: ${preview.error}. Clips will be auto-transcribed.`
+                  : preview.error}
             </p>
             {bytes > maxBytes && (
               <p role="alert">
@@ -381,7 +413,7 @@ export default function AudioStudio({
               </p>
             )}
           </section>
-          {clips.length > 0 && preview.lines.length > 0 && (
+          {clips.length > 0 && (
             <section className="card" aria-label="Processing options">
               <p className="eyebrow">02 · YOUR ARRANGEMENT</p>
               <h3>Choose your settings</h3>
@@ -420,30 +452,32 @@ export default function AudioStudio({
                 )}
               </div>
               <p className="muted">
-                Language is checked before billing. Uncertain language results
-                are flagged. The first export is included; later exports use
-                processing minutes.
+                Language is checked before billing only when a script is
+                present. Uncertain language results are flagged. The first
+                export is included; later exports use processing minutes.
               </p>
             </section>
           )}
           <div className="processing-start">
-            <button
-              className="btn"
-              disabled={!filesReady || !selection.success || locked}
-            >
+            {message && <p role="alert">{message}</p>}
+            {errors.settings && <p role="alert">{errors.settings}</p>}
+            {script.trim() && preview.error && (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={ignoredScript}
+                  onChange={(e) => setIgnoredScript(e.target.checked)}
+                />
+                I confirm: ignore this script and auto-transcribe the clips.
+              </label>
+            )}
+            <button className="btn" disabled={locked}>
               Start Processing
             </button>
-            <p className="muted">
-              {!filesReady
-                ? "Add your script and audio clips to continue."
-                : !selection.success
-                  ? "Select your options above."
-                  : "Ready to arrange your session."}
-            </p>
+            <p className="muted">{DEFAULT_HELP.studio}</p>
           </div>
         </fieldset>
       </form>
-      {message && <p role="alert">{message}</p>}
       {live && (
         <ProcessingStatus state={live} setState={setLive} type="studio" />
       )}

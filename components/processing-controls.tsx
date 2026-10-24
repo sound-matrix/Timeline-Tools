@@ -1,3 +1,4 @@
+import { CONTROL_DEFAULTS } from "@/lib/validation";
 import type { ReactNode } from "react";
 import type { JobType } from "@/lib/settings";
 import type { Choices } from "@/lib/processing-form";
@@ -6,11 +7,15 @@ export default function ProcessingControls({
   type,
   values,
   setValues,
+  errors = {},
 }: {
+  errors?: Record<string, string>;
   type: JobType;
   values: Choices;
   setValues: (values: Choices) => void;
 }) {
+  const error = (key: string) =>
+    errors[key] ? <small role="alert">{errors[key]}</small> : null;
   const set = (key: string, value: string | boolean) =>
     setValues({ ...values, [key]: value });
   const dropdown = (
@@ -22,12 +27,11 @@ export default function ProcessingControls({
       {label}
       <select
         aria-label={label}
-        required
         value={String(values[key] ?? "")}
         onChange={(e) => set(key, e.target.value)}
       >
-        <option value="" disabled>
-          Choose…
+        <option value="">
+          Select… Default ({CONTROL_DEFAULTS[key] ?? "off"})
         </option>
         {options.map(([value, text]) => (
           <option key={value} value={value}>
@@ -35,6 +39,7 @@ export default function ProcessingControls({
           </option>
         ))}
       </select>
+      {error(key)}
     </label>
   );
   const toggle = (key: string, label: string) => (
@@ -64,14 +69,14 @@ export default function ProcessingControls({
         min={min}
         max={max}
         step={step}
-        required
         value={typeof values[key] === "string" ? values[key] : ""}
-        placeholder={`${min} to ${max}`}
+        placeholder={`Default (${CONTROL_DEFAULTS[key] ?? 0})`}
         onChange={(e) => set(key, e.target.value)}
       />
+      {error(key)}
       <span className="muted">
         {values[key] === undefined || values[key] === ""
-          ? "Not selected"
+          ? `Default (${CONTROL_DEFAULTS[key] ?? 0})`
           : `${values[key]} ${unit}`}
       </span>
     </label>
@@ -86,7 +91,6 @@ export default function ProcessingControls({
               type="radio"
               name={key}
               value={option}
-              required
               checked={values[key] === option}
               onChange={() => set(key, option)}
             />
@@ -94,6 +98,7 @@ export default function ProcessingControls({
           </label>
         ))}
       </div>
+      {error(key)}
     </fieldset>
   );
   const section = (
@@ -174,21 +179,20 @@ export default function ProcessingControls({
           Language
           <select
             aria-label="Language"
-            required
             value={String(values.language || "")}
             onChange={(e) => set("language", e.target.value)}
           >
-            <option value="" disabled>
-              Choose language
-            </option>
-            {["English", "Hindi", "Telugu", "Tamil"].map((l) => (
+            <option value="">Select… Default (auto)</option>
+            {["auto", "English", "Hindi", "Telugu", "Tamil"].map((l) => (
               <option key={l}>{l}</option>
             ))}
           </select>
+          {error("language")}
         </label>
-        <p className="muted">Choose at least one download format.</p>
+        <p className="muted">Default: SRT when no format is selected.</p>
         {toggle("srt", "SRT")}
         {toggle("vtt", "VTT")}
+        {error("formats")}
       </section>
     );
   return (

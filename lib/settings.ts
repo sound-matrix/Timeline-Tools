@@ -129,14 +129,14 @@ export const masterSchema = z
   );
 export const subtitlesSchema = z
   .object({
-    language: z.enum(["English", "Hindi", "Telugu", "Tamil"]),
+    language: z.enum(["auto", "English", "Hindi", "Telugu", "Tamil"]),
     formats: z
       .array(z.enum(["srt", "vtt"]))
       .min(1)
       .max(2),
   })
   .strict();
-// Studio choices never coerce blanks or infer an enabled stage.
+// Validate only after withDefaults; explicit invalid choices still fail.
 export const studioSchema = z
   .object({
     line_gap_ms: z.number().int().min(0).max(5000),

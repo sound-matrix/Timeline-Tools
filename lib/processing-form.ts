@@ -19,26 +19,30 @@ export function processingSettings(type: JobType, values: Choices) {
       room_tone:
         values.roomTone === "off"
           ? { enabled: false }
-          : {
-              enabled: values.roomTone === "on" ? true : undefined,
-              amount: n("roomAmount"),
-            },
+          : values.roomTone !== "on"
+            ? {}
+            : {
+                enabled: true,
+                amount: n("roomAmount"),
+              },
       subtitles:
         values.subtitles === "off"
           ? { enabled: false }
-          : {
-              enabled: values.subtitles === "on" ? true : undefined,
-              formats: ["srt", "vtt"].filter((k) => values[k] === true),
-            },
+          : values.subtitles !== "on"
+            ? {}
+            : {
+                enabled: true,
+                formats: ["srt", "vtt"].filter((k) => values[k] === true),
+              },
     };
   if (type === "clean") {
     const stage = (key: string) => {
       if (values[key] !== true) return { enabled: false };
       const amount = n(`${key}Amount`);
-      // A checked toggle alone never supplies an amount or a method.
+      if (amount === 0) return { enabled: false };
+      // Missing amounts/methods are filled by withDefaults at submission.
       if (key === "noise" && !values.noiseMethod)
         return { enabled: true, amount, method: undefined };
-      if (amount === 0) return { enabled: false };
       return key === "noise"
         ? { enabled: true, amount, method: values.noiseMethod }
         : { enabled: true, amount };

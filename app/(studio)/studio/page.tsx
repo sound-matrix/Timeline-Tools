@@ -36,8 +36,8 @@ export default async function Page() {
         <p className="eyebrow">YOUR SOUND, IN SYNC</p>
         <h2>Audio Studio</h2>
         <p className="muted">
-          Upload your script and audio clips. Arrange by script, edit your
-          timeline, then export your mix.
+          Upload audio clips with an optional script. Arrange from your script
+          or auto-transcribe, edit your timeline, then export your mix.
         </p>
       </div>
       <AudioStudio

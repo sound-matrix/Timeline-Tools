@@ -65,8 +65,11 @@ test("upload-first cleanup desk, independent choices, live wave and download on 
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Start Processing" }),
-  ).toBeDisabled();
-  await expect(page.getByText("Choose a file to continue.")).toBeVisible();
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Start Processing" }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Choose at least one" }),
+  ).toBeVisible();
   await upload(page);
   const options = page.getByRole("region", { name: "Processing options" });
   await expect(options).toBeVisible();
@@ -75,8 +78,8 @@ test("upload-first cleanup desk, independent choices, live wave and download on 
   );
   await expect(
     page.getByRole("button", { name: "Start Processing" }),
-  ).toBeDisabled();
-  await expect(page.getByText("Select your options above.")).toBeVisible();
+  ).toBeEnabled();
+  await expect(page.getByText(/With no stages selected:/)).toBeVisible();
   await page.getByLabel("Noise removal", { exact: true }).check();
   await expect(page.getByLabel("Denoising method")).toHaveValue("");
   await expect(page.getByLabel("Remove noise", { exact: true })).toHaveValue(
@@ -85,12 +88,12 @@ test("upload-first cleanup desk, independent choices, live wave and download on 
   await page.getByLabel("Denoising method").selectOption("speech_music");
   await expect(
     page.getByRole("button", { name: "Start Processing" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.getByLabel("Remove noise", { exact: true }).selectOption("60");
   await page.getByLabel("De-hum", { exact: true }).check();
   await expect(
     page.getByRole("button", { name: "Start Processing" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.getByLabel("De-hum amount").selectOption("30");
   await expect(
     page.getByRole("button", { name: "Start Processing" }),
@@ -183,7 +186,7 @@ for (const route of ["dashboard", "master", "subs"])
     await upload(page);
     await expect(
       page.getByRole("button", { name: "Start Processing" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     if (route === "dashboard") {
       await page.getByLabel("De-reverb", { exact: true }).check();
       await expect(page.getByLabel("De-reverb amount")).toHaveValue("");
@@ -279,11 +282,11 @@ test("polling interruptions preserve the job and recover to done; invalid replac
     buffer: Buffer.from("invalid"),
   });
   await expect(
-    page.getByRole("region", { name: "Upload file" }).getByRole("alert"),
-  ).toContainText("Choose a supported");
+    page.getByRole("alert").filter({ hasText: "Choose a supported" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Start Processing" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await upload(page);
   let fail = true,
     polls = 0;

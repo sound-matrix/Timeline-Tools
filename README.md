@@ -202,9 +202,9 @@ Python tests exercise real ffmpeg clean/master/probe pipelines, silence-safe mea
 
 ### Phase 1C: user-selected processing
 
-Job forms (including dashboard clean-up) start with every processing toggle off and every numeric/language/format choice empty. Submit requires a file and valid explicit choices. Preset chips only fill the loudness field after a click; they never enable a stage. Turning a stage off removes its parameters from the queued settings.
+Job forms (including dashboard clean-up) start with every processing toggle off and every numeric/language/format choice empty. Start stays enabled until submitting/running. Clicking validates the file and merged settings inline. Blank controls use the submit-time defaults below. Preset chips only fill the loudness field after a click; they never enable a stage. Turning a stage off removes its parameters from the queued settings.
 
-Master settings are strict nested objects: `loudness`, `limiter`, `compressor`, and `eq`. Each is either `{ "enabled": false }` or an enabled object with all required parameters. At least one stage must be enabled. `/api/jobs` uses `jobSchema`, with the same validation mirrored in Python. Legacy flat master settings fail with `invalid_settings`; no migration or automatic compatibility defaults are applied.
+Master settings are strict nested objects: `loudness`, `limiter`, `compressor`, and `eq`. Each is either `{ "enabled": false }` or an enabled object with all required parameters. At least one stage must be enabled. `/api/jobs` uses `jobSchema`, with the same validation mirrored in Python. Legacy flat master settings fail with `invalid_settings`; submit-time defaults fill omitted fields; explicit invalid values still fail.
 
 - Loudness: numeric `lufs` −70…−5. Limiter: numeric `ceiling` −6…0 dBTP, `knee` soft/hard, `release` 50…1000 ms.
 - Compressor: `threshold` −60…0 dB, `ratio` 1…20, `attack` 0.01…2000 ms, `release` 0.01…9000 ms, `knee` soft/hard, and `makeup` `{ "mode": "auto" }` or `{ "mode": "manual", "gain": -24…24 }`. Auto makeup estimates half the gain reduction at 0 dBFS.
@@ -221,7 +221,7 @@ After review/merge, the operator must redeploy the Modal worker to accept the ne
 
 All tools use file → original preview → processing options → **Start Processing**.
 Dashboard uses the same Clean-up desk. Options begin disabled and each dropdown
-begins at **Choose…**. Turning on a stage requires its choices; Off bypasses it.
+begins at **Choose…**. Turning on a stage uses defaults for omitted choices; Off bypasses it.
 At least one actual process must be enabled. Voice enhance needs only its toggle.
 Mastering and subtitle settings retain the Phase 1C explicit-choice rules.
 
@@ -272,7 +272,7 @@ timestamps determine script order only. Clips retain their natural speed.
 
 Every new processing choice starts blank: line gap (0–5000 ms), match strictness,
 dialogue/master LUFS, room tone on/off and amount, subtitles on/off and formats,
-and bed ducking/fit when a bed exists. New settings reject missing choices.
+and bed ducking/fit when a bed exists. New settings fill missing choices with documented defaults.
 Transport is a flat stored ZIP, manifest **v2** `{version,clips:[{file,name,speaker?}],bed,script}`.
 Limits remain 250 MB AND the plan cap, 64 KB script, 300 lines, 1000 characters per
 line, 3600 seconds per file and 7200 seconds combined. v1 bundles map `voices` to
@@ -352,3 +352,33 @@ workers.tests.test_studio.Pipeline.test_real_tiny_asr` opts into a real tiny mod
 download. Model accuracy and GPU COGS need a real speech benchmark after the human
 worker rollout; no measured GPU cost is claimed from fixture tests. See
 [ASR and COGS](docs/studio-daw/ASR-COGS.md).
+
+
+### Submit-time defaults and optional scripts
+
+`workers/defaults.json` is the canonical defaults fixture; `lib/defaults.ts` and
+`workers/defaults.py` apply it before strict validation. Controls remain blank;
+placeholders/help name the defaults. The API and worker independently reapply them.
+Explicit out-of-range values fail inline on click. Start Processing is disabled
+only while submitting or while a job is queued/processing. Missing files show an
+inline alert. Legacy queued cleanup/Studio bundles retain support.
+
+| Tool | Blank selection behavior |
+| --- | --- |
+| Studio | 300 ms gap, normal matching, dialogue −18 LUFS, master −16 LUFS, room tone off, subtitles off; with bed: 12 dB ducking, trim |
+| Clean-up | If no stages selected: noise speech/60%, hum 30%, reverb off, voice on. Enabled stage missing amount: 60%; noise method: speech |
+| Master | If no stages selected: −16 LUFS, limiter −1 dBTP (soft knee, 180 ms); compressor/EQ off |
+| Enabled master stage | Loudness −16; limiter −1/soft/180; compressor −24 dB, ratio 3, attack 20 ms, release 180 ms, soft, auto makeup; enabled EQ band 0 dB |
+| Subs | Auto-detect language, SRT |
+| Studio enabled options | Room tone 60%; subtitles SRT |
+| Export | MP3 320 kbps/48 kHz; WAV 24-bit/48 kHz. No format chosen: MP3; subtitles off; missing lines excluded |
+
+Studio manifest v2 accepts `mode: "script" | "transcribe"`, with `script: null`
+for automatic transcription. v1 and older script v2 bundles are still accepted.
+Malformed scripts require an explicit ignore-script confirmation before submission.
+Without a script, clips are transcribed in order, arranged on speaker/file-stem
+lanes with the chosen gap, and shown in the read-only click-to-seek transcript.
+Language checking happens only with a script: probe/decode → optional language
+gate → worker_prepare → ASR → arrangement. Before worker_prepare, failures charge
+zero. No SQL migration is needed: script/mode live in the existing stored manifest.
+A human redeploys Modal after merge. Do not merge or deploy without owner approval.
