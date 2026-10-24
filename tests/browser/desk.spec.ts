@@ -67,7 +67,9 @@ test("upload-first cleanup desk, independent choices, live wave and download on 
     page.getByRole("button", { name: "Start Processing" }),
   ).toBeEnabled();
   await page.getByRole("button", { name: "Start Processing" }).click();
-  await expect(page.getByRole("alert")).toContainText("Choose at least one");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Choose at least one" }),
+  ).toBeVisible();
   await upload(page);
   const options = page.getByRole("region", { name: "Processing options" });
   await expect(options).toBeVisible();
@@ -279,7 +281,9 @@ test("polling interruptions preserve the job and recover to done; invalid replac
     mimeType: "text/plain",
     buffer: Buffer.from("invalid"),
   });
-  await expect(page.getByRole("alert")).toContainText("Choose a supported");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Choose a supported" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Start Processing" }),
   ).toBeEnabled();

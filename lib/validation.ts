@@ -25,16 +25,26 @@ const fields: Record<string, string> = {
   "compressor.makeup.mode": "makeup",
   "compressor.makeup.gain": "makeupGain",
 };
-export function fieldErrors(
-  issues: { path: PropertyKey[]; message: string }[],
-) {
+type Issue = { path: PropertyKey[]; message: string; errors?: Issue[][] };
+export function fieldErrors(issues: Issue[]) {
   const errors: Record<string, string> = {};
-  for (const issue of issues) {
-    const path = issue.path.filter((p) => p !== "settings").join(".");
-    const band = /^eq.bands.(\d).gain$/.exec(path);
-    errors[fields[path] ?? (band ? `gain${band[1]}` : path || "settings")] =
+  function visit(issue: Issue, prefix: PropertyKey[] = []) {
+    const path = [...prefix, ...issue.path];
+    // Zod unions wrap nested paths. Choose the closest matching shape rather than
+    // reporting legacy payload errors against modern controls.
+    if (issue.errors?.length) {
+      const branch = [...issue.errors].sort((a, b) => a.length - b.length)[0];
+      for (const child of branch) visit(child, path);
+      return;
+    }
+    const name = path
+      .filter((p) => p !== "settings" && p !== "cleanup")
+      .join(".");
+    const band = /^eq.bands.(\d).gain$/.exec(name);
+    errors[fields[name] ?? (band ? `gain${band[1]}` : name || "settings")] =
       issue.message;
   }
+  for (const issue of issues) visit(issue);
   return errors;
 }
 export const CONTROL_DEFAULTS: Record<string, string | number> = {

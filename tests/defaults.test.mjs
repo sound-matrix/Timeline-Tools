@@ -90,3 +90,13 @@ test("explicit values are preserved and range errors stay errors", () => {
     false,
   );
 });
+
+test("nested union issues map to the actual cleanup field", async () => {
+  const { fieldErrors } = await import("../lib/validation.ts");
+  const parsed = jobSchema.safeParse({
+    type: "clean",
+    settings: withDefaults("clean", { noise: { enabled: true, amount: 99 } }),
+  });
+  assert.equal(parsed.success, false);
+  assert.ok(fieldErrors(parsed.error.issues).noiseAmount);
+});
