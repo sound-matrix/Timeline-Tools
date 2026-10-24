@@ -28,7 +28,7 @@ The latter now tests the same balance race with either claimed job identity.
 
 Baseline stress: five runs x 184 tests pass. Revised stress: three serial and
 three parallel runs x 185 tests pass. Full suite after Python isolation: 185 pass. Later playback/clock regression
-coverage brings the suite to 193 passing tests; three parallel 188-test runs
+coverage brings the suite to 194 passing tests; three parallel 188-test runs
 also passed before the final clock additions. Three concurrent 191-test runs passed (573 passes, zero failures). After native
 seek-throttling coverage, three concurrent 192-test runs also passed
 (576 passes, zero failures).
@@ -64,7 +64,8 @@ p95 error was 63.99 ms (within 66.7 ms), while decoded-frame PTS p95 was 102.67 
 This measures A/V source-clock delta across edits, not JavaScript drawing time.
 
 Only when CI is set, the engine is WebKit, and the returned device timestamp is
-more than 100 ms in the future relative to the page clock, the decoded-PTS budget
+more than 100 ms in the future relative to the page clock during the measurement,
+the decoded-PTS budget
 is 200 ms (three 15 fps frames). Runs 40109484859, 40110008737 and 40110931372
 measured decoded p95 of 102.67, 133.33 and 158.54 ms while media-clock p95
 remained 63.99, 52.09 and 39.63 ms. The ceiling rounds the observed 158.54 ms
@@ -81,7 +82,8 @@ IndexedDB journal resumes, saves exactly one region, and exports nonzero audio.
 
 Run 40111259029 then exceeded both budgets (decoded p95 228.33 ms; media clock
 p95 158.56 ms), so increasing the decoded allowance alone was insufficient.
-The follow-up caps continuous native seek corrections at the 15 fps proxy rate,
+The follow-up reserves seeks for drift beyond two proxy frames and caps
+continuous native seek corrections at the 15 fps proxy rate,
 lets cut jumps bypass that throttle, and permits only one pending play request.
 It retains small-drift rate correction with 50 ms rate-assignment throttling.
 The browser test retains all transition samples and additionally observes
@@ -93,7 +95,11 @@ all started WebKit runs measured decoded p95 158.2–160.1 ms and clock p95
 47.9–51.9 ms. One repetition exposed a start-guard regression: waiting for seeked
 before play could leave WebKit paused/seeking indefinitely. The follow-up permits
 one pending play call during a seek and tests that repeated frames cannot flood
-play requests. The browser startup assertion latches the playing event, rather
+play requests. Subsequent raw records also exposed switching back to an apparently
+plausible timestamp after the same context had demonstrated a foreign time
+origin. Rejection is now retained for that context, avoiding backward/stalled
+clock projections. Smaller drift uses up to 20% rate correction instead of
+restarting decoding at every small offset. The browser startup assertion latches the playing event, rather
 than polling a transient paused=false interval before an inserted gap.
 This CI allowance does not certify released Safari or a target laptop. Their
 strict decoded-frame acceptance remains a pre-release validation requirement.

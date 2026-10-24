@@ -88,12 +88,12 @@ test("continuous drift corrections cannot restart native decoding faster than th
     pause() {},
     async play() {},
   };
-  syncVideo(video, 2.04, true, 0);
-  assert.equal(video.currentTime, 2.04);
-  syncVideo(video, 2.08, true, 16);
-  assert.equal(video.currentTime, 2.04);
-  syncVideo(video, 2.12, true, 67);
-  assert.equal(video.currentTime, 2.12);
+  syncVideo(video, 2.15, true, 0);
+  assert.equal(video.currentTime, 2.15);
+  syncVideo(video, 2.3, true, 16);
+  assert.equal(video.currentTime, 2.15);
+  syncVideo(video, 2.31, true, 67);
+  assert.equal(video.currentTime, 2.31);
   syncVideo(video, 4, true, 68);
   assert.equal(
     video.currentTime,
@@ -166,7 +166,7 @@ test("a timestamp from a foreign time origin cannot pin the presentation clock t
   assert.equal(outputClockTime(c, 1000), 3.99);
 });
 
-test("drift beyond the 66.7 ms clock budget is corrected rather than slowly accumulated", () => {
+test("moderate drift uses bounded rate correction while large discontinuities seek", () => {
   const v = {
     readyState: 4,
     duration: 8,
@@ -178,7 +178,10 @@ test("drift beyond the 66.7 ms clock budget is corrected rather than slowly accu
     async play() {},
   };
   syncVideo(v, 2.08, true);
-  assert.equal(v.currentTime, 2.08);
+  assert.equal(v.currentTime, 2);
+  assert.equal(v.playbackRate, 1.2);
+  syncVideo(v, 3, true);
+  assert.equal(v.currentTime, 3);
 });
 
 test("a future device timestamp is rejected even when its projection looks plausible", () => {
@@ -188,4 +191,16 @@ test("a future device timestamp is rejected even when its projection looks plaus
     getOutputTimestamp: () => ({ contextTime: 2.8, performanceTime: 2000 }),
   };
   assert.equal(outputClockTime(c, 1200), 1.99);
+});
+
+test("a foreign time origin stays rejected when a later timestamp happens to look plausible", () => {
+  let stamp = { contextTime: 4, performanceTime: 100000 };
+  const c = {
+    currentTime: 4,
+    baseLatency: 0.01,
+    getOutputTimestamp: () => stamp,
+  };
+  assert.equal(outputClockTime(c, 1000), 3.99);
+  stamp = { contextTime: 3.5, performanceTime: 1000 };
+  assert.equal(outputClockTime(c, 1000), 3.99);
 });

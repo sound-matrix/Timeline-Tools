@@ -563,15 +563,18 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       samples: number[] = [],
       clockSamples: number[] = [],
       frames: object[] = [];
+    let invalidDeviceClock = false;
     const outputAt = (wall: number) => {
       const ctx = start.context,
         stamp = ctx.getOutputTimestamp?.();
       const latency = (ctx.baseLatency ?? 0) + (ctx.outputLatency ?? 0);
+      if (stamp?.performanceTime > wall + 100) invalidDeviceClock = true;
       const projected =
         stamp?.contextTime > 0 && stamp?.performanceTime > 0
           ? stamp.contextTime + (wall - stamp.performanceTime) / 1000
           : -1;
       const audioTime =
+        !invalidDeviceClock &&
         projected >= 0 &&
         stamp.performanceTime <= wall + 100 &&
         projected <= ctx.currentTime + 0.1 &&
@@ -640,6 +643,7 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       frames,
       transitionSamples,
       transitionClockSamples,
+      invalidDeviceClock,
       held,
       resumed: !v.paused,
       timestamp: start.context.getOutputTimestamp?.(),
@@ -658,8 +662,7 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
   const clockP95 = result.clockSamples.toSorted((a, b) => a - b)[
     Math.floor(result.clockSamples.length * 0.95)
   ];
-  const invalidDeviceTimestamp =
-    (result.timestamp?.performanceTime ?? 0) > result.wallTime + 100;
+  const invalidDeviceTimestamp = result.invalidDeviceClock;
   const ciPresentationAllowance =
     !!process.env.CI && browserName === "webkit" && invalidDeviceTimestamp;
   // CI WebKit's foreign time origin cannot support an exact compositor/device-clock comparison.

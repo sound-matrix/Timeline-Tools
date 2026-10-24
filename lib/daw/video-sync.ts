@@ -20,7 +20,7 @@ export function syncVideo(
   const driftBeforeSeek = Math.abs(video.currentTime - target);
   if (
     !video.seeking &&
-    driftBeforeSeek > (playing ? 1 / 30 : 0.001) &&
+    driftBeforeSeek > (playing ? 2 / 15 : 0.001) &&
     (!playing ||
       driftBeforeSeek > 0.25 ||
       now - (seeks.get(video) ?? -Infinity) >= 1000 / 15)
@@ -35,7 +35,7 @@ export function syncVideo(
       Math.round(
         (Math.abs(drift) < 0.008
           ? 1
-          : Math.max(0.9, Math.min(1.1, 1 + drift))) * 100,
+          : Math.max(0.8, Math.min(1.2, 1 + 3 * drift))) * 100,
       ) / 100;
     if (
       rate !== video.playbackRate &&

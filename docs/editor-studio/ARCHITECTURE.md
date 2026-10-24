@@ -74,13 +74,16 @@ passthrough node and apply_inserts is a no-op that rejects unimplemented slots.
 Audio scheduling uses the AudioContext render clock; video and the playhead use
 getOutputTimestamp projected onto performance time, accounting for output-device
 buffering. Invalid, stale or future timestamps use currentTime less reported
-base/output latency. Initial video playback waits for the audio's presentation lead-in.
+base/output latency. Once a foreign time origin is observed, that context keeps
+the fallback instead of accepting later coincidentally plausible projections.
+Initial video playback waits for the audio's presentation lead-in.
 Podcast video consumes a mutable source-clock sample on every playback frame;
 React transport labels remain capped at 10 Hz. Paused seeks update the preview,
 running seeks restart the edited audio arrangement at the remapped output time,
 and inserted silence pauses the video on its source frame. Native pending seeks
 settle before another correction. Continuous drift seeks are limited to the
-15 fps proxy frame rate, large cut jumps bypass the throttle, and only one native
+15 fps proxy frame rate once drift exceeds two frames. Smaller drift uses
+bounded playback-rate correction; large cut jumps bypass the throttle, and only one native
 play request may be pending. The preview switches media only at clip edges.
 
 Validation evidence and remaining acceptance limits belong in VALIDATION.md.

@@ -1,3 +1,4 @@
+const foreignTimeOrigins = new WeakSet<object>();
 /** Project the audio device's presentation clock onto performance.now() time. */
 export function outputClockTime(
   context: Pick<AudioContext, "currentTime"> &
@@ -7,8 +8,12 @@ export function outputClockTime(
   wallTime = performance.now(),
 ) {
   const stamp = context.getOutputTimestamp?.();
+  // A foreign-origin API can later return a plausible projection. Do not switch back to it.
+  if (stamp?.performanceTime && stamp.performanceTime > wallTime + 100)
+    foreignTimeOrigins.add(context);
   const latency = (context.baseLatency ?? 0) + (context.outputLatency ?? 0);
   if (
+    !foreignTimeOrigins.has(context) &&
     stamp &&
     Number.isFinite(stamp.contextTime) &&
     stamp.contextTime! > 0 &&
