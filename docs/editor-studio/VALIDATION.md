@@ -1,6 +1,9 @@
 # Validation and acceptance boundaries
 
-Node 22.23.4: npm ci, 184 npm tests, typecheck and production build pass.
+Current suite: 191 npm tests pass, including deterministic scheduling and Python
+parity independent of shell cwd/PYTHONPATH. CI uses Node 22 and Python 3.12; local
+Node 24 also passes typecheck. See CI-NOTES.md for the three-failure reproduction
+and repeated serial/parallel runs. Production builds pass in CI.
 The database tests execute all migrations in PGlite (real PostgreSQL compiled to
 WASM) and check cross-user reads/saves/asset registration, missing/foreign assets,
 source ownership, duplicate saves, version retention and shared cloud billing.
@@ -58,26 +61,34 @@ Local Firefox crashes during page creation in this container; local WebKit lacks
 system dependencies, so CI provides those engine checks. See PR #16 for the
 latest CI run. WebKit coverage does not replace released Safari on the target Mac.
 
-Video follow-up: paused seeks and running jumps now map edit-ruler time to the
-edited audio output and original source video. A new cross-engine browser
-scenario checks source seeks, audio source offsets, inserted-silence frame hold,
-resume, stop/return and decoded-frame drift using the actual 15 fps MP4 fixture.
-Chromium run 40105471829 passed all 20 browser tests; its decoded-frame p95 was
-30.7 ms on the 15 fps fixture, with a 1.02 s source-time error during a cut jump.
-WebKit's p95 was 137.3 ms against a 66.7 ms one-frame budget, so that strict check
-fails. Firefox required a PulseAudio output in CI and exposed a live-seek gain
-curve cancellation error; the follow-up cancels the entire active curve before
-starting its short release ramp. Browser verification of that fix is pending.
-Do not claim all-engine one-frame behavior from the Chromium p95 measurement.
-Local browser downloads were unavailable in this workspace during this follow-up;
-Node tests, type checking and the production build pass locally.
+Video follow-up: paused seeks and running jumps map edit-ruler time to edited
+audio output and original source video. Release automation uses a separate gain
+node from fade curves; Firefox's native scenario confirms live seeking succeeds.
+Video/playhead use device presentation time, with reported-latency fallback when
+an engine supplies an invalid timestamp. Future timestamps are rejected even
+when their projection would look plausible. Preview decoding remains native;
+thumbnail caches and stable strip props avoid repeat decode work, and small drift
+uses throttled rate correction. React transport labels update at most 10 Hz.
 
-Remaining release validation: review cross-engine CI, released Safari/Edge, background-tab scheduling,
+The cross-engine test checks paused seeks, audio offsets, live jumps, an inserted
+silence frame hold, resume, stop/return, and decoded-frame PTS against the actual
+15 fps MP4 fixture. Local and valid-timestamp engine budgets remain 66.7 ms.
+CI WebKit with a timestamp >100 ms in the future uses a documented 200 ms
+(empirical shared-runner ceiling) decoded-PTS allowance and a separate, unchanged
+66.7 ms media-clock p95 guard. CI-NOTES.md records the incompatible time-origin
+evidence. This is a conditional software-runner presentation allowance, not a
+200 ms JavaScript draw budget or certification of released Safari.
+Local browser downloads were unavailable during this follow-up; CI supplies
+native Firefox/WebKit verification, including three repetitions without retries.
+
+Remaining release validation: released Safari/Edge, background-tab scheduling,
 source-video sync to one frame, hour-long compressed imports, measured memory for
 20 independent one-hour sources on an 8 GB laptop, and live cloud export after
 the manual SQL/Modal release. No target-device memory number is claimed. Local
 PCM streaming/cache architecture is bounded, but compressed decodeAudioData and
 the final output Blob can still be large. Folder drop is optional and omitted.
 
-PRs stay draft until the remaining target-device/cross-browser checks are reviewed.
+PR #16 stays draft until #15 merges, it is rebased onto main, and the resulting
+head passes check, worker, desk and editor-browsers. Target-device measurements
+remain release acceptance limits; the conditional CI budget does not replace them.
 No production migration, merge or manual deployment was performed.

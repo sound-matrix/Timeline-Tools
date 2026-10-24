@@ -41,7 +41,8 @@ size and must fit the displayed plan quota.
 The lookahead tick runs in a dedicated worker (25 ms / 100 ms scheduling window),
 with 8-second prefetch and bounded five-second PCM reads. Active edits invalidate
 only changed region schedules. Track/master changes use short gain ramps;
-stop/seek cancel voices with a 5 ms ramp. The playback clock is clamped to the
+stop/seek release voices with a 5 ms ramp on a separate gain node, leaving
+immutable fade curves untouched (required by Firefox). The playback clock is clamped to the
 requested seek position during the initial scheduling lead-in, so a seek does not
 replay the preceding 40 ms. The browser may throttle even dedicated
 workers in heavily suspended tabs; target-device/background-tab verification is
@@ -72,7 +73,8 @@ passthrough node and apply_inserts is a no-op that rejects unimplemented slots.
 
 Audio scheduling uses the AudioContext render clock; video and the playhead use
 getOutputTimestamp projected onto performance time, accounting for output-device
-buffering. Initial video playback waits for the audio's presentation lead-in.
+buffering. Invalid, stale or future timestamps use currentTime less reported
+base/output latency. Initial video playback waits for the audio's presentation lead-in.
 Podcast video consumes a mutable source-clock sample on every playback frame;
 React transport labels remain capped at 10 Hz. Paused seeks update the preview,
 running seeks restart the edited audio arrangement at the remapped output time,
