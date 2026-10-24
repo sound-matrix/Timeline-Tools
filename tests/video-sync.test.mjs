@@ -40,7 +40,7 @@ test("clock drift seeks wait for an in-flight seek and inserted silence holds th
   };
   syncVideo(video, 3, true);
   assert.equal(video.currentTime, 1);
-  assert.equal(video.paused, true);
+  assert.equal(video.paused, false);
   video.seeking = false;
   syncVideo(video, 3, true);
   assert.equal(video.currentTime, 3);

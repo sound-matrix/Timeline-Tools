@@ -16,6 +16,6 @@ export function syncVideo(
     Math.abs(video.currentTime - target) > (playing ? 1 / 60 : 0.001)
   )
     video.currentTime = target;
-  if (playing && video.paused && !video.seeking)
+  if (playing && video.paused)
     void video.play().catch(() => {});
 }

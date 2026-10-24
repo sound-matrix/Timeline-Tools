@@ -75,6 +75,11 @@ function makeSurface(w, h) {
   c.height = h;
   return c;
 }
+function snapshot(surface) {
+  // Bitmap export can fail on a software/context-lost renderer. Retain the canvas.
+  try { return surface.transferToImageBitmap?.() ?? surface; }
+  catch { return surface; }
+}
 function fadeValue(r, position) {
   const ramp = (x, n) => (n > 0 ? Math.min(1, Math.max(0, x / n)) : 1);
   const curve = (x) =>
@@ -133,10 +138,11 @@ export class TimelineRenderer {
 
     const c = surface;
     if (!c) return;
-    const ctx = surface.getContext("2d");
-    if (!ctx) return;
     const dpr = state.dpr,
       { x: sx, y: sy, w, h } = view;
+    if (w <= 0 || h <= 0) return;
+    const ctx = surface.getContext("2d");
+    if (!ctx) return;
     if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
       c.width = Math.round(w * dpr);
       c.height = Math.round(h * dpr);
@@ -185,7 +191,7 @@ export class TimelineRenderer {
       }
 
       this.grid?.close?.();
-      this.grid = grid.transferToImageBitmap?.() ?? grid;
+      this.grid = snapshot(grid);
       this.gridKey = gridKey;
     }
     ctx.drawImage(this.grid, 0, 0, w, h);
@@ -309,7 +315,7 @@ export class TimelineRenderer {
             }
             tileCtx.stroke();
 
-            tile = image.transferToImageBitmap?.() ?? image;
+            tile = snapshot(image);
             this.tiles.set(key, tile);
           }
           ctx.drawImage(tile, tileStart, y);

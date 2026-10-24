@@ -268,7 +268,9 @@ createServer(async (req, res) => {
     url.pathname.includes("/object/public/outputs/") &&
     /(?:\/stems\/c\d+\.wav|\/podcast-preview\.mp3|\/podcast-source\.wav|\/podcast-clip-\d+\.wav)$/.test(url.pathname)
   ) {
-    const wave = Buffer.alloc(64044);
+    const sourceJob = /outputs\/[^/]+\/([^/]+)\/podcast-/.exec(url.pathname)?.[1];
+    const seconds = sourceJob ? (podcasts[sourceJob]?.duration ?? 4) : 4;
+    const wave = Buffer.alloc(44 + Math.ceil(seconds * 8000) * 2);
     wave.write("RIFF");
     wave.writeUInt32LE(wave.length - 8, 4);
     wave.write("WAVEfmt ", 8);
@@ -280,7 +282,7 @@ createServer(async (req, res) => {
     wave.writeUInt16LE(2, 32);
     wave.writeUInt16LE(16, 34);
     wave.write("data", 36);
-    wave.writeUInt32LE(64000, 40);
+    wave.writeUInt32LE(wave.length - 44, 40);
     res.writeHead(200, {
       "Content-Type": "audio/wav",
       "Access-Control-Allow-Origin": "*",

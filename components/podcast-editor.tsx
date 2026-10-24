@@ -708,6 +708,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
                 playing: true,
                 gap: mapped.gap,
               };
+              return mapped.view;
             }}
             onPlaybackTick={(t) => {
               const mapped = podcastOutputTime(

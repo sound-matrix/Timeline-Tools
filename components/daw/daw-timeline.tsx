@@ -64,7 +64,7 @@ type Props = {
   playbackArrangement?: Arrangement;
   playbackPosition?: number;
   onPlaybackTick?: (time: number) => void;
-  onPlaybackFrame?: (time: number) => void;
+  onPlaybackFrame?: (time: number) => number | void;
   arrangement: Arrangement;
   onChange: (a: Arrangement, before?: Arrangement) => void;
   onPreview?: (a: Arrangement) => void;
@@ -205,12 +205,12 @@ export default function DawTimeline({
     urls: audioUrls,
   };
   const publishPlayback = (time: number) => {
-    headRef.current = time;
-    paintHead.current(time);
-    playbackCallbacks.current.onPlaybackFrame?.(time);
+    const viewTime = playbackCallbacks.current.onPlaybackFrame?.(time) ?? time;
+    headRef.current = viewTime;
+    paintHead.current(viewTime);
     if (performance.now() - lastClock.current > 100) {
       lastClock.current = performance.now();
-      setHead(time);
+      setHead(viewTime);
       (
         playbackCallbacks.current.onPlaybackTick ??
         playbackCallbacks.current.onSeek

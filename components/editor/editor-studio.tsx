@@ -871,6 +871,7 @@ export default function EditorStudio({
                   playing: true,
                   gap: mapped.gap,
                 };
+                return mapped.view;
               }
             }}
             onPlaybackTick={(t) => {
