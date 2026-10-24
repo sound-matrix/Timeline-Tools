@@ -18,6 +18,7 @@ function context() {
   const param = () => ({
     value: 1,
     setTargetAtTime() {},
+    setValueAtTime() {},
     setValueCurveAtTime() {},
     cancelScheduledValues() {},
   });

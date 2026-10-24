@@ -9,6 +9,13 @@ import {
 } from "./scheduler.ts";
 import { end, fadeValue, panGains } from "./commands";
 /** Bounded PCM streaming: sample scheduling uses the AudioContext clock, never timers. */
+function releaseVoice(param: AudioParam, now: number) {
+  const value = param.value;
+  // Cancel from the beginning: Firefox retains a curve that started before `now`.
+  param.cancelScheduledValues(0);
+  param.setValueAtTime(value, now);
+  param.setTargetAtTime(0, now, 0.001);
+}
 export class DawPlayback {
   derived: Arrangement["derived_clips"] = [];
   reader:
@@ -83,8 +90,7 @@ export class DawPlayback {
     for (const source of this.sources) {
       const voice = this.voices.get(source);
       if (voice) {
-        voice.gain.gain.cancelScheduledValues(now);
-        voice.gain.gain.setTargetAtTime(0, now, 0.001);
+        releaseVoice(voice.gain.gain, now);
       }
       try {
         source.stop(now + 0.005);
@@ -137,8 +143,7 @@ export class DawPlayback {
         if (key.startsWith(id + "/")) this.scheduled.delete(key);
       for (const [source, v] of this.voices)
         if (v.region === id) {
-          v.gain.gain.cancelScheduledValues(ctx.currentTime);
-          v.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.001);
+          releaseVoice(v.gain.gain, ctx.currentTime);
           try {
             source.stop(ctx.currentTime + 0.005);
           } catch {}

@@ -62,7 +62,13 @@ Video follow-up: paused seeks and running jumps now map edit-ruler time to the
 edited audio output and original source video. A new cross-engine browser
 scenario checks source seeks, audio source offsets, inserted-silence frame hold,
 resume, stop/return and decoded-frame drift using the actual 15 fps MP4 fixture.
-Its CI results must be reviewed before claiming measured one-frame behavior.
+Chromium run 40105471829 passed all 20 browser tests; its decoded-frame p95 was
+30.7 ms on the 15 fps fixture, with a 1.02 s source-time error during a cut jump.
+WebKit's p95 was 137.3 ms against a 66.7 ms one-frame budget, so that strict check
+fails. Firefox required a PulseAudio output in CI and exposed a live-seek gain
+curve cancellation error; the follow-up cancels the entire active curve before
+starting its short release ramp. Browser verification of that fix is pending.
+Do not claim all-engine one-frame behavior from the Chromium p95 measurement.
 Local browser downloads were unavailable in this workspace during this follow-up;
 Node tests, type checking and the production build pass locally.
 
