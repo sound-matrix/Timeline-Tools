@@ -147,6 +147,10 @@ test("Podcast file-only start, speaker lanes, synchronized edits, autosave and d
     sample_rate: 48000,
   });
   expect(errors).toEqual([]);
+  await page.getByRole("link",{name:"Open in Editor Studio",exact:true}).click();
+  await expect(page).toHaveURL(/editor\/[0-9a-f-]{36}/);
+  await expect(page.getByRole("main",{name:"Editor Studio"})).toBeVisible();
+  await expect(page.getByText("Podcast word edits are kept as non-destructive overlays in playback and exports.")).toBeVisible();
   await page.setViewportSize({ width: 375, height: 844 });
   expect(
     await page.evaluate(

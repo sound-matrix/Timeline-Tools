@@ -2,11 +2,25 @@ import { z } from "zod";
 const time = z.number().finite().min(0).max(14400);
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 const gain = z.number().finite().min(-60).max(24);
+export const pluginSlotSchema = z
+  .object({
+    id,
+    type: z.enum(["eq", "compressor", "limiter", "reverb", "delay"]),
+    enabled: z.boolean(),
+    parameters: z.record(z.string(), z.number().finite()),
+  })
+  .strict();
+export type PluginSlot = z.infer<typeof pluginSlotSchema>;
 const v2Schema = z
   .object({
     version: z.literal(2),
     job_id: z.uuid(),
-    sample_rate: z.literal(48000),
+    editor_project: z.boolean().optional(),
+    sample_rate: z.union([
+      z.literal(44100),
+      z.literal(48000),
+      z.literal(96000),
+    ]),
     duration: time.positive(),
     snap: z.boolean(),
     legacy_mastering: z.boolean().default(false),
@@ -33,7 +47,7 @@ const v2Schema = z
     master: z.object({
       gain_db: gain,
       reference_gain_db: gain.default(0),
-      inserts: z.array(z.never()).max(0),
+      inserts: z.array(pluginSlotSchema).max(0),
     }),
     line_gap_ms: z.number().int().min(0).max(5000).optional(),
     match_strictness: z.enum(["strict", "normal", "loose"]).optional(),
@@ -45,13 +59,12 @@ const v2Schema = z
           color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
           pan: z.number().finite().min(-1).max(1).default(0),
           height: z.number().int().min(60).max(400).default(120),
-          inserts: z.array(z.never()).max(0).default([]),
+          inserts: z.array(pluginSlotSchema).max(0).default([]),
           gain_db: gain,
           mute: z.boolean(),
           solo: z.boolean(),
         }),
       )
-      .min(1)
       .max(300),
     derived_clips: z
       .array(
@@ -77,9 +90,9 @@ const v2Schema = z
           name: z.string().max(255),
           duration: time.positive(),
           offset: time.optional(),
+          asset: z.uuid().optional(),
         }),
       )
-      .min(1)
       .max(200),
     regions: z
       .array(
@@ -146,11 +159,18 @@ const v2Schema = z
           text: z.string().max(1000),
         }),
       )
-      .min(1)
       .max(2000),
   })
   .strict()
   .superRefine((a, ctx) => {
+    if (
+      !a.editor_project &&
+      (!a.lanes.length || !a.clips.length || !a.lines.length)
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Source arrangement must contain tracks, clips and lines",
+      });
     const lanes = new Set(a.lanes.map((l) => l.id)),
       clips = new Map(
         [...a.clips, ...a.derived_clips].map((c) => [c.id, c.duration]),
@@ -169,7 +189,7 @@ const v2Schema = z
               }
             : r;
         }),
-      ) > 14400
+      ) > (a.editor_project ? 288000 : 14400)
     )
       ctx.addIssue({
         code: "custom",
@@ -200,7 +220,7 @@ const v2Schema = z
     for (const r of a.regions)
       if (
         !lanes.has(r.lane) ||
-        r.line >= a.lines.length ||
+        (a.lines.length > 0 && r.line >= a.lines.length) ||
         r.start + r.src_end - r.src_start > a.duration + 0.001
       )
         ctx.addIssue({ code: "custom", message: "Invalid region" });
@@ -221,12 +241,18 @@ const v2Schema = z
     for (const r of a.missing)
       if (
         !lanes.has(r.lane) ||
-        r.line >= a.lines.length ||
+        (a.lines.length > 0 && r.line >= a.lines.length) ||
         r.start + r.length > a.duration + 0.001
       )
         ctx.addIssue({ code: "custom", message: "Invalid missing line" });
-    if (new TextEncoder().encode(JSON.stringify(a)).length > 524288)
-      ctx.addIssue({ code: "custom", message: "Arrangement exceeds 512 KB" });
+    if (
+      new TextEncoder().encode(JSON.stringify(a)).length >
+      (a.editor_project ? 1000000 : 524288)
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Arrangement exceeds size limit",
+      });
   });
 export type Arrangement = z.infer<typeof v2Schema>;
 /** Structural, non-destructive migration: legacy edits retain their source ranges. */

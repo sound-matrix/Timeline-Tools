@@ -9,6 +9,7 @@ import { withDefaults } from "@/lib/defaults";
 import { alignmentReportSchema } from "@/lib/audio-studio";
 import DawTimeline from "./daw/daw-timeline";
 import type { ComponentProps } from "react";
+import OpenEditor from "./editor/open-editor";
 import StudioTimeline from "./studio-timeline";
 import ProcessingStatus from "./processing-status";
 import type { ProcessingState } from "@/lib/job-status";
@@ -175,6 +176,18 @@ export default function StudioDaw({
       cancelled = true;
     };
   }, [exportLive?.status, jobId]);
+  async function flushEditor() {
+    const deadline=Date.now()+15000;
+    while(saving.current && Date.now()<deadline) await new Promise(r=>setTimeout(r,25));
+    if(saving.current || conflict.current) throw Error("Resolve the save conflict before opening Editor Studio.");
+    saving.current=true;
+    try {
+      const snapshot=JSON.stringify(current.current);
+      const r=await fetch(`/api/studio/${jobId}/arrangement`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision:revisionRef.current,arrangement:current.current})});
+      if(!r.ok)throw Error("Could not save the latest arrangement. Retry opening Editor Studio.");
+      const data=await r.json();revisionRef.current=data.revision;lastSaved.current=snapshot;setRevision(data.revision);setSaved("Saved");
+    } finally {saving.current=false;}
+  }
   function commit(next: Arrangement) {
     if (conflict.current) {
       setError("This session changed elsewhere. Reload before editing.");
@@ -550,6 +563,7 @@ export default function StudioDaw({
           </div>
         </div>
       )}
+      <OpenEditor source="studio" jobId={jobId} flush={flushEditor}/>
       {exportLive && (
         <ProcessingStatus
           state={exportLive}

@@ -64,11 +64,11 @@ export function localPodcastEdits(
     speaker_names: {},
   };
 }
-export function podcastRenderArrangement(a: Arrangement, edits: PodcastEdits) {
+export function podcastRenderArrangement(a: Arrangement, edits: PodcastEdits, sourceIds?:Set<string>) {
   const local = new Map(
     a.clips.map((c) => [
       c.id,
-      c.id === "source"
+      sourceIds && !sourceIds.has(c.id) ? {operations:[],corrections:{},speaker_names:{}} : c.id === "source"
         ? edits
         : localPodcastEdits(edits, c.offset ?? 0, c.duration),
     ]),

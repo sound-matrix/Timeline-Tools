@@ -37,6 +37,7 @@ const profile = {
 };
 const plan = { id: "test", name: "Test plan", max_file_mb: 25 };
 let podcasts = {};
+let editors={}, editorAssets={},editorVersions={};
 let jobs = [],
   reports = {},
   arrangements = {},
@@ -66,7 +67,7 @@ createServer(async (req, res) => {
   if (url.pathname === "/__reset") {
     profile.role = "user";
     jobs = [];
-    podcasts = {};
+    podcasts = {};editors={};editorAssets={};editorVersions={};
     reports = {};
     arrangements = {};
     requests = [];
@@ -177,6 +178,32 @@ createServer(async (req, res) => {
     });
     res.end(data);
     return;
+  }
+  if (url.pathname === "/rest/v1/rpc/create_editor_project") {
+    const id=crypto.randomUUID(),source=body.p_source_kind,job=body.p_source_job;
+    let a=source==='studio'?structuredClone(arrangements[job]?.arrangement):source==='podcast'?structuredClone(podcasts[job]?.edits?.timeline):null;
+    if(!a){const duration=source==='podcast'?podcasts[job]?.duration??60:60;
+      a={version:2,job_id:id,sample_rate:48000,duration,snap:true,pan_law:'equal_power',legacy_mastering:false,tempo:120,time_signature:[4,4],markers:[],loop:{enabled:false,start:0,end:duration},master:{gain_db:0,inserts:[]},lanes:[],clips:[],regions:[],derived_clips:[],missing:[],unplaced:[],lines:[]};
+      if(source==='podcast')for(const m of podcasts[job].media){const lane='t'+m.media_index,clip='c'+m.media_index;a.lanes.push({id:lane,name:m.name,color:'#818CF8',pan:0,height:120,inserts:[],gain_db:0,mute:false,solo:false});a.clips.push({id:clip,name:m.name,duration:m.duration,offset:m.offset_sec});a.regions.push({id:'r'+m.media_index,lane,kind:'clip',clip,src_start:0,src_end:m.duration,start:m.offset_sec,gain_db:0,line:0,confidence:1,mute:false,fade_in:0,fade_out:0,fade_curve:'linear',lines:[]});}
+    }
+    const original=structuredClone(a);a.job_id=id;a.editor_project=true;
+    editors[id]={id,user_id:owner,name:body.p_name,revision:1,arrangement:a,source_kind:source,source_job_id:job,source_arrangement:source==='blank'?null:original,source_overlay:source==='podcast'?{edits:podcasts[job].edits,transcript:podcasts[job].transcript,duration:podcasts[job].duration,media:podcasts[job].media.map(m=>({index:m.media_index,name:m.name,offset:m.offset_sec,duration:m.duration,has_proxy:!!m.proxy_path}))}:null,exports_count:0,updated_at:new Date().toISOString()};editorAssets[id]=[];editorVersions[id]=[{revision:1,saved_at:new Date().toISOString(),arrangement:a}];return send(id);
+  }
+  if(url.pathname==='/rest/v1/editor_projects'){
+    const id=url.searchParams.get('id')?.slice(3);return send(id?editors[id]??null:Object.values(editors));
+  }
+  if(url.pathname==='/rest/v1/editor_assets')return send(editorAssets[url.searchParams.get('project_id')?.slice(3)]??[]);
+  if(url.pathname==='/rest/v1/editor_arrangement_versions'){
+    const rows=editorVersions[url.searchParams.get('project_id')?.slice(3)]??[],revision=url.searchParams.get('revision')?.slice(3);return send(revision?rows.find(r=>r.revision===Number(revision))??null:[...rows].reverse());
+  }
+  if(url.pathname==='/rest/v1/rpc/register_editor_asset'){
+    const id=body.p_project;if(!editors[id])return send({message:'Unavailable'},404);
+    if(!editorAssets[id].some(a=>a.id===body.p_asset))editorAssets[id].push({id:body.p_asset,project_id:id,user_id:owner,name:body.p_name,duration:body.p_duration,sample_rate:body.p_sample_rate,channels:body.p_channels,bytes:body.p_bytes,storage_path:body.p_storage_path,peaks_path:body.p_peaks_path});return send(body.p_asset);
+  }
+  if(url.pathname==='/rest/v1/rpc/save_editor_arrangement'){
+    const p=editors[body.p_project];if(!p)return send({message:'Unavailable'},404);if(p.revision!==body.p_revision)return send({code:'40001',message:'Revision conflict'},409);
+    for(const c of body.p_arrangement.clips)if(c.asset&&!editorAssets[p.id].some(a=>a.id===c.asset))return send({message:'Upload pending'},400);
+    if(JSON.stringify(p.arrangement)!==JSON.stringify(body.p_arrangement)){p.arrangement=body.p_arrangement;p.revision++;editorVersions[p.id].push({revision:p.revision,saved_at:new Date().toISOString(),arrangement:p.arrangement});}return send(p.revision);
   }
   if (url.pathname === "/rest/v1/studio_arrangements")
     return send(arrangements[url.searchParams.get("job_id")?.slice(3)] ?? null);

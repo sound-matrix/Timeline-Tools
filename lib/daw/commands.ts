@@ -11,7 +11,9 @@ export type SnapMode =
   | "seconds"
   | "milliseconds"
   | "beats"
-  | "edges";
+  | "edges"
+  | "markers"
+  | "bars";
 export const uid = () => crypto.randomUUID();
 export const end = (r: Region) => r.start + r.src_end - r.src_start;
 export function fadeValue(
@@ -116,11 +118,11 @@ export function snapTime(
   exclude: string[] = [],
 ) {
   if (mode === "off" || !a.snap) return Math.max(0, t);
-  if (mode === "edges") {
+  if (mode === "edges" || mode === "markers") {
     const edges = [
       0,
       ...a.markers.map((m) => m.time),
-      ...a.regions
+      ...(mode === "markers" ? [] : a.regions)
         .filter((r) => !exclude.includes(r.id))
         .flatMap((r) => [r.start, end(r)]),
     ];
@@ -132,11 +134,13 @@ export function snapTime(
   }
   const step = mode.startsWith("frames")
     ? 1 / Number(mode.slice(6))
-    : mode === "beats"
-      ? ((60 / a.tempo) * 4) / a.time_signature[1]
-      : mode === "milliseconds"
-        ? 0.001
-        : 1;
+    : mode === "bars"
+      ? (((60 / a.tempo) * 4) / a.time_signature[1]) * a.time_signature[0]
+      : mode === "beats"
+        ? ((60 / a.tempo) * 4) / a.time_signature[1]
+        : mode === "milliseconds"
+          ? 0.001
+          : 1;
   return Math.max(0, Math.round(t / step) * step);
 }
 export function duration(a: Arrangement): Arrangement {
@@ -188,4 +192,28 @@ export function rulerStamp(
     return `${String(Math.floor(t / 3600)).padStart(2, "0")}:${String(Math.floor(t / 60) % 60).padStart(2, "0")}:${String(Math.floor(t) % 60).padStart(2, "0")}:${String(Math.floor((t % 1) * fps)).padStart(2, "0")}`;
   }
   return `${Math.floor(t / 60)}:${(t % 60).toFixed(3).padStart(6, "0")}`;
+}
+/** Adjacent partial overlaps use matching equal-power envelopes. */
+export function crossfadeRegions(a: Arrangement): Arrangement {
+  const regions = a.regions.map((r) => ({ ...r }));
+  for (const lane of a.lanes) {
+    const ordered = regions
+      .filter((r) => r.lane === lane.id)
+      .sort((x, y) => x.start - y.start);
+    for (let i = 0; i < ordered.length - 1; i++) {
+      const first = ordered[i],
+        second = ordered[i + 1];
+      if (
+        first.start < second.start &&
+        end(first) > second.start &&
+        end(first) <= end(second)
+      ) {
+        const overlap = end(first) - second.start;
+        first.fade_out = overlap;
+        second.fade_in = overlap;
+        first.fade_curve = second.fade_curve = "equal_power";
+      }
+    }
+  }
+  return { ...a, regions };
 }
