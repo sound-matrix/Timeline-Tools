@@ -192,7 +192,7 @@ export function podcastOutputTime(
   if (!r || !original || !c) {
     const mapped = outputToSource(
       output,
-      a.clips[0].id === "source" ? a.clips[0].duration : a.duration,
+      a.clips[0]?.id === "source" ? a.clips[0].duration : a.duration,
       edits,
     );
     return { view: mapped.time, source: mapped.time, gap: mapped.gap };

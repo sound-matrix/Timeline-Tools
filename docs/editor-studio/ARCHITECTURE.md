@@ -70,4 +70,10 @@ worker_prepare/worker_complete accounting. Source paths are verified before
 service-role downloads. PluginSlot[] is typed but empty; insertChain is a real
 passthrough node and apply_inserts is a no-op that rejects unimplemented slots.
 
+Podcast video consumes a mutable source-clock sample on every playback frame;
+React transport labels remain capped at 10 Hz. Paused seeks update the preview,
+running seeks restart the edited audio arrangement at the remapped output time,
+and inserted silence pauses the video on its source frame. Native pending seeks
+settle before another correction; the preview switches media only at clip edges.
+
 Validation evidence and remaining acceptance limits belong in VALIDATION.md.

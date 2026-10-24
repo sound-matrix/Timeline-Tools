@@ -25,6 +25,7 @@ import {
 } from "@/lib/daw/podcast-audio";
 import OpenEditor from "./editor/open-editor";
 import VideoPreview from "./daw/video-preview";
+import type { VideoClock } from "@/lib/daw/video-sync";
 type Media = {
   index: number;
   name: string;
@@ -60,7 +61,6 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     [playing, setPlaying] = useState(false),
     [viewHead, setViewHead] = useState(0),
     [outputHead, setOutputHead] = useState(0),
-    [videoGap, setVideoGap] = useState(false),
     [page, setPage] = useState(0),
     [rangeStart, setRangeStart] = useState(""),
     [rangeEnd, setRangeEnd] = useState(""),
@@ -73,6 +73,11 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     [exportBusy, setExportBusy] = useState(false),
     [exportLive, setExportLive] = useState<ProcessingState | null>(null);
   const transport = useRef<DawTransport | null>(null);
+  const videoClock = useRef<VideoClock>({
+    time: 0,
+    playing: false,
+    gap: false,
+  });
   const revision = useRef(1),
     lastSaved = useRef(""),
     current = useRef(edits),
@@ -460,7 +465,10 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
               duration: session.duration,
             },
           ],
-      regions: (session.media.every(m=>m.audio)?session.media:[{...session.media[0],offset:0,duration:session.duration}]).map((m, i) => ({
+      regions: (session.media.every((m) => m.audio)
+        ? session.media
+        : [{ ...session.media[0], offset: 0, duration: session.duration }]
+      ).map((m, i) => ({
         id: `media_${i}`,
         lane: laneFor.get(m.index) ?? speakers[0].id,
         kind: "clip",
@@ -650,7 +658,8 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
           <VideoPreview
             media={session.media}
             playhead={playhead}
-            playing={playing && !videoGap}
+            clock={videoClock}
+            playing={playing}
           />
           <DawTimeline
             arrangement={podcastTimeline!}
@@ -680,7 +689,25 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
               setViewHead(t);
               setOutputHead(mapped.output);
               setPlayhead(mapped.source);
-              setVideoGap(false);
+              videoClock.current = {
+                time: mapped.source,
+                playing: false,
+                gap: false,
+              };
+              return mapped.output;
+            }}
+            onPlaybackFrame={(t) => {
+              const mapped = podcastOutputTime(
+                podcastTimeline!,
+                podcastRender!,
+                current.current,
+                t,
+              );
+              videoClock.current = {
+                time: mapped.source,
+                playing: true,
+                gap: mapped.gap,
+              };
             }}
             onPlaybackTick={(t) => {
               const mapped = podcastOutputTime(
@@ -692,7 +719,6 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
               setOutputHead(t);
               setViewHead(mapped.view);
               setPlayhead(mapped.source);
-              setVideoGap(mapped.gap);
             }}
             playbackArrangement={podcastRender}
             readWindow={readPodcast}
@@ -960,7 +986,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
           setState={setExportLive}
         />
       )}
-      <OpenEditor source="podcast" jobId={jobId} flush={flushEditor}/>
+      <OpenEditor source="podcast" jobId={jobId} flush={flushEditor} />
     </section>
   );
 }

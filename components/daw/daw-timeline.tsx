@@ -64,6 +64,7 @@ type Props = {
   playbackArrangement?: Arrangement;
   playbackPosition?: number;
   onPlaybackTick?: (time: number) => void;
+  onPlaybackFrame?: (time: number) => void;
   arrangement: Arrangement;
   onChange: (a: Arrangement, before?: Arrangement) => void;
   onPreview?: (a: Arrangement) => void;
@@ -74,7 +75,7 @@ type Props = {
   overlays?: DawOverlay[];
   videos?: DawVideo[];
   playhead?: number;
-  onSeek?: (t: number) => void;
+  onSeek?: (t: number) => number | void;
   playing?: boolean;
   onToggle?: () => void;
   readOnly?: boolean;
@@ -92,6 +93,7 @@ export default function DawTimeline({
   playbackArrangement,
   playbackPosition,
   onPlaybackTick,
+  onPlaybackFrame,
   arrangement: a,
   onChange,
   onPreview,
@@ -192,6 +194,29 @@ export default function DawTimeline({
   state.current = a;
   const paintHead = useRef<(t: number) => void>(() => {});
   const lastClock = useRef(0);
+  const playbackCallbacks = useRef({ onPlaybackFrame, onPlaybackTick, onSeek });
+  playbackCallbacks.current = { onPlaybackFrame, onPlaybackTick, onSeek };
+  const playbackConfig = useRef({
+    arrangement: playbackArrangement ?? a,
+    urls: audioUrls,
+  });
+  playbackConfig.current = {
+    arrangement: playbackArrangement ?? a,
+    urls: audioUrls,
+  };
+  const publishPlayback = (time: number) => {
+    headRef.current = time;
+    paintHead.current(time);
+    playbackCallbacks.current.onPlaybackFrame?.(time);
+    if (performance.now() - lastClock.current > 100) {
+      lastClock.current = performance.now();
+      setHead(time);
+      (
+        playbackCallbacks.current.onPlaybackTick ??
+        playbackCallbacks.current.onSeek
+      )?.(time);
+    }
+  };
   const position = externalHead ?? head,
     isPlaying = externalPlaying ?? playing;
   headRef.current = position;
@@ -210,30 +235,24 @@ export default function DawTimeline({
     engine.current?.stop();
     setPlaying(false);
   }
-  const seek = useCallback(
-    (t: number) => {
-      const wasPlaying = engine.current?.running;
-      stop();
-      t = Math.max(0, Math.min(state.current.duration, t));
-      setHead(t);
-      onSeek?.(t);
-      if (wasPlaying)
-        void engine.current
-          ?.play(
-            state.current,
-            t,
-            audioUrls,
-            (time) => {
-              paintHead.current(time);
-              headRef.current = time;
-            },
-            () => setPlaying(false),
-          )
-          .then(() => setPlaying(true))
-          .catch((e) => setMessage(e.message));
-    },
-    [onSeek],
-  );
+  const seek = useCallback((t: number) => {
+    const wasPlaying = engine.current?.running;
+    stop();
+    t = Math.max(0, Math.min(state.current.duration, t));
+    setHead(t);
+    const output = playbackCallbacks.current.onSeek?.(t) ?? t;
+    if (wasPlaying)
+      void engine.current
+        ?.play(
+          playbackConfig.current.arrangement,
+          output,
+          playbackConfig.current.urls,
+          publishPlayback,
+          () => setPlaying(false),
+        )
+        .then(() => setPlaying(true))
+        .catch((e) => setMessage(e.message));
+  }, []);
   function commit(label: string, next: Arrangement, before = state.current) {
     if (readOnly) {
       setMessage("This timeline is read-only.");
@@ -294,15 +313,7 @@ export default function DawTimeline({
           ? 0
           : (playbackPosition ?? position),
         audioUrls,
-        (t) => {
-          headRef.current = t;
-          paintHead.current(t);
-          if (performance.now() - lastClock.current > 100) {
-            lastClock.current = performance.now();
-            setHead(t);
-            (onPlaybackTick ?? onSeek)?.(t);
-          }
-        },
+        publishPlayback,
         () => setPlaying(false),
       );
     } catch (e) {

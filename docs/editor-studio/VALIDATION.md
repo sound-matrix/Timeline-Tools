@@ -1,6 +1,6 @@
 # Validation and acceptance boundaries
 
-Node 22.23.4: npm ci, 181 npm tests, typecheck and production build pass.
+Node 22.23.4: npm ci, 183 npm tests, typecheck and production build pass.
 The database tests execute all migrations in PGlite (real PostgreSQL compiled to
 WASM) and check cross-user reads/saves/asset registration, missing/foreign assets,
 source ownership, duplicate saves, version retention and shared cloud billing.
@@ -57,6 +57,14 @@ Private contexts that reject local audio storage cannot guarantee reload recover
 Local Firefox crashes during page creation in this container; local WebKit lacks
 system dependencies, so CI provides those engine checks. See PR #16 for the
 latest CI run. WebKit coverage does not replace released Safari on the target Mac.
+
+Video follow-up: paused seeks and running jumps now map edit-ruler time to the
+edited audio output and original source video. A new cross-engine browser
+scenario checks source seeks, audio source offsets, inserted-silence frame hold,
+resume, stop/return and decoded-frame drift using the actual 15 fps MP4 fixture.
+Its CI results must be reviewed before claiming measured one-frame behavior.
+Local browser downloads were unavailable in this workspace during this follow-up;
+Node tests, type checking and the production build pass locally.
 
 Remaining release validation: review cross-engine CI, released Safari/Edge, background-tab scheduling,
 source-video sync to one frame, hour-long compressed imports, measured memory for

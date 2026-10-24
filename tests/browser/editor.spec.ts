@@ -395,6 +395,169 @@ test("an interrupted local storage write leaves Editor usable and import can be 
   ).toHaveText("Saved", { timeout: 20000 });
 });
 
+test("Podcast fork preview follows paused seeks, live jumps and inserted silence", async ({
+  page,
+  request,
+}, info) => {
+  await signin(page, request);
+  const fixture = "http://127.0.0.1:54331",
+    owner = "11111111-1111-4111-8111-111111111111";
+  const created = await request.post(fixture + "/rest/v1/jobs", {
+    data: { type: "podcast", settings: {} },
+  });
+  const id = (await created.json()).id;
+  await request.post(fixture + "/__job", {
+    data: {
+      id,
+      status: "done",
+      duration_sec: 8,
+      output_paths: [
+        `${owner}/${id}/podcast-clip-0.wav`,
+        `${owner}/${id}/podcast-clip-0-peaks.json`,
+        `${owner}/${id}/proxy-0.mp4`,
+      ],
+      podcast: {
+        duration: 8,
+        revision: 1,
+        exports_count: 0,
+        transcript: {
+          speakers: [{ id: "s0", name: "Speaker 1" }],
+          words: [{ w: "voice", start: 0, end: 4, speaker: "s0", conf: 0.9 }],
+          segments: [],
+          method: "synthetic",
+        },
+        edits: {
+          operations: [
+            { op: "delete", start: 1, end: 2 },
+            { op: "insert", at: 3, duration: 1 },
+          ],
+          corrections: {},
+          speaker_names: {},
+        },
+        media: [
+          {
+            media_index: 0,
+            name: "conversation.mp4",
+            offset_sec: 0,
+            duration: 8,
+            audio_path: `${owner}/${id}/podcast-clip-0.wav`,
+            peaks_path: `${owner}/${id}/podcast-clip-0-peaks.json`,
+            proxy_path: `${owner}/${id}/proxy-0.mp4`,
+          },
+        ],
+      },
+    },
+  });
+  await page.addInitScript(() => {
+    const Original = window.AudioContext;
+    (window as any).__audioStarts = [];
+    window.AudioContext = new Proxy(Original, {
+      construct(Target, args) {
+        const context = Reflect.construct(Target, args);
+        const create = context.createBufferSource.bind(context);
+        context.createBufferSource = () => {
+          const source = create(),
+            start = source.start.bind(source);
+          source.start = (when: number, offset: number, duration: number) => {
+            (window as any).__audioStarts.push({ context, when, offset });
+            return start(when, offset, duration);
+          };
+          return source;
+        };
+        return context;
+      },
+    });
+  });
+  await page.goto(`/editor/new?source=podcast&job=${id}`);
+  const video = page.getByLabel("Podcast video preview", { exact: true });
+  await expect(video).toBeVisible();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState))
+    .toBeGreaterThanOrEqual(2);
+  const canvas = page.getByLabel("Timeline waveform canvas"),
+    box = (await canvas.boundingBox())!;
+  const seek = (time: number) =>
+    page.mouse.click(box.x + 180 + time * 50, box.y + 15);
+  await seek(2.4);
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeCloseTo(2.4, 2);
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.paused))
+    .toBe(false);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__audioStarts[0]?.offset))
+    .toBeCloseTo(1.4, 2);
+  await page.evaluate(() => {
+    (window as any).__audioStarts = [];
+  });
+  await seek(2.6);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__audioStarts[0]?.offset))
+    .toBeCloseTo(1.6, 2);
+  // Restart near the cut, then measure decoded frames across the jump and silence.
+  await page.evaluate(() => {
+    (window as any).__audioStarts = [];
+  });
+  await seek(0.5);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__audioStarts.length))
+    .toBeGreaterThan(0);
+  const offset = await page.evaluate(
+    () => (window as any).__audioStarts[0].offset,
+  );
+  expect(offset).toBeCloseTo(0.5, 2);
+  const result = await video.evaluate(async (v: HTMLVideoElement) => {
+    const start = (window as any).__audioStarts[0],
+      samples: number[] = [];
+    let stopped = false;
+    const sample = (_now: number, meta: VideoFrameCallbackMetadata) => {
+      if (stopped) return;
+      const output = Math.max(
+        0.5,
+        start.context.currentTime - start.when + 0.5,
+      );
+      const source =
+        output < 1 ? output : output < 2 ? output + 1 : output < 3 ? 3 : output;
+      if (!v.seeking) samples.push(Math.abs(meta.mediaTime - source));
+      v.requestVideoFrameCallback(sample);
+    };
+    v.requestVideoFrameCallback(sample);
+    await new Promise((r) => setTimeout(r, 1800));
+    const held = { paused: v.paused, time: v.currentTime };
+    await new Promise((r) => setTimeout(r, 1100));
+    stopped = true;
+    return { samples, held, resumed: !v.paused };
+  });
+  expect(result.held.paused).toBe(true);
+  expect(result.held.time).toBeCloseTo(3, 2);
+  expect(result.resumed).toBe(true);
+  expect(result.samples.length).toBeGreaterThan(8);
+  const sorted = result.samples.toSorted((a, b) => a - b),
+    p95 = sorted[Math.floor(sorted.length * 0.95)];
+  console.log(
+    "EDITOR_VIDEO_SYNC",
+    JSON.stringify({
+      fps: 15,
+      samples: sorted.length,
+      p95_seconds: p95,
+      max_seconds: sorted.at(-1),
+    }),
+  );
+  await info.attach("editor-video-sync.json", {
+    body: JSON.stringify(result),
+    contentType: "application/json",
+  });
+  expect(p95).toBeLessThanOrEqual(1 / 15);
+  await page
+    .getByRole("button", { name: "Stop / return", exact: true })
+    .click();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
+    .toBeCloseTo(0, 2);
+});
+
 test("twenty independent one-hour PCM sources retain a bounded decoded window cache", async ({
   page,
   request,

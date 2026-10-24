@@ -9,6 +9,7 @@ import {
 } from "react";
 import DawTimeline, { type DawTransport } from "../daw/daw-timeline";
 import VideoPreview from "../daw/video-preview";
+import type { VideoClock } from "@/lib/daw/video-sync";
 import { arrangementSchema, type Arrangement } from "@/lib/arrangement";
 import { CommandHistory } from "@/lib/daw/commands";
 import type { ShortcutPreset } from "@/lib/daw/shortcuts";
@@ -37,6 +38,7 @@ import {
   podcastWindow,
   localPodcastEdits,
   podcastOutputTime,
+  podcastViewTime,
 } from "@/lib/daw/podcast-audio";
 import { editsSchema, type PodcastEdits } from "@/lib/podcast";
 import { uploadFile } from "@/lib/upload";
@@ -135,6 +137,8 @@ export default function EditorStudio({
     [progress, setProgress] = useState(0),
     [playing, setPlaying] = useState(false),
     [videoTime, setVideoTime] = useState(0),
+    [viewTime, setViewTime] = useState(0),
+    [outputTime, setOutputTime] = useState(0),
     [exportLive, setExportLive] = useState<ProcessingState | null>(null),
     [mobile, setMobile] = useState(true);
   const saver = useRef<EditorSaver | null>(null),
@@ -148,6 +152,11 @@ export default function EditorStudio({
     registeredAssets = useRef(new Set<string>()),
     importQueue = useRef(Promise.resolve()),
     live = useRef(true);
+  const videoClock = useRef<VideoClock>({
+    time: 0,
+    playing: false,
+    gap: false,
+  });
   const key = `${userId}/${projectId}`;
   current.current = a;
   const update = useCallback((next: Arrangement, previous?: Arrangement) => {
@@ -838,11 +847,39 @@ export default function EditorStudio({
             shortcutPreset={shortcutPreset}
             transport={transport}
             onPlayingChange={setPlaying}
+            playhead={podcastEdits ? viewTime : undefined}
+            playbackPosition={podcastEdits ? outputTime : undefined}
+            onSeek={(t) => {
+              const mapped = podcastEdits
+                ? podcastViewTime(a, podcastEdits, t)
+                : { source: t, output: t };
+              videoClock.current = {
+                time: mapped.source,
+                playing: false,
+                gap: false,
+              };
+              setViewTime(t);
+              setOutputTime(mapped.output);
+              setVideoTime(mapped.source);
+              return mapped.output;
+            }}
+            onPlaybackFrame={(t) => {
+              if (podcastEdits && rendered) {
+                const mapped = podcastOutputTime(a, rendered, podcastEdits, t);
+                videoClock.current = {
+                  time: mapped.source,
+                  playing: true,
+                  gap: mapped.gap,
+                };
+              }
+            }}
             onPlaybackTick={(t) => {
-              if (podcastEdits && rendered)
-                setVideoTime(
-                  podcastOutputTime(a, rendered, podcastEdits, t).source,
-                );
+              if (podcastEdits && rendered) {
+                const mapped = podcastOutputTime(a, rendered, podcastEdits, t);
+                setVideoTime(mapped.source);
+                setViewTime(mapped.view);
+                setOutputTime(t);
+              }
             }}
             videos={media
               .filter((m) => m.proxy)
@@ -915,6 +952,7 @@ export default function EditorStudio({
             <VideoPreview
               media={media}
               playhead={videoTime}
+              clock={videoClock}
               playing={playing}
             />
           )}
