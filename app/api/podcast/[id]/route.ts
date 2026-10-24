@@ -40,7 +40,9 @@ export async function GET(
       .maybeSingle(),
     db
       .from("podcast_media")
-      .select("media_index,name,offset_sec,duration,proxy_path")
+      .select(
+        "media_index,name,offset_sec,duration,proxy_path,audio_path,peaks_path",
+      )
       .eq("project_id", id)
       .eq("user_id", user.id)
       .order("media_index"),
@@ -62,6 +64,12 @@ export async function GET(
         name: m.name,
         offset: Number(m.offset_sec),
         duration: Number(m.duration),
+        audio: m.audio_path
+          ? `/api/podcast/${id}/media?kind=clip&index=${m.media_index}`
+          : null,
+        peaks: m.peaks_path
+          ? `/api/podcast/${id}/media?kind=clip_peaks&index=${m.media_index}`
+          : null,
         proxy: m.proxy_path
           ? `/api/podcast/${id}/media?kind=proxy&index=${m.media_index}`
           : null,
@@ -95,7 +103,7 @@ export async function PUT(
     !Number.isInteger(body?.revision)
   )
     return NextResponse.json({ error: "Invalid edits" }, { status: 400 });
-  const [{ data: p }, { data: t }] = await Promise.all([
+  const [{ data: p }, { data: t }, { data: media }] = await Promise.all([
     db
       .from("podcast_projects")
       .select("duration")
@@ -108,11 +116,31 @@ export async function PUT(
       .eq("project_id", id)
       .eq("user_id", user.id)
       .maybeSingle(),
+    db
+      .from("podcast_media")
+      .select("media_index,name,offset_sec,duration,audio_path")
+      .eq("project_id", id)
+      .eq("user_id", user.id)
+      .order("media_index"),
   ]);
   const transcript = transcriptSchema.safeParse(t?.transcript);
   if (!p || !transcript.success)
     return NextResponse.json({ error: "Unavailable" }, { status: 404 });
-  if (!validEdits(e.data, transcript.data, Number(p.duration)))
+  if (
+    !validEdits(
+      e.data,
+      transcript.data,
+      Number(p.duration),
+      media?.length && media.every((m) => m.audio_path)
+        ? media.map((m) => ({
+            id: `c${m.media_index}`,
+            name: m.name,
+            duration: Number(m.duration),
+            offset: Number(m.offset_sec),
+          }))
+        : undefined,
+    )
+  )
     return NextResponse.json(
       { error: "Invalid edit range or transcript reference" },
       { status: 400 },

@@ -1,0 +1,9 @@
+{
+  "p95_frame_ms": 16.7,
+  "payload_bytes": 135769,
+  "tracks": 20,
+  "regions": 500,
+  "duration": 3600,
+  "renderer": "worker",
+  "browser": "Chromium headless; shared container, not an M1/i5 hardware certification"
+}

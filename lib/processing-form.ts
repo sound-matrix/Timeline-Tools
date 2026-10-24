@@ -8,6 +8,7 @@ export function processingSettings(type: JobType, values: Choices) {
       : undefined;
   if (type === "studio")
     return {
+      ...(values.regionMode ? { region_mode: values.regionMode } : {}),
       line_gap_ms: n("lineGap"),
       match_strictness: values.matchStrictness || undefined,
       dialogue_lufs: n("dialogueLufs"),

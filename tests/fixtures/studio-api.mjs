@@ -196,7 +196,7 @@ createServer(async (req, res) => {
   }
   if (
     url.pathname.includes("/object/public/outputs/") &&
-    /(?:\/peaks\/c\d+|\/podcast-peaks)\.json$/.test(url.pathname)
+    /(?:\/peaks\/c\d+|\/podcast-peaks|\/podcast-clip-\d+-peaks)\.json$/.test(url.pathname)
   )
     return send({
       rate: 100,
@@ -204,7 +204,7 @@ createServer(async (req, res) => {
     });
   if (
     url.pathname.includes("/object/public/outputs/") &&
-    /(?:\/stems\/c\d+\.wav|\/podcast-preview\.mp3)$/.test(url.pathname)
+    /(?:\/stems\/c\d+\.wav|\/podcast-preview\.mp3|\/podcast-source\.wav|\/podcast-clip-\d+\.wav)$/.test(url.pathname)
   ) {
     const wave = Buffer.alloc(64044);
     wave.write("RIFF");

@@ -139,6 +139,7 @@ export const subtitlesSchema = z
 // Validate only after withDefaults; explicit invalid choices still fail.
 export const studioSchema = z
   .object({
+    region_mode: z.enum(["whole_clip", "split_by_line"]).optional(),
     line_gap_ms: z.number().int().min(0).max(5000),
     match_strictness: z.enum(["strict", "normal", "loose"]),
     bed_fit: z.enum(["trim", "loop", "extend"]).optional(),

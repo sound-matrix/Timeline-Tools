@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
+import { arrangementSchema } from "../lib/arrangement.ts";
 import { PGlite } from "@electric-sql/pglite";
 const a = "a1111111-1111-4111-8111-111111111111";
 const b = "b2222222-2222-4222-8222-222222222222";
@@ -381,6 +382,7 @@ test("DAW revision locks, ownership, immutable sources and first-export billing"
     await db.exec(
       `reset role; select set_config('request.jwt.claim.sub','${a}',false);set role authenticated;`,
     );
+    arrangement.snap = !arrangement.snap;
     assert.equal(
       (
         await rpc(db, "save_arrangement", [
@@ -479,6 +481,47 @@ test("DAW revision locks, ownership, immutable sources and first-export billing"
       ).rows[0].n,
       2,
     );
+    await db.exec(
+      `reset role;select set_config('request.jwt.claim.sub','${a}',false);set role authenticated`,
+    );
+    let rev = 2;
+    assert.equal(
+      (
+        await rpc(db, "save_arrangement", [
+          parent,
+          rev,
+          JSON.stringify(arrangement),
+        ])
+      )[0].save_arrangement,
+      rev,
+    );
+    for (let i = 0; i < 75; i++) {
+      arrangement.snap = !arrangement.snap;
+      rev = (
+        await rpc(db, "save_arrangement", [
+          parent,
+          rev,
+          JSON.stringify(arrangement),
+        ])
+      )[0].save_arrangement;
+    }
+    assert.equal(
+      (
+        await db.query(
+          "select count(*)::int n from public.studio_arrangement_versions where job_id=$1",
+          [parent],
+        )
+      ).rows[0].n,
+      50,
+    );
+    await assert.rejects(
+      rpc(db, "save_arrangement", [
+        parent,
+        rev - 1,
+        JSON.stringify(arrangement),
+      ]),
+      /Revision conflict/,
+    );
   } finally {
     await db.close();
   }
@@ -491,6 +534,12 @@ test("Podcast migration: idempotent, owner RLS, revision snapshots, included exp
       f.endsWith("_podcast.sql"),
     );
     await db.exec(readFileSync("supabase/migrations/" + migration, "utf8"));
+    await db.exec(
+      readFileSync(
+        "supabase/migrations/20261024053742_daw_v2_retention.sql",
+        "utf8",
+      ),
+    );
     await db.exec(
       `insert into auth.users(id,email,raw_user_meta_data) values('${a}','pod-a@example.invalid','{}'),('${b}','pod-b@example.invalid','{}');`,
     );
@@ -515,6 +564,10 @@ test("Podcast migration: idempotent, owner RLS, revision snapshots, included exp
     await db.query(
       "insert into public.podcast_projects(job_id,user_id,duration,source_path,peaks_path) values($1,$2,120,$3,$3)",
       [id, a, source],
+    );
+    await db.query(
+      "insert into public.podcast_media(project_id,user_id,media_index,name,offset_sec,duration,audio_path) values($1,$2,0,'recording.wav',0,120,$3)",
+      [id, a, `${a}/${id}/podcast-clip-0.wav`],
     );
     await db.query(
       "insert into public.podcast_transcripts(project_id,user_id,transcript) values($1,$2,$3)",
@@ -547,7 +600,19 @@ test("Podcast migration: idempotent, owner RLS, revision snapshots, included exp
       /Unavailable|permission/,
     );
     await db.exec(`select set_config('request.jwt.claim.sub','${a}',false);`);
+    const timeline = arrangementSchema.parse({
+      ...JSON.parse(
+        readFileSync("tests/fixtures/daw-arrangement.json", "utf8"),
+      ),
+      job_id: id,
+      duration: 120,
+      clips: [{ id: "c0", name: "recording.wav", duration: 120, offset: 0 }],
+      regions: [],
+      missing: [],
+      unplaced: [],
+    });
     const edits = {
+      timeline,
       operations: [
         { op: "delete", start: 10, end: 71 },
         { op: "insert", at: 120, duration: 1 },
@@ -555,6 +620,20 @@ test("Podcast migration: idempotent, owner RLS, revision snapshots, included exp
       corrections: { 0: "Welcome" },
       speaker_names: { s0: "Host" },
     };
+    await assert.rejects(
+      rpc(db, "save_podcast_edits", [
+        id,
+        1,
+        JSON.stringify({
+          ...edits,
+          timeline: {
+            ...timeline,
+            clips: [{ ...timeline.clips[0], duration: 119 }],
+          },
+        }),
+      ]),
+      /Source metadata/,
+    );
     assert.equal(
       (await rpc(db, "save_podcast_edits", [id, 1, JSON.stringify(edits)]))[0]
         .save_podcast_edits,

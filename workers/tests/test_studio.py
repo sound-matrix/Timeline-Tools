@@ -49,9 +49,9 @@ class StudioSettings(unittest.TestCase):
  def test_shuffled_clips_multilane_missing_unplaced_natural_duration(self):
   p=project('Narrator: The morning sun rose above the village.\nMeera: Welcome back to our home.\nMeera: Quantum clocks orbit distant nebulae.')
   seg=[segment('c0','Welcome back to our home.',0,1.2,name='meera_03.wav'),segment('c1','The morning sun rose above the village.',.2,2.2),segment('c0','ZZZZZZZZZ',1.5,2)]
-  a=arrange(p,seg,settings(),ID)
+  a=arrange(p,seg,{**settings(),'region_mode':'split_by_line'},ID)
   self.assertEqual([r['clip'] for r in a['regions']],['c1','c0']);self.assertEqual(a['lanes'][0]['name'],'Narrator');self.assertEqual(len(a['lanes']),2)
-  self.assertEqual(a['regions'][1]['start'],2.25);self.assertEqual(a['missing'][0]['line'],2);self.assertEqual(len(a['unplaced']),1)
+  self.assertEqual(a['regions'][1]['start'],2.25);self.assertEqual(a['missing'][0]['line'],2);self.assertEqual(len(a['unplaced']),0)
   self.assertAlmostEqual(a['duration'],2+1.2+.5+a['missing'][0]['length'],places=5)
  def test_filename_speaker_bonus_and_merged_segments(self):
   lines=parse_script('Meera: hello wonderful world')
@@ -59,7 +59,7 @@ class StudioSettings(unittest.TestCase):
   result,used=matching(lines,seg);self.assertEqual(used,{0,1});self.assertGreater(result[0][2],.9)
  def test_group_segment_across_lines_and_low_confidence(self):
   p=project('Meera: hello there\nMeera: welcome home')
-  a=arrange(p,[segment('c0','hello there welcome home',0,2)],settings(),ID)
+  a=arrange(p,[segment('c0','hello there welcome home',0,2)],{**settings(),'region_mode':'split_by_line'},ID)
   self.assertEqual(len(a['regions']),2);self.assertEqual(len(a['missing']),0)
   p=project('Meera: hello beautiful morning')
   a=arrange(p,[segment('c0','hello morning',0,1)],settings(),ID)
@@ -112,7 +112,8 @@ class Pipeline(unittest.TestCase):
   prep=next(c for c in db.rpc.call_args_list if c.args[0]=='worker_prepare');self.assertAlmostEqual(prep.args[1]['p_duration'],1,places=2)
   self.assertIn('worker_complete',[c.args[0] for c in db.rpc.call_args_list])
  def test_export_codecs_rates_and_duration(self):
-  a=arrange(project('Meera: hello'),[segment('c0','hello',0,1)],settings(),ID)
+  p=project('Meera: hello');p['durations']['one.wav']=1
+  a=arrange(p,[segment('c0','hello',0,1)],settings(),ID)
   for fmt,depth,rate in [('mp3',b,r) for b in (128,320) for r in (44100,48000)]+[('wav',d,r) for d in (16,24,'32f') for r in (44100,48000,96000)]:
    folder=self.folder/f'{fmt}-{depth}-{rate}';folder.mkdir();e=dict(revision=1,formats=[fmt],subtitles=[],missing_lines='exclude',**{fmt:dict(sample_rate=rate,**({'bitrate_kbps':depth} if fmt=='mp3' else {'bit_depth':depth}))});validate_export(e)
    paths=render(dict(stems={'c0':self.clip}),a,folder,settings(),e);probe=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-of','json',str(paths[0])]))['streams'][0]
@@ -158,7 +159,8 @@ class AsrCompatibility(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp,patch('workers.studio_audio.normalize_clips',return_value=[]):
    outputs=mix(p,Path(tmp),settings(),ID,segments)
    saved=json.loads(next(p for p in outputs if p.name=='arrangement-r1.json').read_text())
-   self.assertAlmostEqual(saved['regions'][0]['src_start'],.1)
+   self.assertEqual(saved['regions'][0]['src_start'],0)
+   self.assertAlmostEqual(saved['regions'][0]['lines'][0]['src_start'],.1)
 
  def test_transcribe_casts_word_and_segment_times(self):
   import numpy as np
@@ -211,7 +213,7 @@ class AutoTranscript(unittest.TestCase):
   with patch('workers.studio_audio.matching',side_effect=AssertionError('No script matching')):
    a=arrange(p,[segment('c0','hello',0,1,name='host.wav',speaker='Host'),segment('c1','welcome',.2,1.2,name='guest.wav')],with_defaults('studio',{}),ID)
   self.assertEqual([l['name'] for l in a['lanes']],['Host','guest'])
-  self.assertEqual(a['regions'][1]['start'],1.3)
+  self.assertEqual(a['regions'][1]['start'],3.3)
   self.assertEqual(a['lines'][1]['text'],'welcome')
  def test_no_script_gate_and_billing_before_asr(self):
   from workers.timeline_tools_worker import handle_job

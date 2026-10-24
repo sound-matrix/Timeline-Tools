@@ -65,6 +65,42 @@ export function wavHeader(bytes: Uint8Array) {
   }
   throw Error("WAV header unavailable");
 }
+let decoder: Worker | undefined;
+let decodeId = 0;
+const pending = new Map<
+  number,
+  { resolve: (data: Float32Array[]) => void; reject: (error: Error) => void }
+>();
+async function workerDecode(
+  bytes: Uint8Array,
+  header: ReturnType<typeof wavHeader>,
+  count: number,
+) {
+  decoder ??= new Worker("/daw/audio-worker.js");
+  decoder.onmessage = (e) => {
+    const item = pending.get(e.data.id);
+    if (!item) return;
+    pending.delete(e.data.id);
+    if (e.data.error) item.reject(Error(e.data.error));
+    else item.resolve(e.data.channels);
+  };
+  decoder.onerror = () => {
+    for (const item of pending.values())
+      item.reject(Error("PCM decoder unavailable"));
+    pending.clear();
+    decoder?.terminate();
+    decoder = undefined;
+  };
+  return new Promise<Float32Array[]>((resolve, reject) => {
+    const id = ++decodeId;
+    pending.set(id, { resolve, reject });
+    const buffer = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    );
+    decoder!.postMessage({ id, buffer, header, count }, [buffer]);
+  });
+}
 export async function pcmWindow(
   context: AudioContext,
   url: string,
@@ -105,6 +141,13 @@ export async function pcmWindow(
   if (!count) throw Error("No preview samples");
   const buffer = context.createBuffer(header.channels, count, header.rate),
     view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (typeof Worker !== "undefined") {
+    const channels = await workerDecode(bytes, header, count);
+    channels.forEach((samples, ch) =>
+      buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, ch),
+    );
+    return buffer;
+  }
   for (let channel = 0; channel < header.channels; channel++) {
     const data = buffer.getChannelData(channel);
     for (let i = 0; i < count; i++) {
