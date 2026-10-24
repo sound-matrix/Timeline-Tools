@@ -1,3 +1,4 @@
+import { arrangementSchema } from "./arrangement.ts";
 import { z } from "zod";
 // Long recordings stay bounded by the existing plan/file limits and 4h render budget.
 const time = z.number().finite().min(0).max(14400);
@@ -83,6 +84,7 @@ const operationSchema = z
   );
 export const editsSchema = z
   .object({
+    timeline: arrangementSchema.optional(),
     operations: z.array(operationSchema).max(2000),
     corrections: z.record(
       z.string().regex(/^\d{1,5}$/),
@@ -100,9 +102,22 @@ export function validEdits(
   edits: PodcastEdits,
   t: PodcastTranscript,
   duration: number,
+  sourceClips?: {
+    id: string;
+    name: string;
+    duration: number;
+    offset?: number;
+  }[],
 ) {
   const ids = new Set(t.speakers.map((s) => s.id));
   return (
+    (!edits.timeline ||
+      (edits.timeline.unplaced.length === 0 &&
+        (sourceClips
+          ? JSON.stringify(edits.timeline.clips) === JSON.stringify(sourceClips)
+          : edits.timeline.clips.length === 1 &&
+            edits.timeline.clips[0].id === "source" &&
+            Math.abs(edits.timeline.clips[0].duration - duration) < 0.001))) &&
     Object.keys(edits.corrections).every((k) => Number(k) < t.words.length) &&
     Object.keys(edits.speaker_names).every((k) => ids.has(k)) &&
     edits.operations.every((o) =>
@@ -147,7 +162,9 @@ export function remapTime(
   );
 }
 export function editedDuration(duration: number, edits: PodcastEdits) {
-  return Number(remapTime(duration, edits).toFixed(6));
+  return Number(
+    remapTime(edits.timeline?.duration ?? duration, edits).toFixed(6),
+  );
 }
 export function outputToSource(
   value: number,

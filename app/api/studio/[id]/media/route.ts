@@ -31,6 +31,12 @@ export async function GET(
   ]);
   if (!s.data || !p.data)
     return NextResponse.json({ error: "Unavailable" }, { status: 503 });
+  const kind = new URL(r.url).searchParams.get("kind");
+  if (kind === "stem" || kind === "peaks")
+    return NextResponse.redirect(
+      kind === "stem" ? s.data.signedUrl : p.data.signedUrl,
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   return NextResponse.json(
     { stem: s.data.signedUrl, peaks: p.data.signedUrl },
     { headers: { "Cache-Control": "private, no-store" } },

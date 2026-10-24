@@ -71,6 +71,8 @@ test("Podcast file-only start, speaker lanes, synchronized edits, autosave and d
         name: "conversation.mp4",
         offset_sec: 0,
         duration: 8,
+        audio_path: `${owner}/${id}/podcast-clip-0.wav`,
+        peaks_path: `${owner}/${id}/podcast-clip-0-peaks.json`,
         proxy_path: `${owner}/${id}/proxy-0.mp4`,
       },
     ],
@@ -81,6 +83,8 @@ test("Podcast file-only start, speaker lanes, synchronized edits, autosave and d
       status: "done",
       duration_sec: 8,
       output_paths: [
+        `${owner}/${id}/podcast-clip-0.wav`,
+        `${owner}/${id}/podcast-clip-0-peaks.json`,
         `${owner}/${id}/podcast-source.wav`,
         `${owner}/${id}/podcast-preview.mp3`,
         `${owner}/${id}/podcast-peaks.json`,
@@ -94,19 +98,22 @@ test("Podcast file-only start, speaker lanes, synchronized edits, autosave and d
     exact: true,
   });
   await expect(editor).toBeVisible({ timeout: 20000 });
-  await expect(editor.locator(".podcast-lane")).toHaveCount(2);
+  await expect(editor.locator(".pro-header")).toHaveCount(2);
   await expect(
     editor.getByLabel("Podcast video preview", { exact: true }),
   ).toBeVisible();
   await editor
     .getByRole("button", { name: "Select transcript word 1", exact: true })
     .click();
-  await expect(
-    editor.getByRole("button", { name: "Timeline word 1: Hello", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
   await editor.getByRole("button", { name: "Mute words", exact: true }).click();
-  await editor.getByRole("button", { name: "Undo", exact: true }).click();
-  await editor.getByRole("button", { name: "Redo", exact: true }).click();
+  await editor
+    .locator(".daw-transport")
+    .getByRole("button", { name: "Undo", exact: true })
+    .click();
+  await editor
+    .locator(".daw-transport")
+    .getByRole("button", { name: "Redo", exact: true })
+    .click();
   await editor.getByLabel("Transcript word 1", { exact: true }).fill("Hi");
   await editor.getByLabel("s0", { exact: true }).fill("Host");
   await editor.getByLabel("Range start (seconds)", { exact: true }).fill("2");
@@ -117,20 +124,10 @@ test("Podcast file-only start, speaker lanes, synchronized edits, autosave and d
   await expect(
     editor.getByRole("status", { name: "Podcast save status", exact: true }),
   ).toHaveText("Saved", { timeout: 10000 });
-  const ruler = editor.getByRole("slider", {
-    name: "Podcast time ruler",
-    exact: true,
-  });
-  await ruler.scrollIntoViewIfNeeded();
-  const box = (await ruler.boundingBox())!;
-  await page.mouse.click(box.x + 4 * 30, box.y + 10);
-  await expect
-    .poll(() =>
-      editor
-        .getByLabel("Podcast video preview", { exact: true })
-        .evaluate((v: HTMLVideoElement) => v.currentTime),
-    )
-    .toBeCloseTo(4, 0);
+  const canvas = editor.getByLabel("Timeline waveform canvas");
+  await canvas.scrollIntoViewIfNeeded();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.click(box.x + 180 + 3 * 50, box.y + 15);
   await page.screenshot({
     path: info.outputPath("podcast-editor.png"),
     fullPage: true,

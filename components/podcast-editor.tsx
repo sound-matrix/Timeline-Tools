@@ -6,6 +6,7 @@ import {
   cutRanges,
   editedDuration,
   remapTime,
+  outputToSource,
   type PodcastTranscript,
   type PodcastEdits,
 } from "@/lib/podcast";
@@ -13,13 +14,24 @@ import { podcastExportSchema } from "@/lib/settings";
 import { withDefaults } from "@/lib/defaults";
 import ProcessingStatus from "./processing-status";
 import type { ProcessingState } from "@/lib/job-status";
-import Peaks from "./waveform-peaks";
+import DawTimeline, { type DawTransport } from "./daw/daw-timeline";
+import { arrangementSchema } from "@/lib/arrangement";
+import {
+  podcastRenderArrangement,
+  localPodcastEdits,
+  podcastViewTime,
+  podcastOutputTime,
+  podcastWindow,
+} from "@/lib/daw/podcast-audio";
+import VideoPreview from "./daw/video-preview";
 type Media = {
   index: number;
   name: string;
   offset: number;
   duration: number;
   proxy: string | null;
+  audio?: string | null;
+  peaks?: string | null;
 };
 type Session = {
   transcript: PodcastTranscript;
@@ -34,7 +46,6 @@ type Session = {
 const stamp = (n: number) =>
   `${Math.floor(n / 60)}:${(n % 60).toFixed(2).padStart(5, "0")}`;
 export default function PodcastEditor({ jobId }: { jobId: string }) {
-  const [visible, setVisible] = useState({ start: 0, end: 60 });
   const [session, setSession] = useState<Session | null>(null),
     [edits, setEdits] = useState<PodcastEdits>({
       operations: [],
@@ -46,8 +57,9 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     [selected, setSelected] = useState<number[]>([]),
     [playhead, setPlayhead] = useState(0),
     [playing, setPlaying] = useState(false),
-    [peaks, setPeaks] = useState<number[][]>([]),
-    [zoom, setZoom] = useState(30),
+    [viewHead, setViewHead] = useState(0),
+    [outputHead, setOutputHead] = useState(0),
+    [videoGap, setVideoGap] = useState(false),
     [page, setPage] = useState(0),
     [rangeStart, setRangeStart] = useState(""),
     [rangeEnd, setRangeEnd] = useState(""),
@@ -59,26 +71,16 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     [exportsCount, setExportsCount] = useState(0),
     [exportBusy, setExportBusy] = useState(false),
     [exportLive, setExportLive] = useState<ProcessingState | null>(null);
-  const audio = useRef<HTMLAudioElement>(null),
-    video = useRef<HTMLVideoElement>(null),
-    ruler = useRef<HTMLDivElement>(null),
-    scroller = useRef<HTMLDivElement>(null),
-    revision = useRef(1),
+  const transport = useRef<DawTransport | null>(null);
+  const revision = useRef(1),
     lastSaved = useRef(""),
     current = useRef(edits),
     history = useRef<PodcastEdits[]>([]),
     future = useRef<PodcastEdits[]>([]),
     saving = useRef(false),
     conflict = useRef(false),
-    playingRef = useRef(false),
-    playheadRef = useRef(0),
-    gapsPlayed = useRef(new Set<number>()),
-    waiting = useRef(0),
-    context = useRef<AudioContext | null>(null),
-    tone = useRef<GainNode | null>(null),
     anchor = useRef<number | null>(null);
   current.current = edits;
-  playheadRef.current = playhead;
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -97,11 +99,6 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
         setEdits(e);
         setExportsCount(data.exports_count);
         setSaved("Saved");
-        const p = await fetch(data.peaks);
-        if (p.ok) {
-          const values = await p.json();
-          if (!cancelled && Array.isArray(values.peaks)) setPeaks(values.peaks);
-        }
       } catch (e) {
         if (!cancelled) setMessage((e as Error).message);
       }
@@ -151,170 +148,44 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
         saving.current = false;
       }
     }
-    const timer = setInterval(() => void save(), 800);
+    const timer = setTimeout(() => void save(), 2000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
-  }, [jobId, session]);
-  useEffect(() => {
-    if (!playingRef.current && session && video.current) {
-      const m = session.media.find(
-        (m) =>
-          m.proxy && playhead >= m.offset && playhead < m.offset + m.duration,
-      );
-      if (m) {
-        try {
-          video.current.currentTime = playhead - m.offset;
-        } catch {}
-        video.current.pause();
-      }
-    }
-  }, [playhead, session]);
-  const seek = useCallback(
-    (seconds: number) => {
-      if (!session) return;
-      const t = Math.max(0, Math.min(session.duration, seconds));
-      if (audio.current) audio.current.currentTime = t;
-      setPlayhead(t);
-      gapsPlayed.current.clear();
-      waiting.current = 0;
-      if (playingRef.current) void audio.current?.play().catch(() => {});
-    },
-    [session],
-  );
-  useEffect(() => {
-    if (!session) return;
-    let frame = 0,
-      previous = 0,
-      lastDraw = 0;
-    function tick() {
-      const a = audio.current;
-      if (a && playingRef.current) {
-        let t = a.currentTime;
-        const now = performance.now();
-        if (waiting.current) {
-          if (now >= waiting.current) {
-            waiting.current = 0;
-            if (a.currentTime < session!.duration - 0.005)
-              void a
-                .play()
-                .catch(() => setMessage("Press play to resume audio."));
-          }
-        } else {
-          const removed = cutRanges(current.current);
-          const cut = removed.find(([s, e]) => t >= s && t < e);
-          if (cut) {
-            t = cut[1];
-            a.currentTime = t;
-          }
-          const insert = current.current.operations.find(
-            (o, i) =>
-              o.op === "insert" &&
-              !removed.some(([a, b]) => o.at > a && o.at < b) &&
-              !gapsPlayed.current.has(i) &&
-              o.at >= previous - 0.02 &&
-              o.at <= t + 0.02,
-          );
-          if (insert && insert.op === "insert") {
-            const index = current.current.operations.indexOf(insert);
-            gapsPlayed.current.add(index);
-            a.currentTime = insert.at;
-            t = insert.at;
-            a.pause();
-            waiting.current = now + insert.duration * 1000;
-          }
-        }
-        const active = current.current.operations.filter(
-          (o) =>
-            o.op !== "insert" && o.op !== "delete" && t >= o.start && t < o.end,
+  }, [jobId, session, edits]);
+  const seek = useCallback((seconds: number) => {
+    setPlayhead(seconds);
+    const a = current.current.timeline,
+      r = a?.regions.find((r) => {
+        const c = a.clips.find((c) => c.id === r.clip);
+        return (
+          seconds >= (c?.offset ?? 0) + r.src_start &&
+          seconds < (c?.offset ?? 0) + r.src_end
         );
-        const bleep = active.at(-1);
-        a.volume = waiting.current || active.length ? 0 : 1;
-        if (tone.current)
-          tone.current.gain.value =
-            bleep && bleep.op === "bleep" && !waiting.current
-              ? 10 ** (bleep.db / 20)
-              : 0;
-        if (now - lastDraw > 60) {
-          setPlayhead(t);
-          lastDraw = now;
-        }
-        previous = t;
-        const v = video.current;
-        if (v) {
-          const m = session!.media.find(
-            (m) => m.proxy && t >= m.offset && t < m.offset + m.duration,
-          );
-          if (m) {
-            const local = t - m.offset;
-            if (Math.abs(v.currentTime - local) > 0.15) v.currentTime = local;
-            if (waiting.current) v.pause();
-            else if (v.paused) void v.play().catch(() => {});
-          } else v.pause();
-        }
-        if (t >= session!.duration - 0.005 && !waiting.current) {
-          playingRef.current = false;
-          setPlaying(false);
-          a.pause();
-          video.current?.pause();
-          if (tone.current) tone.current.gain.value = 0;
-        }
-      }
-      frame = requestAnimationFrame(tick);
-    }
-    frame = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(frame);
-    };
-  }, [session]);
-  useEffect(
-    () => () => {
-      playingRef.current = false;
-      void context.current?.close();
-    },
-    [],
-  );
+      });
+    const c = a?.clips.find((c) => c.id === r?.clip),
+      view = r ? r.start + seconds - (c?.offset ?? 0) - r.src_start : seconds;
+    setViewHead(view);
+    transport.current?.seek(view);
+  }, []);
   function toggle() {
-    if (!audio.current) return;
-    if (playingRef.current) {
-      audio.current.pause();
-      video.current?.pause();
-      if (tone.current) tone.current.gain.value = 0;
-      playingRef.current = false;
-      setPlaying(false);
+    transport.current?.toggle();
+  }
+  function commit(next: PodcastEdits, previous = current.current) {
+    if (
+      session &&
+      (editedDuration(session.duration, next) <= 0 ||
+        editedDuration(session.duration, next) > 14400)
+    ) {
+      setMessage(
+        "Keep an output length greater than zero and at most four hours.",
+      );
       return;
     }
-    if (playhead >= (session?.duration ?? 0) - 0.01) seek(0);
-    if (!context.current) {
-      try {
-        const ctx = new AudioContext();
-        context.current = ctx;
-        const osc = ctx.createOscillator(),
-          gain = ctx.createGain();
-        osc.frequency.value = 1000;
-        gain.gain.value = 0;
-        osc.connect(gain).connect(ctx.destination);
-        osc.start();
-        tone.current = gain;
-      } catch {
-        setMessage(
-          "Bleep preview is unavailable in this browser; audio export still applies bleeps.",
-        );
-      }
-    }
-    void context.current?.resume();
-    playingRef.current = true;
-    setPlaying(true);
-    void audio.current.play().catch(() => {
-      playingRef.current = false;
-      setPlaying(false);
-      setMessage("Could not play audio. Reload the session and try again.");
-    });
-  }
-  function commit(next: PodcastEdits) {
-    history.current.push(structuredClone(current.current));
-    if (history.current.length > 100) history.current.shift();
+    transport.current?.stop();
+    history.current.push(structuredClone(previous));
+    if (history.current.length > 200) history.current.shift();
     future.current = [];
     setHistorySize(history.current.length);
     setFutureSize(0);
@@ -322,6 +193,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     setSaved("Unsaved");
   }
   function undo() {
+    transport.current?.stop();
     const prev = history.current.pop();
     if (!prev) return;
     future.current.push(structuredClone(current.current));
@@ -331,6 +203,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
     setSaved("Unsaved");
   }
   function redo() {
+    transport.current?.stop();
     const next = future.current.pop();
     if (!next) return;
     history.current.push(structuredClone(current.current));
@@ -530,21 +403,158 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
       setExportsCount((n) => n + 1);
     }
   }, [exportLive]);
-  const visibleWords = useMemo(
-    () =>
-      session?.transcript.words.flatMap((w, i) =>
-        w.end >= visible.start && w.start <= visible.end ? [{ w, i }] : [],
-      ) ?? [],
-    [session, visible],
-  );
+  const podcastTimeline = useMemo(() => {
+    if (!session) return null;
+    if (edits.timeline) return edits.timeline;
+    const speakers = session.transcript.speakers;
+    const laneFor = new Map<number, string>();
+    for (const m of session.media) {
+      const counts = new Map<string, number>();
+      for (const w of session.transcript.words)
+        if (w.start >= m.offset && w.start < m.offset + m.duration)
+          counts.set(w.speaker, (counts.get(w.speaker) ?? 0) + 1);
+      laneFor.set(
+        m.index,
+        [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? speakers[0].id,
+      );
+    }
+    return arrangementSchema.parse({
+      version: 2,
+      job_id: jobId,
+      sample_rate: 48000,
+      pan_law: session.media.every((m) => m.audio) ? "equal_power" : "legacy",
+      duration: session.duration,
+      snap: true,
+      lanes: speakers.map((s, i) => ({
+        id: s.id,
+        name: edits.speaker_names[s.id] ?? s.name,
+        color: ["#818CF8", "#A78BFA", "#67E8F9"][i % 3],
+        gain_db: 0,
+        mute: false,
+        solo: false,
+      })),
+      clips: session.media.every((m) => m.audio)
+        ? session.media.map((m) => ({
+            id: `c${m.index}`,
+            name: m.name,
+            duration: m.duration,
+            offset: m.offset,
+          }))
+        : [
+            {
+              id: "source",
+              name: "Podcast source",
+              duration: session.duration,
+            },
+          ],
+      regions: (session.media.every(m=>m.audio)?session.media:[{...session.media[0],offset:0,duration:session.duration}]).map((m, i) => ({
+        id: `media_${i}`,
+        lane: laneFor.get(m.index) ?? speakers[0].id,
+        kind: "clip",
+        clip: session.media.every((m) => m.audio) ? `c${m.index}` : "source",
+        src_start: session.media.every((m) => m.audio) ? 0 : m.offset,
+        src_end: session.media.every((m) => m.audio)
+          ? m.duration
+          : Math.min(session.duration, m.offset + m.duration),
+        start: m.offset,
+        gain_db: 0,
+        line: 0,
+        confidence: 1,
+        lines: [],
+      })),
+      lines: [{ index: 0, speaker: "", text: "Podcast source" }],
+      missing: [],
+      unplaced: [],
+    });
+  }, [session, edits.timeline, edits.speaker_names, jobId]);
   useEffect(() => {
-    const el = scroller.current;
-    if (el)
-      setVisible({
-        start: el.scrollLeft / zoom,
-        end: (el.scrollLeft + el.clientWidth) / zoom,
-      });
-  }, [zoom, session]);
+    if (podcastTimeline && !edits.timeline) {
+      setEdits({ ...current.current, timeline: podcastTimeline });
+      setSaved("Unsaved");
+    }
+  }, [podcastTimeline, edits.timeline]);
+  const podcastAssets = useMemo<Record<string, { key: string; url: string }>>(
+    () =>
+      session
+        ? Object.fromEntries([
+            ["source", { key: `${jobId}/podcast-source`, url: session.peaks }],
+            ...session.media
+              .filter((m) => m.peaks)
+              .map((m) => [
+                `c${m.index}`,
+                { key: `${jobId}/podcast-c${m.index}`, url: m.peaks! },
+              ]),
+          ])
+        : ({} as Record<string, { key: string; url: string }>),
+    [session, jobId],
+  );
+  const podcastAudio = useMemo<Record<string, string>>(
+    () =>
+      session
+        ? Object.fromEntries([
+            ["source", session.audio],
+            ...session.media
+              .filter((m) => m.audio)
+              .map((m) => [`c${m.index}`, m.audio!]),
+          ])
+        : ({} as Record<string, string>),
+    [session],
+  );
+  const podcastVideos = useMemo(
+    () =>
+      session?.media
+        .filter((m) => m.proxy)
+        .map((m) => ({
+          id: String(m.index),
+          start: m.offset,
+          duration: m.duration,
+          url: m.proxy!,
+        })) ?? [],
+    [session],
+  );
+  const podcastOverlays = useMemo(
+    () =>
+      session?.transcript.words.map((w, i) => ({
+        id: String(i),
+        lane: w.speaker,
+        start: w.start,
+        end: w.end,
+        text: edits.corrections[String(i)] ?? w.w,
+        selected: selected.includes(i),
+        muted: edits.operations.some(
+          (o) => o.op !== "insert" && o.start < w.end && o.end > w.start,
+        ),
+        onSelect: (extend: boolean) => select(i, extend),
+      })) ?? [],
+    [session, edits, selected],
+  );
+  const podcastRender = useMemo(
+    () =>
+      podcastTimeline
+        ? podcastRenderArrangement(podcastTimeline, edits)
+        : undefined,
+    [podcastTimeline, edits],
+  );
+  const readPodcast = useCallback(
+    (ctx: AudioContext, url: string, start: number, length: number) =>
+      podcastWindow(
+        ctx,
+        url,
+        start,
+        length,
+        session?.media.find((m) => m.audio === url)?.duration ??
+          session?.duration ??
+          0,
+        session?.media.find((m) => m.audio === url)
+          ? localPodcastEdits(
+              edits,
+              session.media.find((m) => m.audio === url)!.offset,
+              session.media.find((m) => m.audio === url)!.duration,
+            )
+          : edits,
+      ),
+    [session?.duration, edits],
+  );
   if (!session)
     return (
       <div role="status" className="card">
@@ -599,7 +609,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
           {playing ? "Pause" : "Play"}
         </button>
         <output aria-label="Podcast current time">
-          {stamp(remapTime(playhead, edits))} / {stamp(length)}
+          {stamp(outputHead)} / {stamp(length)}
         </output>
         <button
           type="button"
@@ -621,184 +631,59 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
           {saved}
         </span>
       </div>
-      <audio
-        ref={audio}
-        src={session.audio}
-        preload="metadata"
-        onEnded={() => {
-          const hasTail = current.current.operations.some(
-            (o, i) =>
-              o.op === "insert" &&
-              o.at >= session.duration - 0.01 &&
-              !gapsPlayed.current.has(i),
-          );
-          if (hasTail) return;
-          playingRef.current = false;
-          setPlaying(false);
-          video.current?.pause();
-          if (tone.current) tone.current.gain.value = 0;
-        }}
-        onError={() =>
-          setMessage(
-            "Audio preview unavailable. Reload to renew the private media link.",
-          )
-        }
-      />
       {message && <p role="alert">{message}</p>}
       <div className="studio-workspace">
         <div className="podcast-workspace-main">
-          {activeVideo ? (
-            <video
-              ref={video}
-              key={activeVideo.index}
-              src={activeVideo.proxy!}
-              muted
-              playsInline
-              preload="metadata"
-              aria-label="Podcast video preview"
-              className="podcast-video"
-            />
-          ) : (
-            <div className="card muted">
-              {session.media.some((m) => m.proxy)
-                ? "No video in this part of the session."
-                : "Audio session · waveform preview"}
-            </div>
-          )}
-          <label>
-            Timeline zoom
-            <input
-              type="range"
-              min={2}
-              max={100}
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-            />
-          </label>
-          <div
-            className="daw-scroll"
-            ref={scroller}
-            onScroll={(e) => {
-              const el = e.currentTarget;
-              setVisible({
-                start: el.scrollLeft / zoom,
-                end: (el.scrollLeft + el.clientWidth) / zoom,
-              });
+          <VideoPreview
+            media={session.media}
+            playhead={playhead}
+            playing={playing && !videoGap}
+          />
+          <DawTimeline
+            arrangement={podcastTimeline!}
+            transport={transport}
+            onPlayingChange={setPlaying}
+            onUndo={undo}
+            onRedo={redo}
+            onPreview={(next) => setEdits({ ...edits, timeline: next })}
+            onChange={(next, before) =>
+              commit(
+                { ...edits, timeline: next },
+                before ? { ...edits, timeline: before } : current.current,
+              )
+            }
+            assets={podcastAssets}
+            audioUrls={podcastAudio}
+            overlays={podcastOverlays}
+            videos={podcastVideos}
+            playhead={viewHead}
+            playbackPosition={outputHead}
+            onSeek={(t) => {
+              const mapped = podcastViewTime(
+                podcastTimeline!,
+                current.current,
+                t,
+              );
+              setViewHead(t);
+              setOutputHead(mapped.output);
+              setPlayhead(mapped.source);
+              setVideoGap(false);
             }}
-          >
-            <div
-              className="podcast-timeline"
-              style={{ width: Math.max(600, session.duration * zoom) }}
-            >
-              <div
-                className="daw-ruler"
-                ref={ruler}
-                role="slider"
-                aria-label="Podcast time ruler"
-                aria-valuemin={0}
-                aria-valuemax={session.duration}
-                aria-valuenow={playhead}
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                    e.preventDefault();
-                    seek(playhead + (e.key === "ArrowRight" ? 0.1 : -0.1));
-                  }
-                }}
-                onPointerDown={(e) => {
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  seek(
-                    (e.clientX - e.currentTarget.getBoundingClientRect().left) /
-                      zoom,
-                  );
-                }}
-                onPointerMove={(e) => {
-                  if (e.buttons)
-                    seek(
-                      (e.clientX -
-                        e.currentTarget.getBoundingClientRect().left) /
-                        zoom,
-                    );
-                }}
-              >
-                {Array.from(
-                  { length: Math.ceil(session.duration / 30) },
-                  (_, i) => (
-                    <span
-                      key={i}
-                      style={{ position: "absolute", left: i * 30 * zoom }}
-                    >
-                      {stamp(i * 30)}
-                    </span>
-                  ),
-                )}
-              </div>
-              {t.speakers.map((s) => (
-                <div
-                  className="podcast-lane"
-                  key={s.id}
-                  aria-label={`Speaker lane ${edits.speaker_names[s.id] ?? s.name}`}
-                >
-                  <b className="podcast-lane-label">
-                    {edits.speaker_names[s.id] ?? s.name}
-                  </b>
-                  <div className="podcast-wave">
-                    <Peaks
-                      values={peaks}
-                      start={0}
-                      end={session.duration}
-                      color="#818CF8"
-                      zoom={zoom}
-                    />
-                  </div>
-                  {visibleWords.map(({ w, i }) =>
-                    w.speaker === s.id ? (
-                      <button
-                        type="button"
-                        key={i}
-                        className={`podcast-word${selected.includes(i) ? " selected" : ""}${cuts.some(([a, b]) => w.start < b && w.end > a) ? " cut" : ""}`}
-                        style={{
-                          left: w.start * zoom,
-                          width: Math.max(4, (w.end - w.start) * zoom),
-                        }}
-                        aria-pressed={selected.includes(i)}
-                        aria-label={`Timeline word ${i + 1}: ${edits.corrections[String(i)] ?? w.w}`}
-                        onClick={(e) => select(i, e.shiftKey)}
-                      >
-                        {edits.corrections[String(i)] ?? w.w}
-                      </button>
-                    ) : null,
-                  )}
-                </div>
-              ))}
-              <div
-                className="podcast-playhead"
-                role="slider"
-                tabIndex={0}
-                aria-label="Podcast playhead"
-                aria-valuemin={0}
-                aria-valuemax={session.duration}
-                aria-valuenow={playhead}
-                style={{ left: playhead * zoom }}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                    e.preventDefault();
-                    seek(playhead + (e.key === "ArrowRight" ? 0.1 : -0.1));
-                  }
-                }}
-                onPointerDown={(e) =>
-                  e.currentTarget.setPointerCapture(e.pointerId)
-                }
-                onPointerMove={(e) => {
-                  if (e.buttons && ruler.current)
-                    seek(
-                      (e.clientX - ruler.current.getBoundingClientRect().left) /
-                        zoom,
-                    );
-                }}
-              />
-            </div>
-          </div>
+            onPlaybackTick={(t) => {
+              const mapped = podcastOutputTime(
+                podcastTimeline!,
+                podcastRender!,
+                current.current,
+                t,
+              );
+              setOutputHead(t);
+              setViewHead(mapped.view);
+              setPlayhead(mapped.source);
+              setVideoGap(mapped.gap);
+            }}
+            playbackArrangement={podcastRender}
+            readWindow={readPodcast}
+          />
         </div>
         <aside
           className="card podcast-transcript"

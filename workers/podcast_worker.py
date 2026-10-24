@@ -83,6 +83,9 @@ def handle_podcast_job(db, job, worker_id, url, key):
 
                 validate_edits(edits, transcript, snapshot["duration"])
                 _, seconds = spans(snapshot["duration"], edits)
+                if 'timeline' in edits:
+                    from workers.podcast import remap
+                    seconds=remap(edits['timeline']['duration'],edits)
                 source_path = snapshot["source_path"]
                 if (
                     source_path != f"{expected}/{parent['id']}/podcast-source.wav"
@@ -92,6 +95,12 @@ def handle_podcast_job(db, job, worker_id, url, key):
                 source = folder / "podcast-source.wav"
                 at("podcast_source_transfer")
                 transfer_stem(url, key, source_path, source)
+                clip_sources={}
+                for m in snapshot.get('media',[]):
+                    path=m.get('audio_path')
+                    if not path:continue
+                    if path!=f"{expected}/{parent['id']}/podcast-clip-{m['media_index']}.wav" or path not in parent['output_paths']:raise ValueError('Invalid source clip')
+                    local=folder/f"podcast-clip-{m['media_index']}.wav";transfer_stem(url,key,path,local);clip_sources[f"c{m['media_index']}"]=local
             else:
                 parts = job["input_path"].split("/")
                 if len(parts) != 2 or parts[0] != expected or not re_bundle(parts[1]):
@@ -157,7 +166,7 @@ def handle_podcast_job(db, job, worker_id, url, key):
             if parent:
                 at("podcast_export_render")
                 outputs = render(
-                    source, folder, transcript, edits, settings, snapshot["duration"]
+                    source, folder, transcript, edits, settings, snapshot["duration"],clip_sources=clip_sources
                 )
             else:
                 at("podcast_clean_mix")
@@ -204,6 +213,8 @@ def handle_podcast_job(db, job, worker_id, url, key):
                             name=m["name"],
                             offset_sec=m["offset"],
                             duration=m["duration"],
+                            audio_path=f"{expected}/{job_id}/{m['audio_file']}",
+                            peaks_path=f"{expected}/{job_id}/{m['peaks_file']}",
                             proxy_path=(
                                 f"{expected}/{job_id}/{m['proxy_file']}"
                                 if m["proxy_file"]

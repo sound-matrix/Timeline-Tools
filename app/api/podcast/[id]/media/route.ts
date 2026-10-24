@@ -12,8 +12,9 @@ export async function GET(
     index = url.searchParams.get("index");
   if (
     !z.uuid().safeParse(id).success ||
-    !["source", "peaks", "proxy"].includes(kind ?? "") ||
-    (kind === "proxy" && !/^\d{1,3}$/.test(index ?? ""))
+    !["source", "peaks", "proxy", "clip", "clip_peaks"].includes(kind ?? "") ||
+    (["proxy", "clip", "clip_peaks"].includes(kind ?? "") &&
+      !/^\d{1,3}$/.test(index ?? ""))
   )
     return NextResponse.json({ error: "Unavailable" }, { status: 404 });
   const { data: job } = await db
@@ -25,10 +26,14 @@ export async function GET(
     .maybeSingle();
   const name =
     kind === "source"
-      ? "podcast-preview.mp3"
-      : kind === "peaks"
-        ? "podcast-peaks.json"
-        : `proxy-${Number(index)}.mp4`;
+      ? "podcast-source.wav"
+      : kind === "clip"
+        ? `podcast-clip-${Number(index)}.wav`
+        : kind === "clip_peaks"
+          ? `podcast-clip-${Number(index)}-peaks.json`
+          : kind === "peaks"
+            ? "podcast-peaks.json"
+            : `proxy-${Number(index)}.mp4`;
   const path = `${user.id}/${id}/${name}`;
   if (job?.status !== "done" || !job.output_paths?.includes(path))
     return NextResponse.json({ error: "Unavailable" }, { status: 404 });

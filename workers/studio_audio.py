@@ -24,7 +24,7 @@ def validate_studio(s):
     if not isinstance(s, dict): return False
     keys = {'line_gap_ms','match_strictness','dialogue_lufs','master_lufs','has_bed','room_tone','subtitles'}
     if s.get('has_bed') is True: keys |= {'ducking_db','bed_fit'}
-    if set(s) != keys or type(s.get('has_bed')) is not bool: return False
+    if set(s)-{'region_mode'} != keys or s.get('region_mode','whole_clip') not in ('whole_clip','split_by_line') or type(s.get('has_bed')) is not bool: return False
     def num(v,lo,hi): return type(v) in (int,float) and math.isfinite(v) and lo <= v <= hi
     room,sub = s['room_tone'],s['subtitles']
     return (type(s['line_gap_ms']) is int and num(s['line_gap_ms'],0,5000)
@@ -260,7 +260,7 @@ def matching(lines,segments):
     return selected,used_s
 
 
-def arrange(project,segments,settings,job_id):
+def arrange_split(project,segments,settings,job_id):
     lines=project['lines']; byline={}
     if project['manifest'].get('mode')=='transcribe':
         # ASR emits clip order, then monotonic segment order. No text matching or
@@ -293,28 +293,133 @@ def arrange(project,segments,settings,job_id):
       clips=[dict(id=f'c{i}',name=c['name'],duration=project['durations'][c['file']]) for i,c in enumerate(project['manifest']['clips'])],regions=regions,missing=missing,
       unplaced=[dict(clip=s['clip'],src_start=s['src_start'],src_end=s['src_end'],transcript=s['text']) for i,s in enumerate(segments) if i not in used],
       lines=[dict(index=i,speaker=l['speaker'],text=l['text']) for i,l in enumerate(lines)])
-    validate_arrangement(a)
     return a
 
-def validate_arrangement(a):
-    def real(value):
-        # Preserve numeric-only validation; bool and numeric strings are not times.
-        if isinstance(value,bool) or not isinstance(value,Real): raise ValueError('Invalid region')
-        value=float(value)
-        if not isinstance(value,(int,float)) or not math.isfinite(value): raise ValueError('Invalid region')
-        return value
-    a['duration']=real(a['duration'])
+def migrate_arrangement(a):
+    """Upgrade structural defaults only: never merge legacy cuts or move audio."""
+    if type(a.get('version')) is not int or a.get('version') not in (1,2): raise ValueError('Invalid arrangement version')
+    import copy
+    legacy=a['version']==1
+    a=copy.deepcopy(a); a['version']=2
+    a.setdefault('pan_law','legacy' if legacy else 'equal_power')
+    a.setdefault('legacy_mastering',legacy)
+    a.setdefault('derived_clips',[]); a.setdefault('markers',[]); a.setdefault('loop',dict(enabled=False,start=0,end=a['duration']))
+    a.setdefault('tempo',120); a.setdefault('time_signature',[4,4]); a.setdefault('master',dict(gain_db=0,inserts=[]));a['master'].setdefault('reference_gain_db',0)
+    for lane in a['lanes']:
+        lane.setdefault('pan',0); lane.setdefault('height',120); lane.setdefault('inserts',[])
     for r in a['regions']:
-        for key in ('src_start','src_end','start','gain_db'): r[key]=real(r[key])
-    for lane in a['lanes']: lane['gain_db']=real(lane['gain_db'])
-    if a.get('version')!=1 or len(json.dumps(a,ensure_ascii=False).encode())>524288 or not 0<a['duration']<=14400: raise ValueError('Invalid arrangement')
-    clips={c['id']:c['duration'] for c in a['clips']}; lanes={l['id'] for l in a['lanes']}
-    if len(a['regions'])>2000 or sum(r['src_end']-r['src_start'] for r in a['regions'])>14400: raise ValueError('Arrangement render budget exceeded')
-    for r in a['regions']:
-        if not 0<=r['src_start']<r['src_end']<=clips.get(r['clip'],0)+.001 or r['lane'] not in lanes or not -60<=r['gain_db']<=24 or r['start']<0 or r['start']+r['src_end']-r['src_start']>a['duration']+.001: raise ValueError('Invalid region')
-    for l in a['lanes']:
-        if not -60<=l['gain_db']<=24 or type(l['mute']) is not bool or type(l['solo']) is not bool: raise ValueError('Invalid lane')
+        r.setdefault('lines',[dict(line=r['line'],src_start=r['src_start'],src_end=r['src_end'],confidence=r['confidence'])])
+        r.setdefault('fade_in',0); r.setdefault('fade_out',0); r.setdefault('fade_curve','linear'); r.setdefault('mute',False)
     return a
+
+
+def arrange(project,segments,settings,job_id):
+    a=arrange_split(project,segments,settings,job_id)
+    if settings.get('region_mode','whole_clip')=='split_by_line' and project['manifest'].get('mode')!='transcribe':
+        placed={r['clip'] for r in a['regions']}
+        a['unplaced']=[dict(clip=c['id'],src_start=0,src_end=c['duration'],transcript=' '.join(s['text'] for s in segments if s['clip']==c['id'])[:5000]) for c in a['clips'] if c['id'] not in placed]
+        a['pan_law']='equal_power';a['legacy_mastering']=False
+        return validate_arrangement(migrate_arrangement(a))
+    # Script matching supplies anchors and captions, not destructive edit boundaries.
+    byclip={}
+    for r in a['regions']: byclip.setdefault(r['clip'],[]).append(r)
+    regions=[]; ends={}; cursor=0; unplaced=[]; gap=settings['line_gap_ms']/1000
+    transcribe=project['manifest'].get('mode')=='transcribe'
+    for clip in sorted(a['clips'],key=lambda c:min((r['line'] for r in byclip.get(c['id'],[])),default=100000)):
+        matches=sorted(byclip.get(clip['id'],[]),key=lambda r:r['line'])
+        if not matches and not transcribe:
+            unplaced.append(dict(clip=clip['id'],src_start=0,src_end=clip['duration'],transcript=' '.join(s['text'] for s in segments if s['clip']==clip['id'])[:5000]));continue
+        first=matches[0] if matches else None
+        lid=first['lane'] if first else a['lanes'][0]['id']
+        line=a['lines'][first['line']] if first else a['lines'][0]
+        source_line=project['lines'][first['line']] if first and not transcribe else {}
+        anchor=source_line.get('start')
+        desired=max(0,(anchor if anchor is not None else first['start'])-first['src_start']) if first else cursor
+        if transcribe: desired=cursor
+        start=max(desired,ends.get(lid,0))
+        region=dict(id=f"r{len(regions)}",lane=lid,kind='clip',clip=clip['id'],src_start=0.,src_end=float(clip['duration']),start=round(float(start),6),gain_db=0.,line=line['index'],confidence=min((r['confidence'] for r in matches),default=0),
+            lines=[dict(line=r['line'],src_start=r['src_start'],src_end=r['src_end'],confidence=r['confidence']) for r in matches])
+        regions.append(region);ends[lid]=start+clip['duration']+gap;cursor=start+clip['duration']+gap
+    a.update(regions=regions,unplaced=unplaced,duration=round(max([.001]+[r['start']+r['src_end'] for r in regions]+[m['start']+m['length'] for m in a['missing']]),6))
+    if project['manifest']['bed'] and settings['bed_fit']=='extend': a['duration']=max(a['duration'],project['durations'][project['manifest']['bed']])
+    a['pan_law']='equal_power';a['legacy_mastering']=False
+    return validate_arrangement(migrate_arrangement(a))
+
+
+def unique_source_seconds(regions):
+    spans={}
+    for r in regions: spans.setdefault(r['clip'],[]).append((r['src_start'],r['src_end']))
+    seconds=0
+    for ranges in spans.values():
+        end=-1
+        for a,b in sorted(ranges):
+            seconds+=max(0,b-max(a,end));end=max(end,b)
+    return seconds
+
+
+def validate_arrangement(a):
+    upgraded=migrate_arrangement(a);a.clear();a.update(upgraded)
+    def real(value,lo,hi):
+        if isinstance(value,bool) or not isinstance(value,Real) or not math.isfinite(value) or not lo<=value<=hi: raise ValueError('Invalid arrangement number')
+        return float(value)
+    a['duration']=real(a['duration'],.001,14400)
+    if not 1<=len(a['lanes'])<=300 or not 1<=len(a['clips'])<=200 or len(a['regions'])>2000: raise ValueError('Invalid arrangement count')
+    clips={c['id']:real(c['duration'],.001,14400) for c in a['clips']+a['derived_clips']};lanes={l['id'] for l in a['lanes']}
+    if len(clips)!=len(a['clips'])+len(a['derived_clips']) or len(lanes)!=len(a['lanes']) or len({r['id'] for r in a['regions']})!=len(a['regions']): raise ValueError('Duplicate IDs')
+    base={c['id']:c['duration'] for c in a['clips']}
+    if len(a['derived_clips'])>200: raise ValueError('Too many bounced clips')
+    for c in a['derived_clips']:
+        if c['source'] not in base or not 0<=real(c['src_start'],0,14400)<real(c['src_end'],0,14400)<=base[c['source']]+.001 or abs(c['duration']-c['src_end']+c['src_start'])>.001: raise ValueError('Invalid bounced source')
+        real(c['gain_db'],-60,24);real(c['fade_in'],0,14400);real(c['fade_out'],0,14400)
+        if c['fade_curve'] not in ('linear','equal_power'): raise ValueError('Invalid bounced fade')
+    for r in a['regions']:
+        for k in ('src_start','src_end','start'): r[k]=real(r[k],0,14400)
+        r['gain_db']=real(r['gain_db'],-60,24)
+        if not 0<=r['src_start']<r['src_end']<=clips.get(r['clip'],0)+.001 or r['lane'] not in lanes or r['start']+r['src_end']-r['src_start']>a['duration']+.001: raise ValueError('Invalid region')
+        if type(r['mute']) is not bool or r['fade_curve'] not in ('linear','equal_power'): raise ValueError('Invalid fade')
+        for k in ('fade_in','fade_out'): r[k]=real(r[k],0,14400)
+        for line in r['lines']:
+            if type(line['line']) is not int or not 0<=line['line']<len(a['lines']) or not 0<=real(line['src_start'],0,14400)<real(line['src_end'],0,14400)<=clips[r['clip']]+.001: raise ValueError('Invalid caption')
+            real(line['confidence'],0,1)
+    if unique_source_seconds([dict(r,clip=c['source'],src_start=c['src_start']+r['src_start'],src_end=c['src_start']+r['src_end']) if (c:=next((c for c in a['derived_clips'] if c['id']==r['clip']),None)) else r for r in a['regions']])>14400: raise ValueError('Arrangement render budget exceeded')
+    for l in a['lanes']:
+        l['gain_db']=real(l['gain_db'],-60,24);l['pan']=real(l['pan'],-1,1);real(l['height'],60,400)
+        if type(l['mute']) is not bool or type(l['solo']) is not bool or l['inserts']!=[]: raise ValueError('Invalid lane')
+    real(a['tempo'],20,300)
+    sig=a['time_signature']
+    if len(sig)!=2 or type(sig[0]) is not int or not 1<=sig[0]<=16 or sig[1] not in (2,4,8,16): raise ValueError('Invalid time signature')
+    real(a['master']['gain_db'],-60,24);real(a['master'].get('reference_gain_db',0),-60,24)
+    if a['master']['inserts']!=[]: raise ValueError('Plugins require PR D')
+    if type(a['loop']['enabled']) is not bool or not 0<=real(a['loop']['start'],0,14400)<real(a['loop']['end'],0,14400)<=a['duration']+.001: raise ValueError('Invalid loop')
+    if len(a['markers'])>1000: raise ValueError('Too many markers')
+    for m in a['markers']: real(m['time'],0,a['duration'])
+    if len(json.dumps(a,ensure_ascii=False).encode())>524288: raise ValueError('Invalid arrangement size')
+    return a
+
+
+def fade_envelope(r,positions):
+    import numpy as np
+    length=r['src_end']-r['src_start']; envelope=np.ones(len(positions),dtype='float64')
+    for fade,values in ((r.get('fade_in',0),positions),(r.get('fade_out',0),length-positions)):
+        if fade>0:
+            ramp=np.clip(values/fade,0,1)
+            envelope*=np.sin(ramp*np.pi/2) if r.get('fade_curve')=='equal_power' else ramp
+    return envelope
+
+
+def pan_gains(pan):
+    # -3 dB equal-power balance law; stereo channels retain their separation.
+    angle=(pan+1)*math.pi/4
+    return math.cos(angle),math.sin(angle)
+
+
+def arrangement_cues(a):
+    cues=[]
+    for r in a['regions']:
+        for line in r.get('lines',[]):
+            left=max(r['src_start'],line['src_start']);right=min(r['src_end'],line['src_end'])
+            if right>left: cues.append(SimpleNamespace(start=r['start']+left-r['src_start'],end=r['start']+right-r['src_start'],text=a['lines'][line['line']]['text']))
+    return sorted(cues,key=lambda c:c.start)
 
 
 def normalize_clips(project,folder,settings):
@@ -337,17 +442,28 @@ def normalize_clips(project,folder,settings):
 def mix(project,folder,settings,job_id=None,segments=None):
     a=arrange(project,segments if segments is not None else transcribe(project),settings,job_id or '00000000-0000-4000-8000-000000000000')
     outputs=normalize_clips(project,folder,settings)
+    # Measure the initial mix once; preserve the selected LUFS target without
+    # renormalizing away future edits or the user's master fader on each export.
+    stems={c['id']:folder/'stems'/f"{c['id']}.wav" for c in a['clips']}
+    if stems and all(p.exists() for p in stems.values()):
+        reference=folder/'master-reference';reference.mkdir()
+        render(dict(stems=stems),a,reference,dict(settings,room_tone=dict(enabled=False)),dict(formats=[],subtitles=[],missing_lines='exclude'))
+        result=run(['ffmpeg','-hide_banner','-nostdin','-i',str(reference/'dialogue.wav'),'-af',f"loudnorm=I={settings['master_lufs']}:print_format=json",'-f','null','-'])
+        match=re.search(r'\{[^{}]*"input_i"[^{}]*\}',result.stderr,re.S)
+        if match:
+            measured=float(json.loads(match[0])['input_i'])
+            if math.isfinite(measured):a['master']['reference_gain_db']=max(-60,min(24,settings['master_lufs']-measured))
     path=folder/'arrangement-r1.json'; path.write_text(json.dumps(a,ensure_ascii=False,allow_nan=False)); outputs.append(path)
     report=folder/'report.json'; report.write_text(json.dumps(dict(method='auto-transcribe-v1' if project['manifest'].get('mode')=='transcribe' else 'script-match-v1',note=NOTE,languages=project['languages'],asr=project.get('asr',{'model':'small','device':'cpu-fallback','cost_measurement':'Not measured'}),missing=a['missing'],unplaced=a['unplaced'],matches=a['regions'],low_confidence=[r['id'] for r in a['regions'] if r['confidence']<{'strict':.85,'normal':.7,'loose':.5}[settings['match_strictness']]]),ensure_ascii=False)); outputs.append(report)
     if settings['subtitles']['enabled']:
-        cues=[SimpleNamespace(start=r['start'],end=r['start']+r['src_end']-r['src_start'],text=(a['lines'][r['line']]['speaker']+': ' if a['lines'][r['line']]['speaker'] else '')+a['lines'][r['line']]['text']) for r in a['regions']]
+        cues=arrangement_cues(a)
         outputs+=write_subtitles(cues,folder,settings['subtitles']['formats'])
     # No preview render until export: the first user-selected render is included.
     return outputs
 
 
 def render(project,a,folder,settings,export):
-    validate_arrangement(a); parts=[]; solo=any(l['solo'] for l in a['lanes']); lanes={l['id']:l for l in a['lanes']}
+    a=validate_arrangement(a); parts=[]; solo=any(l['solo'] for l in a['lanes']); lanes={l['id']:l for l in a['lanes']}
     seconds=a['duration']
     # Stream dialogue in half-second blocks. Never materialize one delayed multi-hour
     # WAV per region (200 clips can otherwise create terabytes of silent files).
@@ -355,7 +471,7 @@ def render(project,a,folder,settings,export):
     import soundfile as sf
     from contextlib import ExitStack
     dialogue=folder/'dialogue.wav'
-    audible=[r for r in a['regions'] if not lanes[r['lane']]['mute'] and (not solo or lanes[r['lane']]['solo'])]
+    audible=[r for r in a['regions'] if not r.get('mute',False) and not lanes[r['lane']]['mute'] and (not solo or lanes[r['lane']]['solo'])]
     with ExitStack() as stack:
         inputs={}
         for clip,path in project['stems'].items():
@@ -363,6 +479,18 @@ def render(project,a,folder,settings,export):
             if probe.samplerate!=48000 or probe.channels!=2:
                 normalized=folder/f'decode-{clip}.wav'; ffmpeg(path,normalized); path=normalized
             inputs[clip]=stack.enter_context(sf.SoundFile(path))
+        for c in a['derived_clips']:
+            # Never let an arrangement ID become a filesystem path.
+            path=folder/f"bounce-{len(inputs)}.wav"
+            source=inputs[c['source']]
+            with sf.SoundFile(path,'w',samplerate=48000,channels=2,format='RF64',subtype='FLOAT') as dst:
+                total=round(c['duration']*48000)
+                for offset in range(0,total,24000):
+                    count=min(24000,total-offset);source.seek(round(c['src_start']*48000)+offset)
+                    samples=source.read(count,dtype='float32',always_2d=True)
+                    envelope=fade_envelope(dict(c,src_start=0,src_end=c['duration']), (np.arange(len(samples))+offset)/48000)
+                    dst.write(samples*(10**(c['gain_db']/20)*envelope[:,None]))
+            inputs[c['id']]=stack.enter_context(sf.SoundFile(path))
         out=stack.enter_context(sf.SoundFile(dialogue,mode='w',samplerate=48000,channels=2,format='RF64',subtype='FLOAT'))
         total=round(seconds*48000); blocksize=24000
         spans=[(round(r['start']*48000),round((r['start']+r['src_end']-r['src_start'])*48000),r) for r in audible]
@@ -371,10 +499,17 @@ def render(project,a,folder,settings,export):
             for start,end,r in spans:
                 left=max(offset,start); right=min(offset+count,end)
                 if right<=left: continue
-                source=inputs[r['clip']]; source.seek(max(0,round(r['src_start']*48000)+left-start))
+                source=inputs[r['clip']];source_at=max(0,round(r['src_start']*48000)+left-start)
+                if source_at>=len(source): continue
+                source.seek(source_at)
                 samples=source.read(right-left,dtype='float32',always_2d=True)
                 gain=10**((r['gain_db']+lanes[r['lane']]['gain_db'])/20)
-                block[left-offset:left-offset+len(samples)]+=samples*gain
+                positions=(np.arange(len(samples))+left-start)/48000
+                envelope=fade_envelope(r,positions)
+                pan=np.asarray(pan_gains(lanes[r['lane']].get('pan',0)))
+                if a.get('pan_law')=='legacy':pan=np.minimum(1,pan*math.sqrt(2))
+                master_gain=10**((a['master'].get('gain_db',0)+a['master'].get('reference_gain_db',0))/20)
+                block[left-offset:left-offset+len(samples)]+=samples*(gain*master_gain*envelope[:,None]*pan)
             out.write(block)
     parts.append(dialogue)
     activity='+'.join(f"between(t,{r['start']},{r['start']+r['src_end']-r['src_start']})" for r in a['regions'] if not lanes[r['lane']]['mute'] and (not solo or lanes[r['lane']]['solo'])) or '0'
@@ -397,12 +532,12 @@ def render(project,a,folder,settings,export):
         graph=''.join(f'[{i}:a]' for i in range(len(parts)))+f'amix=inputs={len(parts)}:normalize=0,apad=whole_dur={seconds},atrim=duration={seconds}[out]'
         run(args+['-filter_complex',graph,'-map','[out]','-ar','48000','-ac','2','-c:a','pcm_s24le',str(raw)])
     else: run(['ffmpeg','-v','error','-y','-f','lavfi','-i','anullsrc=r=48000:cl=stereo','-t',str(seconds),str(raw)])
-    work=folder/'master';work.mkdir(); final=master(raw,work,{'eq':{'enabled':False},'compressor':{'enabled':False},'limiter':{'enabled':False},'loudness':{'enabled':True,'lufs':settings['master_lufs']}})[0]; outputs=[]
+    work=folder/'master';work.mkdir(); final=raw if not a.get('legacy_mastering',False) else master(raw,work,{'eq':{'enabled':False},'compressor':{'enabled':False},'limiter':{'enabled':False},'loudness':{'enabled':True,'lufs':settings['master_lufs']}})[0]; outputs=[]
     for fmt in export['formats']:
         options=export[fmt];dest=folder/f'studio-mix.{fmt}'
         codec=['-c:a','libmp3lame','-b:a',f"{options['bitrate_kbps']}k"] if fmt=='mp3' else ['-c:a',{16:'pcm_s16le',24:'pcm_s24le','32f':'pcm_f32le'}[options['bit_depth']]]
         run(['ffmpeg','-v','error','-y','-i',str(final),'-t',str(seconds),'-ar',str(options['sample_rate'])]+codec+(['-rf64','auto'] if fmt=='wav' else [])+[str(dest)]);outputs.append(dest)
-    cues=[SimpleNamespace(start=r['start'],end=r['start']+r['src_end']-r['src_start'],text=a['lines'][r['line']]['text']) for r in a['regions']]
+    cues=arrangement_cues(a)
     if export['missing_lines']=='mark': cues += [SimpleNamespace(start=m['start'],end=m['start']+m['length'],text='[Missing line] '+m['text']) for m in a['missing']]
     return outputs+write_subtitles(sorted(cues,key=lambda c:c.start),folder,export['subtitles'])
 

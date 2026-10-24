@@ -192,6 +192,16 @@ def video_proxy_command(source, target):
     ]
 
 
+def write_peaks(source,target):
+    import numpy as np
+    import soundfile as sf
+    values=[]
+    with sf.SoundFile(source) as f:
+        for block in f.blocks(blocksize=max(1,f.samplerate//100),dtype='float32',always_2d=True):
+            mono=block.mean(axis=1);values.append([int(np.clip(mono.min()*127,-128,127)),int(np.clip(mono.max()*127,-128,127))])
+    target.write_text(json.dumps(dict(rate=100,peaks=values),separators=(',',':')))
+
+
 def build_mix(project, folder, settings):
     # Clean each input with the same pipeline used by /cleanup.
     tracks = []
@@ -203,7 +213,11 @@ def build_mix(project, folder, settings):
     ):
         work = folder / f"cleanup-{i}"
         work.mkdir()
-        tracks.append(clean(path, work, settings["cleanup"])[0])
+        cleaned=clean(path,work,settings['cleanup'])[0]
+        import shutil
+        stem=folder/f'podcast-clip-{i}.wav';shutil.copyfile(cleaned,stem)
+        tracks.append(stem);outputs.append(stem)
+        peak=folder/f'podcast-clip-{i}-peaks.json';write_peaks(stem,peak);outputs.append(peak)
         offset = cursor if settings["mode"] == "sequential" else item["offset"]
         preview = None
         if Path(item["file"]).suffix[1:] in VIDEO:
@@ -217,6 +231,7 @@ def build_mix(project, folder, settings):
                 offset=offset,
                 duration=d,
                 proxy_file=preview.name if preview else None,
+                audio_file=stem.name,peaks_file=peak.name,
             )
         )
         cursor += d
@@ -531,7 +546,7 @@ def cuts(edits):
 def validate_edits(edits, transcript, seconds):
     if (
         not isinstance(edits, dict)
-        or set(edits) != {"operations", "corrections", "speaker_names"}
+        or set(edits)-{"timeline"} != {"operations", "corrections", "speaker_names"}
         or len(edits["operations"]) > 2000
         or len(json.dumps(edits).encode()) > 4 * 1024 * 1024
     ):
@@ -572,6 +587,10 @@ def validate_edits(edits, transcript, seconds):
         for k, v in edits["speaker_names"].items()
     ):
         raise ValueError("Invalid speakers")
+    if 'timeline' in edits:
+        from workers.studio_audio import validate_arrangement
+        timeline=validate_arrangement(edits['timeline'])
+        if any((c['id']=='source' and abs(c['duration']-seconds)>.001) or (c['id']!='source' and not re.fullmatch(r'c\d{1,3}',c['id'])) for c in timeline['clips']):raise ValueError('Invalid podcast source')
     return edits
 
 
@@ -630,11 +649,68 @@ def edited_words(transcript, edits):
     ]
 
 
-def render(source, folder, transcript, edits, settings, seconds):
+def local_edits(edits,offset,seconds):
+    operations=[]
+    for o in edits['operations']:
+        if o['op']=='insert':
+            if offset<=o['at']<=offset+seconds:operations.append(dict(o,at=o['at']-offset))
+        else:
+            a=max(0,o['start']-offset);b=min(seconds,o['end']-offset)
+            if b>a:operations.append(dict(o,start=a,end=b))
+    return dict(operations=operations,corrections={},speaker_names={})
+
+
+def timeline_words(transcript,edits,rendered):
+    if not edits.get('timeline'):return edited_words(transcript,edits)
+    original=edits['timeline'];clips={c['id']:c for c in original['clips']};regions={r['id']:r for r in rendered['regions']};words=[]
+    removed=cuts(edits)
+    for i,w in enumerate(transcript['words']):
+        if any(w['start']<b and w['end']>a for a,b in removed):continue
+        for r in original['regions']:
+            c=clips.get(r['clip']);target=regions.get(r['id'])
+            if not c or not target:continue
+            offset=c.get('offset',0);start=w['start']-offset;end=w['end']-offset
+            if end<=r['src_start'] or start>=r['src_end']:continue
+            e=edits if c['id']=='source' else local_edits(edits,offset,c['duration'])
+            a=target['start']+remap(max(start,r['src_start']),e)-target['src_start'];b=target['start']+remap(min(end,r['src_end']),e,False)-target['src_start']
+            if b>a:words.append(dict(w,w=edits['corrections'].get(str(i),w['w']),start=a,end=b))
+    return sorted(words,key=lambda w:w['start'])
+
+
+def render_clip_timeline(folder,transcript,edits,settings,clip_sources):
+    import copy
+    from workers.studio_audio import render as render_timeline
+    a=copy.deepcopy(edits['timeline']);local={};stems={}
+    for c in a['clips']:
+        if c['id'] not in clip_sources:raise ValueError('Source clip unavailable')
+        e=local_edits(edits,c.get('offset',0),c['duration']);local[c['id']]=e
+        if remap(c['duration'],e)<=0:
+            stems[c['id']]=clip_sources[c['id']];c['duration']=.001;continue
+        work=folder/f"clip-{len(stems)}";work.mkdir()
+        render(clip_sources[c['id']],work,transcript,e,dict(settings,formats=[],subtitles=[]),c['duration'])
+        stems[c['id']]=work/'podcast-edited.wav';c['duration']=remap(c['duration'],e)
+    a['duration']=remap(a['duration'],edits)
+    a['regions']=[dict(r,src_start=remap(r['src_start'],local.get(r['clip'],edits)),src_end=remap(r['src_end'],local.get(r['clip'],edits),False),start=remap(r['start'],edits)) for r in a['regions'] if remap(r['src_end'],local.get(r['clip'],edits),False)>remap(r['src_start'],local.get(r['clip'],edits))]
+    a['loop']=dict(a['loop'],start=min(a['duration']-.001,remap(a['loop']['start'],edits)),end=remap(a['loop']['end'],edits))
+    a['markers']=[dict(m,time=remap(m['time'],edits)) for m in a['markers']]
+    paths=render_timeline(dict(stems=stems),a,folder,dict(room_tone=dict(enabled=False),master_lufs=-16),dict(settings,subtitles=[],missing_lines='exclude'))
+    outputs=[]
+    for path in paths:
+        renamed=folder/path.name.replace('studio-mix','podcast');path.rename(renamed);outputs.append(renamed)
+    words=timeline_words(transcript,edits,a)
+    names={s['id']:edits['speaker_names'].get(s['id'],s['name']) for s in transcript['speakers']}
+    outputs+=write_subtitles([SimpleNamespace(start=w['start'],end=w['end'],text=(names[w['speaker']]+': ' if settings.get('speaker_labels') else '')+w['w']) for w in words],folder,settings['subtitles'])
+    report=folder/'edited-transcript.json';report.write_text(json.dumps(dict(speakers=[dict(id=k,name=v) for k,v in names.items()],words=words),ensure_ascii=False));outputs.append(report)
+    return outputs
+
+
+def render(source, folder, transcript, edits, settings, seconds, clip_sources=None):
     import numpy as np
     import soundfile as sf
 
     validate_edits(edits, transcript, seconds)
+    if edits.get('timeline') and any(c['id']!='source' for c in edits['timeline']['clips']):
+        return render_clip_timeline(folder,transcript,edits,settings,clip_sources or {})
     plan, length = spans(seconds, edits)
     if not 0 < length <= 14400:
         raise ValueError("Invalid output duration")
@@ -699,6 +775,19 @@ def render(source, folder, transcript, edits, settings, seconds):
                                 block * (1 - weight[:, None]) + edge * weight[:, None]
                             )
                 dst.write(block)
+    if 'timeline' in edits:
+        from workers.studio_audio import validate_arrangement,render as render_timeline
+        import copy
+        a=copy.deepcopy(edits['timeline']);a['duration']=remap(a['duration'],edits)
+        a['clips']=[dict(id='source',name='Podcast source',duration=max(.001,length))]
+        a['regions']=[dict(r,src_start=remap(r['src_start'],edits),src_end=remap(r['src_end'],edits,False),start=remap(r['start'],edits)) for r in a['regions'] if remap(r['src_end'],edits,False)>remap(r['src_start'],edits)]
+        a['loop']=dict(a['loop'],start=remap(a['loop']['start'],edits),end=remap(a['loop']['end'],edits))
+        a['markers']=[dict(m,time=remap(m['time'],edits)) for m in a['markers']]
+        timeline_folder=folder/'timeline';timeline_folder.mkdir()
+        # v2 timeline does not renormalize the mix after faders/fades.
+        paths=render_timeline(dict(stems={'source':raw}),a,timeline_folder,dict(has_bed=False,room_tone=dict(enabled=False),master_lufs=-16),dict(settings,subtitles=[],missing_lines='exclude'))
+        # Reuse encoding paths below without a second encode.
+        raw=timeline_folder/'dialogue.wav'
     outputs = []
     for fmt in settings["formats"]:
         option = settings[fmt]
@@ -729,7 +818,7 @@ def render(source, folder, transcript, edits, settings, seconds):
             + [str(dest)]
         )
         outputs.append(dest)
-    words = edited_words(transcript, edits)
+    words = timeline_words(transcript,edits,a) if edits.get('timeline') else edited_words(transcript, edits)
     names = {
         s["id"]: edits["speaker_names"].get(s["id"], s["name"])
         for s in transcript["speakers"]

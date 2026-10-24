@@ -144,7 +144,7 @@ export function withDefaults(type: string, partial: unknown): unknown {
 }
 export const DEFAULT_HELP = {
   studio:
-    "Blank settings use: gap 300 ms, normal matching, dialogue −18 LUFS, master −16 LUFS, room tone off, subtitles off; with a bed: 12 dB ducking, trim. Enabled room tone defaults to 60%; enabled subtitles to SRT.",
+    "Blank settings use: whole clips, gap 300 ms, normal matching, dialogue −18 LUFS, master −16 LUFS, room tone off, subtitles off; with a bed: 12 dB ducking, trim. Enabled room tone defaults to 60%; enabled subtitles to SRT.",
   clean:
     "With no stages selected: speech noise removal 60%, hum 30%, reverb off, voice on. Enabled stages with blank amounts use 60%; noise method defaults to speech.",
   master:

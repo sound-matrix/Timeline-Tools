@@ -11,7 +11,8 @@
       },
       "subtitles": {
         "enabled": false
-      }
+      },
+      "region_mode": "whole_clip"
     },
     "clean": {
       "noise": {

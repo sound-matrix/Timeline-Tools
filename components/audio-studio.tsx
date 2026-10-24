@@ -418,6 +418,17 @@ export default function AudioStudio({
               <p className="eyebrow">02 · YOUR ARRANGEMENT</p>
               <h3>Choose your settings</h3>
               <div className="studio-options-grid">
+                <label>
+                  Clip placement
+                  <select
+                    value={String(choices.regionMode ?? "")}
+                    onChange={(e) => update("regionMode", e.target.value)}
+                  >
+                    <option value="">Whole clips (default)</option>
+                    <option value="whole_clip">Whole clips</option>
+                    <option value="split_by_line">Split by line</option>
+                  </select>
+                </label>
                 {number("Line gap (ms)", "lineGap", 0, 5000)}
                 {select("Match strictness", "matchStrictness", [
                   "strict",
