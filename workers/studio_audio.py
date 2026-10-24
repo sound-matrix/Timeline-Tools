@@ -4,6 +4,7 @@ No guide is read, no time stretching. ASR models are lazy-loaded and test-inject
 """
 import json
 import math
+from numbers import Real
 import re
 import unicodedata
 import zipfile
@@ -163,18 +164,25 @@ def detect_language(path, regions, folder, index):
     _,info=model().transcribe(str(out),vad_filter=True,beam_size=1)
     return info.language,float(info.language_probability)
 
-def prepare(source,folder,settings=None,detector=None):
+def prepare(source,folder,settings=None,detector=None,on_step=None):
+    def step(name):
+        if on_step is not None: on_step(name)
+    step('studio_unpack')
     assets=folder/'assets'; m,lines=unpack(source,assets)
     names=[c['file'] for c in m['clips']]+([m['bed']] if m['bed'] else [])
+    step('studio_probe')
     durations={n:duration(assets/n) for n in names}
     if max(durations.values())>3600 or sum(durations.values())>7200: raise ValueError('60 minutes per file / 120 minutes combined')
+    step('studio_decode')
     regions={n:speech_regions(assets/n,durations[n]) for n in names}
+    step('studio_language_gate')
     lang=script_language(' '.join(l['text'] for l in lines)); languages=[]
     for i,c in enumerate(m['clips']):
         code,prob=(detector or detect_language)(assets/c['file'],regions[c['file']][0],folder,i)
         languages.append(dict(name=c['name'],lang=code,prob=prob,uncertain=prob<.5))
     detail=dict(script_lang=lang,clips=languages)
     if any(c['prob']>=.5 and c['lang']!=lang for c in languages): raise LanguageMismatch(detail)
+    step('studio_plan')
     gap=(settings or {}).get('line_gap_ms',0)/1000
     seconds=sum(b-a for c in m['clips'] for a,b in regions[c['file']][0])+max(0,len(lines)-1)*gap
     # Reserve missing-line silence in the estimate, preventing later underfunded processing.
@@ -199,9 +207,9 @@ def transcribe(project,device='cpu'):
             if group: groups.append(group)
             if groups:
                 for g in groups:
-                    if g[-1].end>g[0].start: result.append(dict(clip=f'c{i}',src_start=g[0].start,src_end=g[-1].end,text=''.join(w.word for w in g).strip(),speaker=c.get('speaker',''),name=c['name']))
+                    if g[-1].end>g[0].start: result.append(dict(clip=f'c{i}',src_start=round(float(g[0].start),6),src_end=round(float(g[-1].end),6),text=''.join(w.word for w in g).strip(),speaker=c.get('speaker',''),name=c['name']))
             elif segment.end>segment.start:
-                result.append(dict(clip=f'c{i}',src_start=segment.start,src_end=segment.end,text=segment.text.strip(),speaker=c.get('speaker',''),name=c['name']))
+                result.append(dict(clip=f'c{i}',src_start=round(float(segment.start),6),src_end=round(float(segment.end),6),text=segment.text.strip(),speaker=c.get('speaker',''),name=c['name']))
     return result
 
 
@@ -273,14 +281,23 @@ def arrange(project,segments,settings,job_id):
     return a
 
 def validate_arrangement(a):
+    def real(value):
+        # Preserve numeric-only validation; bool and numeric strings are not times.
+        if isinstance(value,bool) or not isinstance(value,Real): raise ValueError('Invalid region')
+        value=float(value)
+        if not isinstance(value,(int,float)) or not math.isfinite(value): raise ValueError('Invalid region')
+        return value
+    a['duration']=real(a['duration'])
+    for r in a['regions']:
+        for key in ('src_start','src_end','start','gain_db'): r[key]=real(r[key])
+    for lane in a['lanes']: lane['gain_db']=real(lane['gain_db'])
     if a.get('version')!=1 or len(json.dumps(a,ensure_ascii=False).encode())>524288 or not 0<a['duration']<=14400: raise ValueError('Invalid arrangement')
     clips={c['id']:c['duration'] for c in a['clips']}; lanes={l['id'] for l in a['lanes']}
     if len(a['regions'])>2000 or sum(r['src_end']-r['src_start'] for r in a['regions'])>14400: raise ValueError('Arrangement render budget exceeded')
     for r in a['regions']:
-        values=[r[k] for k in ('src_start','src_end','start','gain_db')]
-        if any(type(v) not in (int,float) or not math.isfinite(v) for v in values) or not 0<=r['src_start']<r['src_end']<=clips.get(r['clip'],0)+.001 or r['lane'] not in lanes or not -60<=r['gain_db']<=24 or r['start']<0 or r['start']+r['src_end']-r['src_start']>a['duration']+.001: raise ValueError('Invalid region')
+        if not 0<=r['src_start']<r['src_end']<=clips.get(r['clip'],0)+.001 or r['lane'] not in lanes or not -60<=r['gain_db']<=24 or r['start']<0 or r['start']+r['src_end']-r['src_start']>a['duration']+.001: raise ValueError('Invalid region')
     for l in a['lanes']:
-        if type(l['gain_db']) not in (int,float) or not -60<=l['gain_db']<=24 or type(l['mute']) is not bool or type(l['solo']) is not bool: raise ValueError('Invalid lane')
+        if not -60<=l['gain_db']<=24 or type(l['mute']) is not bool or type(l['solo']) is not bool: raise ValueError('Invalid lane')
     return a
 
 

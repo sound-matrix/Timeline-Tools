@@ -123,3 +123,83 @@ class Pipeline(unittest.TestCase):
  def test_real_tiny_asr(self):
   from workers.studio_audio import model
   segments,info=model(size='tiny').transcribe(str(self.clip),vad_filter=True);list(segments);self.assertTrue(info.language)
+
+class AsrCompatibility(unittest.TestCase):
+ def test_requirements_pin_pyav_compatible_with_faster_whisper(self):
+  requirements=(Path(__file__).resolve().parents[1]/'requirements.txt').read_text().splitlines()
+  self.assertIn('av==18.1.0',requirements)
+  try:
+   from faster_whisper.audio import decode_audio
+  except ImportError:
+   return  # The exact pin is checked even in a dependency-light environment.
+  if not shutil.which('ffmpeg'): return
+  with tempfile.TemporaryDirectory() as tmp:
+   mp3=Path(tmp)/'sample.mp3'
+   subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:sample_rate=44100:duration=1','-ac','1',str(mp3)],check=True)
+   samples=decode_audio(str(mp3))
+   self.assertGreater(len(samples),0)
+
+ def test_numpy_asr_times_accepted(self):
+  import numpy as np
+  from workers.studio_audio import mix
+  p=project('Meera: hello wonderful world')
+  p['languages']={'script_lang':'en','clips':[]}
+  segments=[segment('c0','hello wonderful world',np.float64(.1),np.float64(1.3))]
+  a=arrange(p,segments,settings(),ID)
+  for key in ('src_start','src_end','start','gain_db'):
+   self.assertIs(type(a['regions'][0][key]),float,key)
+  # The validator also accepts real scalar values directly, without accepting bool/strings.
+  a['regions'][0]['src_start']=np.float32(.1)
+  validate_arrangement(a)
+  self.assertIs(type(a['regions'][0]['src_start']),float)
+  for invalid in (True,'0',float('nan'),float('inf')):
+   bad=copy.deepcopy(a);bad['regions'][0]['src_start']=invalid
+   with self.assertRaises(ValueError):validate_arrangement(bad)
+  with tempfile.TemporaryDirectory() as tmp,patch('workers.studio_audio.normalize_clips',return_value=[]):
+   outputs=mix(p,Path(tmp),settings(),ID,segments)
+   saved=json.loads(next(p for p in outputs if p.name=='arrangement-r1.json').read_text())
+   self.assertAlmostEqual(saved['regions'][0]['src_start'],.1)
+
+ def test_transcribe_casts_word_and_segment_times(self):
+  import numpy as np
+  from types import SimpleNamespace
+  from workers.studio_audio import transcribe
+  p=project('Meera: hello');p.update(assets=Path('/unused'),languages={'script_lang':'en'})
+  p['manifest']['clips']=p['manifest']['clips'][:1]
+  for words in ([SimpleNamespace(start=np.float64(.123456789),end=np.float64(1.23456789),word=' hello.')],None):
+   raw=SimpleNamespace(start=np.float64(.123456789),end=np.float64(1.23456789),text='hello',words=words)
+   with patch('workers.studio_audio.model'),patch('faster_whisper.BatchedInferencePipeline') as pipeline:
+    pipeline.return_value.transcribe.return_value=([raw],None)
+    result=transcribe(p)
+   self.assertIs(type(result[0]['src_start']),float)
+   self.assertIs(type(result[0]['src_end']),float)
+   self.assertEqual(result[0]['src_start'],.123457)
+   self.assertEqual(result[0]['src_end'],1.234568)
+
+ def test_unexpected_exception_maps_to_processing_not_invalid_media(self):
+  from workers.timeline_tools_worker import handle_job
+  db=MagicMock();db.rpc.return_value.execute.return_value.data=True
+  job=dict(id=ID,user_id=ID,input_path=ID+'/input.zip',type='studio',settings=settings())
+  with patch('workers.timeline_tools_worker.transfer_input'),patch('workers.studio_audio.prepare',side_effect=TypeError('https://secret.test/private?key=never-log-this')),patch('builtins.print') as log:
+   handle_job(db,job,'worker','https://invalid.test','secret')
+  failed=next(c for c in db.rpc.call_args_list if c.args[0]=='worker_fail')
+  self.assertEqual(failed.args[1]['p_code'],'processing')
+  self.assertNotIn('worker_prepare',[c.args[0] for c in db.rpc.call_args_list])
+  self.assertNotIn('worker_complete',[c.args[0] for c in db.rpc.call_args_list])
+  log.assert_called_once_with(f'job {ID} step=studio_prepare TypeError')
+
+ def test_prepare_step_codes_distinguish_media_and_gate_crashes(self):
+  from workers.timeline_tools_worker import handle_job
+  from workers.audio import MediaError
+  for step,code,exception in [('studio_probe','invalid_media',MediaError()),('studio_decode','invalid_media',MediaError()),('studio_language_gate','processing',TypeError()),('studio_plan','processing',ValueError())]:
+   db=MagicMock();db.rpc.return_value.execute.return_value.data=True
+   job=dict(id=ID,user_id=ID,input_path=ID+'/input.zip',type='studio',settings=settings())
+   def prepare_crash(*args,on_step,**kwargs):
+    on_step(step)
+    raise exception
+   with patch('workers.timeline_tools_worker.transfer_input'),patch('workers.studio_audio.prepare',side_effect=prepare_crash),patch('builtins.print') as log:
+    handle_job(db,job,'worker','https://invalid.test','secret')
+   failed=next(c for c in db.rpc.call_args_list if c.args[0]=='worker_fail')
+   self.assertEqual(failed.args[1]['p_code'],code,step)
+   self.assertNotIn('worker_prepare',[c.args[0] for c in db.rpc.call_args_list])
+   log.assert_called_once_with(f'job {ID} step={step} {type(exception).__name__}')

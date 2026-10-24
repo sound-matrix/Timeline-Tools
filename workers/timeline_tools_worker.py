@@ -52,7 +52,17 @@ def handle_job(db, job, worker_id, url, key):
     paths = []
     committed = False
     completion_attempted = False
-    code = 'processing'
+    code = 'invalid_settings'
+    step = 'validate_settings'
+    def at(name, failure_code='processing'):
+        nonlocal step, code
+        step, code = name, failure_code
+    def studio_step(name):
+        at(name, 'invalid_media' if name in ('studio_probe','studio_decode') else
+           'invalid_settings' if name == 'studio_unpack' else 'processing')
+    def log_failure(error, failed_step=None):
+        # Never log exception messages/tracebacks: they may contain URLs or keys.
+        print(f'job {job_id} step={failed_step or step} {type(error).__name__}')
     try:
         if job['type'] == 'studio_export':
             from workers.studio_export import validate_export
@@ -73,36 +83,43 @@ def handle_job(db, job, worker_id, url, key):
         with tempfile.TemporaryDirectory(prefix='timeline-') as directory:
             folder = Path(directory)
             source = folder / ('input' + Path(parts[1]).suffix)
-            code = 'storage'
+            at('input_transfer','storage')
             transfer_input(url, key, input_path, source)
-            code = 'invalid_media'
+            at('studio_prepare')
             project = None
             if job['type'] == 'studio':
                 from workers.studio_audio import prepare
                 if source.suffix != '.zip':
                     raise ValueError('Studio requires a ZIP bundle')
-                project = prepare(source, folder, job['settings'])
+                project = prepare(source, folder, job['settings'], on_step=studio_step)
                 seconds = project['seconds']  # Derived VAD speech + chosen gaps, after language gate.
             elif parent is not None:
                 from workers.studio_audio import validate_arrangement
+                at('validate_arrangement')
                 arrangement = validate_arrangement(job['arrangement_snapshot'])
                 seconds = arrangement['duration']
             else:
+                at('probe','invalid_media')
                 seconds = duration(source)
+            at('worker_prepare')
             if not db.rpc('worker_prepare', {'p_job_id': job_id, 'p_worker_id': worker_id, 'p_duration': seconds}).execute().data:
                 return
-            code = 'processing'
+            at('processing')
             if project is not None:
                 from workers.studio_audio import mix
                 try:
+                    at('asr_gpu')
                     result = studio_asr.remote(url, key, input_path, project['languages']['script_lang'])
                     if isinstance(result,dict):
                         segments=result['segments']; project['asr']=result['metrics']
                     else:
                         segments=result
-                except Exception:
+                except Exception as error:
+                    log_failure(error)
+                    at('asr_cpu')
                     from workers.studio_audio import transcribe
                     segments = transcribe(project)  # CPU fallback, same cached small model.
+                at('studio_match_arrange_mix')
                 outputs = mix(project, folder, job['settings'], job_id, segments)
             elif parent is not None:
                 from workers.studio_audio import unpack, render
@@ -112,25 +129,30 @@ def handle_job(db, job, worker_id, url, key):
                     path = f"{expected}/{parent['id']}/stems/{clip['id']}.wav"
                     if path not in parent['output_paths']: raise ValueError('Unknown clip')
                     dest = folder/f"{clip['id']}.wav"
+                    at('stem_transfer','storage')
                     transfer_stem(url,key,path,dest)
                     stems[clip['id']] = dest
+                at('studio_export_render')
                 outputs = render(dict(stems=stems,bed=folder/'assets'/manifest['bed'] if manifest['bed'] else None),arrangement,folder,parent['settings'],job['settings'])
             else:
                 outputs = process(source, folder, job['type'], job['settings'])
-            code = 'storage'
+            at('output_transfer','storage')
             for output in outputs:
                 path = f'{expected}/{job_id}/{output.relative_to(folder).as_posix()}'
                 paths.append(path)  # Also clean up a partially transferred object on failure.
                 transfer_output(url, key, path, output)
             if project is not None:
+                at('save_arrangement')
                 import json
                 a = json.loads((folder/'arrangement-r1.json').read_text())
                 db.table('jobs').update(dict(duration_sec=min(seconds,a['duration']))).eq('id',job_id).eq('worker_id',worker_id).eq('status','processing').execute()
                 db.table('studio_arrangements').insert(dict(job_id=job_id,user_id=expected,revision=1,arrangement=a,arrangement_path=f'{expected}/{job_id}/arrangement-r1.json')).execute()
                 db.table('jobs').update(dict(peaks_paths=[p for p in paths if '/peaks/' in p])).eq('id',job_id).eq('worker_id',worker_id).execute()
+            at('worker_complete')
             completion_attempted = True
             committed = bool(db.rpc('worker_complete', {'p_job_id': job_id, 'p_worker_id': worker_id, 'p_outputs': paths}).execute().data)
     except ValueError as error:
+        log_failure(error)
         from workers.studio_audio import LanguageMismatch
         if isinstance(error,LanguageMismatch):
             code='language_mismatch'
@@ -138,13 +160,10 @@ def handle_job(db, job, worker_id, url, key):
             import json
             while len(json.dumps(detail).encode())>8192: detail['clips'].pop()
             db.table('jobs').update(dict(error_code=code,error_detail=detail)).eq('id',job_id).eq('worker_id',worker_id).eq('status','processing').execute()
-        else:
-            code = 'invalid_settings'
-    except MediaError:
-        pass
-    except Exception:
-        # Do not print exception strings: HTTP errors can include keys/signed URLs.
-        pass
+    except MediaError as error:
+        log_failure(error)
+    except Exception as error:
+        log_failure(error)
     finally:
         if not committed:
             # If completion's response was lost, verify state before deleting outputs.
@@ -155,19 +174,20 @@ def handle_job(db, job, worker_id, url, key):
                     state = db.table('jobs').select('status').eq('id', job_id).single().execute().data
                     committed = state['status'] == 'done'
                     safe_to_remove = state['status'] == 'failed'
-                except Exception:
+                except Exception as error:
+                    log_failure(error,'completion_check')
                     safe_to_remove = False
             if not committed:
                 try:
                     failed = db.rpc('worker_fail', {'p_job_id': job_id, 'p_worker_id': worker_id, 'p_code': code}).execute().data
                     safe_to_remove = safe_to_remove or bool(failed)
-                except Exception:
-                    pass
+                except Exception as error:
+                    log_failure(error,'worker_fail')
                 if paths and safe_to_remove:
                     try:
                         db.storage.from_('outputs').remove(paths)
-                    except Exception:
-                        pass  # Private orphan objects can be removed by operator.
+                    except Exception as error:
+                        log_failure(error,'output_cleanup')  # Private orphans remain for operator.
 
 
 def transfer_stem(url,key,path,target):
