@@ -522,10 +522,20 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
     .toBeCloseTo(2.4, 2);
+  await video.evaluate((v: HTMLVideoElement) => {
+    (window as any).__previewStarted = false;
+    v.addEventListener(
+      "playing",
+      () => {
+        (window as any).__previewStarted = true;
+      },
+      { once: true },
+    );
+  });
   await page.getByRole("button", { name: "Play", exact: true }).click();
   await expect
-    .poll(() => video.evaluate((v: HTMLVideoElement) => v.paused))
-    .toBe(false);
+    .poll(() => page.evaluate(() => (window as any).__previewStarted))
+    .toBe(true);
   await expect
     .poll(() => page.evaluate(() => (window as any).__audioStarts[0]?.offset))
     .toBeCloseTo(1.4, 2);
@@ -616,6 +626,8 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       "resume after silence",
       () => outputAt(performance.now()) >= 3.4 && !v.paused && !v.seeking,
     );
+    const transitionSamples = [...samples],
+      transitionClockSamples = [...clockSamples];
     // Include sustained playback after the two discontinuities, not just their recovery frames.
     await waitFor(
       "sustained playback",
@@ -626,6 +638,8 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       samples,
       clockSamples,
       frames,
+      transitionSamples,
+      transitionClockSamples,
       held,
       resumed: !v.paused,
       timestamp: start.context.getOutputTimestamp?.(),
@@ -651,6 +665,10 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
   // CI WebKit's foreign time origin cannot support an exact compositor/device-clock comparison.
   // Keep one-frame media-clock alignment; 200 ms is measured CI p95 (158.6 ms) plus 25% headroom.
   const decodedBudget = ciPresentationAllowance ? 0.2 : 1 / 15;
+  const percentile = (values: number[]) =>
+    values.toSorted((a, b) => a - b)[Math.floor(values.length * 0.95)];
+  const transitionP95 = percentile(result.transitionSamples),
+    transitionClockP95 = percentile(result.transitionClockSamples);
   console.log(
     "EDITOR_VIDEO_SYNC",
     JSON.stringify({
@@ -660,6 +678,8 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       ci_invalid_timestamp_allowance: ciPresentationAllowance,
       samples: sorted.length,
       p95_seconds: p95,
+      transition_p95_seconds: transitionP95,
+      transition_clock_p95_seconds: transitionClockP95,
       max_seconds: sorted.at(-1),
       timestamp: result.timestamp,
       renderTime: result.renderTime,
@@ -681,7 +701,11 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
     contentType: "application/json",
   });
   expect(p95).toBeLessThanOrEqual(decodedBudget);
-  if (ciPresentationAllowance) expect(clockP95).toBeLessThanOrEqual(1 / 15);
+  expect(transitionP95).toBeLessThanOrEqual(decodedBudget);
+  if (ciPresentationAllowance) {
+    expect(clockP95).toBeLessThanOrEqual(1 / 15);
+    expect(transitionClockP95).toBeLessThanOrEqual(1 / 15);
+  }
   await page
     .getByRole("button", { name: "Stop / return", exact: true })
     .click();

@@ -28,9 +28,10 @@ The latter now tests the same balance race with either claimed job identity.
 
 Baseline stress: five runs x 184 tests pass. Revised stress: three serial and
 three parallel runs x 185 tests pass. Full suite after Python isolation: 185 pass. Later playback/clock regression
-coverage brings the suite to 191 passing tests; three parallel 188-test runs
-also passed before the final clock additions. Three concurrent final-suite runs
-then passed 191/191 each (573 passes, zero failures).
+coverage brings the suite to 193 passing tests; three parallel 188-test runs
+also passed before the final clock additions. Three concurrent 191-test runs passed (573 passes, zero failures). After native
+seek-throttling coverage, three concurrent 192-test runs also passed
+(576 passes, zero failures).
 
 ## Browser fixes
 
@@ -78,8 +79,22 @@ than a protocol-created temporary File whose backing object WebKit may invalidat
 when the page reloads. It still interrupts peak generation and verifies the
 IndexedDB journal resumes, saves exactly one region, and exports nonzero audio.
 
-The native preview now corrects drift beyond 33.3 ms immediately, uses continuous
-rate correction for smaller drift, and throttles rate assignments to 50 ms.
+Run 40111259029 then exceeded both budgets (decoded p95 228.33 ms; media clock
+p95 158.56 ms), so increasing the decoded allowance alone was insufficient.
+The follow-up caps continuous native seek corrections at the 15 fps proxy rate,
+lets cut jumps bypass that throttle, and permits only one pending play request.
+It retains small-drift rate correction with 50 ms rate-assignment throttling.
+The browser test retains all transition samples and additionally observes
+sustained playback to output time 5.5 s, persisting every frame sample for review.
+Both the original cut/gap interval and the full interval have separate assertions
+against the same budgets; extending playback cannot dilute a transition failure.
+Run 40111759977 passed the full matrix and five of six no-retry repetitions;
+all started WebKit runs measured decoded p95 158.2–160.1 ms and clock p95
+47.9–51.9 ms. One repetition exposed a start-guard regression: waiting for seeked
+before play could leave WebKit paused/seeking indefinitely. The follow-up permits
+one pending play call during a seek and tests that repeated frames cannot flood
+play requests. The browser startup assertion latches the playing event, rather
+than polling a transient paused=false interval before an inserted gap.
 This CI allowance does not certify released Safari or a target laptop. Their
 strict decoded-frame acceptance remains a pre-release validation requirement.
 

@@ -48,7 +48,8 @@ export function syncVideo(
     video.playbackRate = 1;
     rateUpdates.delete(video);
   }
-  if (playing && video.paused && !video.seeking && !starts.has(video)) {
+  // WebKit may need playback to complete a pending seek. Coalesce starts instead of waiting for seeked.
+  if (playing && video.paused && !starts.has(video)) {
     const pending = video
       .play()
       .catch(() => {})

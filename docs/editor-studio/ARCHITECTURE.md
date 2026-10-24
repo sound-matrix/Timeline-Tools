@@ -79,6 +79,8 @@ Podcast video consumes a mutable source-clock sample on every playback frame;
 React transport labels remain capped at 10 Hz. Paused seeks update the preview,
 running seeks restart the edited audio arrangement at the remapped output time,
 and inserted silence pauses the video on its source frame. Native pending seeks
-settle before another correction; the preview switches media only at clip edges.
+settle before another correction. Continuous drift seeks are limited to the
+15 fps proxy frame rate, large cut jumps bypass the throttle, and only one native
+play request may be pending. The preview switches media only at clip edges.
 
 Validation evidence and remaining acceptance limits belong in VALIDATION.md.

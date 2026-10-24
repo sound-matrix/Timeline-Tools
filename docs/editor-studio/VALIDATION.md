@@ -1,6 +1,6 @@
 # Validation and acceptance boundaries
 
-Current suite: 191 npm tests pass, including deterministic scheduling and Python
+Current suite: 193 npm tests pass, including deterministic scheduling and Python
 parity independent of shell cwd/PYTHONPATH. CI uses Node 22 and Python 3.12; local
 Node 24 also passes typecheck. See CI-NOTES.md for the three-failure reproduction
 and repeated serial/parallel runs. Production builds pass in CI.
@@ -68,7 +68,9 @@ Video/playhead use device presentation time, with reported-latency fallback when
 an engine supplies an invalid timestamp. Future timestamps are rejected even
 when their projection would look plausible. Preview decoding remains native;
 thumbnail caches and stable strip props avoid repeat decode work, and small drift
-uses throttled rate correction. React transport labels update at most 10 Hz.
+uses throttled rate correction. Continuous seek corrections are capped at the
+15 fps proxy rate; cut jumps remain immediate. Only one play request may be
+pending. React transport labels update at most 10 Hz.
 
 The cross-engine test checks paused seeks, audio offsets, live jumps, an inserted
 silence frame hold, resume, stop/return, and decoded-frame PTS against the actual

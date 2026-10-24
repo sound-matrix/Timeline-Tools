@@ -41,7 +41,7 @@ test("clock drift seeks wait for an in-flight seek and inserted silence holds th
   };
   syncVideo(video, 3, true);
   assert.equal(video.currentTime, 1);
-  assert.equal(video.paused, true);
+  assert.equal(video.paused, false);
   video.seeking = false;
   syncVideo(video, 3, true);
   assert.equal(video.currentTime, 3);
@@ -49,6 +49,32 @@ test("clock drift seeks wait for an in-flight seek and inserted silence holds th
   syncVideo(video, 3, false);
   assert.equal(video.currentTime, 3);
   assert.equal(video.paused, true);
+});
+
+test("one native play request can unblock a pending seek without repeated starts", async () => {
+  let finish,
+    calls = 0;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const v = {
+    readyState: 4,
+    duration: 8,
+    currentTime: 2,
+    paused: true,
+    seeking: true,
+    playbackRate: 1,
+    pause() {},
+    play() {
+      calls++;
+      return pending;
+    },
+  };
+  for (let i = 0; i < 20; i++) syncVideo(v, 3, true, i * 16);
+  assert.equal(calls, 1);
+  assert.equal(v.currentTime, 2, "the in-flight seek is preserved");
+  finish();
+  await pending;
 });
 
 test("continuous drift corrections cannot restart native decoding faster than the proxy frame rate", () => {
