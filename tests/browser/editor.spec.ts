@@ -1,5 +1,38 @@
-import { test, expect } from "@playwright/test";
+import { test as base, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+// WebKit's ephemeral sessions cannot persist IDB File/Blob values (upstream
+// microsoft/playwright#42795). A fresh persistent profile models normal Safari.
+const test = base.extend({
+  context: async (
+    {
+      context,
+      browserName,
+      playwright,
+      launchOptions,
+      baseURL,
+      viewport,
+      headless,
+    },
+    use,
+  ) => {
+    if (browserName !== "webkit") {
+      await use(context);
+      return;
+    }
+    const regular = await playwright.webkit.launchPersistentContext("", {
+      ...launchOptions,
+      baseURL,
+      viewport,
+      headless,
+      acceptDownloads: true,
+    });
+    try {
+      await use(regular);
+    } finally {
+      await regular.close();
+    }
+  },
+});
 test.skip(!process.env.DESK_FIXTURE, "Use fixture config");
 test.beforeEach(async ({ page }) => {
   page.on("pageerror", (error) =>
@@ -316,6 +349,50 @@ test("reload during peak generation resumes the original file and saves exactly 
   const bytes = await readFile((await file.path())!);
   expect(bytes.readUInt32LE(40) / (48000 * 6)).toBeCloseTo(2, 3);
   expect(bytes.subarray(44).some((v) => v !== 0)).toBe(true);
+});
+
+test("an interrupted local storage write leaves Editor usable and import can be retried", async ({
+  page,
+  request,
+}) => {
+  await signin(page, request);
+  await page.getByRole("link", { name: "New Editor project" }).click();
+  await expect(page.getByRole("main", { name: "Editor Studio" })).toBeVisible();
+  await page.evaluate(() => {
+    const original = IDBObjectStore.prototype.put;
+    (window as any).__restorePut = () => {
+      IDBObjectStore.prototype.put = original;
+    };
+    IDBObjectStore.prototype.put = function (value, key) {
+      const result = original.call(this, value, key);
+      if (typeof key === "string" && key.startsWith("import-source/"))
+        this.transaction.abort();
+      return result;
+    };
+  });
+  const input = page.getByLabel("Import audio files", { exact: true });
+  const file = {
+    name: "retry.wav",
+    mimeType: "audio/wav",
+    buffer: wave(2, 770),
+  };
+  await input.setInputFiles(file);
+  await expect(page.locator(".editor-upload [role=alert]")).toBeVisible();
+  await expect(page.getByRole("main", { name: "Editor Studio" })).toBeVisible();
+  await expect(
+    page.getByText("Regions (0) · select with keyboard"),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).__restorePut();
+    delete (window as any).__restorePut;
+  });
+  await input.setInputFiles(file);
+  await expect(
+    page.getByText("Regions (1) · select with keyboard"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("status", { name: "Editor save status" }),
+  ).toHaveText("Saved", { timeout: 20000 });
 });
 
 test("twenty independent one-hour PCM sources retain a bounded decoded window cache", async ({
