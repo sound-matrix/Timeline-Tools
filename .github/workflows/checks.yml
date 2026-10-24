@@ -109,6 +109,8 @@ jobs:
           pactl set-default-sink editor_test
       - run: npm run build
       - run: npx playwright test --config=playwright.editor-browsers.config.ts --project=firefox --project=webkit
+      - name: Repeat native video regression without retries
+        run: npx playwright test --config=playwright.editor-browsers.config.ts --project=firefox --project=webkit --grep="Podcast fork preview" --repeat-each=3
       - uses: actions/upload-artifact@v4
         if: always()
         with:

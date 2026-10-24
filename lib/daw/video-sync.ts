@@ -16,7 +16,7 @@ export function syncVideo(
   );
   if (
     !video.seeking &&
-    Math.abs(video.currentTime - target) > (playing ? 0.25 : 0.001)
+    Math.abs(video.currentTime - target) > (playing ? 1 / 30 : 0.001)
   )
     video.currentTime = target;
   if (playing && !video.seeking) {

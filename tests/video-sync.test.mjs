@@ -114,3 +114,18 @@ test("a timestamp from a foreign time origin cannot pin the presentation clock t
   };
   assert.equal(outputClockTime(c, 1000), 3.99);
 });
+
+test("drift beyond the 66.7 ms clock budget is corrected rather than slowly accumulated", () => {
+  const v = {
+    readyState: 4,
+    duration: 8,
+    currentTime: 2,
+    paused: false,
+    seeking: false,
+    playbackRate: 1,
+    pause() {},
+    async play() {},
+  };
+  syncVideo(v, 2.08, true);
+  assert.equal(v.currentTime, 2.08);
+});
