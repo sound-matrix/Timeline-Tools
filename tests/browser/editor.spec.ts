@@ -1,6 +1,12 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 test.skip(!process.env.DESK_FIXTURE, "Use fixture config");
+test.beforeEach(async ({ page }) => {
+  page.on("pageerror", (error) => console.log("EDITOR_PAGE_ERROR", error.stack ?? error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") console.log("EDITOR_CONSOLE_ERROR", message.text());
+  });
+});
 function wave(seconds = 2, frequency = 440) {
   const rate = 48000,
     n = seconds * rate,
