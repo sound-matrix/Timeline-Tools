@@ -129,3 +129,12 @@ test("drift beyond the 66.7 ms clock budget is corrected rather than slowly accu
   syncVideo(v, 2.08, true);
   assert.equal(v.currentTime, 2.08);
 });
+
+test("a future device timestamp is rejected even when its projection looks plausible", () => {
+  const c = {
+    currentTime: 2,
+    baseLatency: 0.01,
+    getOutputTimestamp: () => ({ contextTime: 2.8, performanceTime: 2000 }),
+  };
+  assert.equal(outputClockTime(c, 1200), 1.99);
+});

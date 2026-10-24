@@ -562,23 +562,25 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
           : -1;
       const audioTime =
         projected >= 0 &&
+        stamp.performanceTime <= wall + 100 &&
         projected <= ctx.currentTime + 0.1 &&
         ctx.currentTime - projected <= Math.max(1, latency + 0.25)
           ? projected
           : Math.max(0, ctx.currentTime - latency);
       return Math.max(0.5, audioTime - start.when + 0.5);
     };
-    const waitFor = async (condition: () => boolean) => {
+    const waitFor = async (stage: string, condition: () => boolean) => {
       const deadline = performance.now() + 10000;
       while (!condition()) {
         if (performance.now() >= deadline)
           throw Error(
-            "Audio presentation clock did not reach the required preview state",
+            `Preview ${stage}: ${JSON.stringify({ output: outputAt(performance.now()), time: v.currentTime, paused: v.paused, seeking: v.seeking, ready: v.readyState, connected: v.isConnected })}`,
           );
         await new Promise(requestAnimationFrame);
       }
     };
     await waitFor(
+      "initial presentation",
       () =>
         outputAt(performance.now()) >= 0.7 && !v.seeking && v.readyState >= 2,
     );
@@ -595,12 +597,13 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       v.requestVideoFrameCallback(sample);
     };
     v.requestVideoFrameCallback(sample);
-    await waitFor(() => {
+    await waitFor("inserted silence", () => {
       const output = outputAt(performance.now());
       return output >= 2.2 && output < 2.8 && v.paused && !v.seeking;
     });
     const held = { paused: v.paused, time: v.currentTime };
     await waitFor(
+      "resume after silence",
       () => outputAt(performance.now()) >= 3.4 && !v.paused && !v.seeking,
     );
     stopped = true;

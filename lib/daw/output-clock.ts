@@ -13,7 +13,8 @@ export function outputClockTime(
     Number.isFinite(stamp.contextTime) &&
     stamp.contextTime! > 0 &&
     Number.isFinite(stamp.performanceTime) &&
-    stamp.performanceTime! > 0
+    stamp.performanceTime! > 0 &&
+    stamp.performanceTime! <= wallTime + 100
   ) {
     const projected =
       stamp.contextTime! + (wallTime - stamp.performanceTime!) / 1000;
