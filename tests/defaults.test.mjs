@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { runPython } from "./support/python.mjs";
 import { DEFAULTS, withDefaults } from "../lib/defaults.ts";
 import { processingSettings } from "../lib/processing-form.ts";
 import { jobSchema } from "../lib/settings.ts";
@@ -37,15 +37,13 @@ for (const c of cases)
   });
 test("client and Python apply the identical fixture, including omitted values", () => {
   const input = JSON.stringify(cases);
-  const result = spawnSync(
-    "python",
+  const result = runPython(
     [
       "-c",
       `import sys,json; from workers.defaults import with_defaults,DEFAULTS; cases=json.load(sys.stdin); print(json.dumps({'defaults':DEFAULTS,'cases':[with_defaults(c['type'],c['settings']) for c in cases]}))`,
     ],
     { input, encoding: "utf8" },
   );
-  assert.equal(result.status, 0, result.stderr);
   const actual = JSON.parse(result.stdout);
   assert.deepEqual(actual.defaults, DEFAULTS);
   assert.deepEqual(
