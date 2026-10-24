@@ -520,6 +520,8 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
   const result = await video.evaluate(async (v: HTMLVideoElement) => {
     const start = (window as any).__audioStarts[0],
       samples: number[] = [];
+    // Let frames queued by the preceding rapid seeks drain before measuring playback.
+    await new Promise(r => setTimeout(r, 200));
     let stopped = false;
     const sample = (_now: number, meta: VideoFrameCallbackMetadata) => {
       if (stopped) return;
@@ -533,7 +535,7 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       v.requestVideoFrameCallback(sample);
     };
     v.requestVideoFrameCallback(sample);
-    await new Promise((r) => setTimeout(r, 1800));
+    await new Promise((r) => setTimeout(r, 1600));
     const held = { paused: v.paused, time: v.currentTime };
     await new Promise((r) => setTimeout(r, 1100));
     stopped = true;
