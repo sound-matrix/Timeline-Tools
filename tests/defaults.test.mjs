@@ -100,3 +100,13 @@ test("nested union issues map to the actual cleanup field", async () => {
   assert.equal(parsed.success, false);
   assert.ok(fieldErrors(parsed.error.issues).noiseAmount);
 });
+
+
+test('unknown prototype-shaped keys stay own properties for strict rejection',()=>{
+ const partial=JSON.parse('{"__proto__":{"enabled":true}}');
+ const merged=withDefaults('studio',partial);
+ assert.equal(Object.hasOwn(merged,'__proto__'),true);
+ assert.equal(jobSchema.safeParse({type:'studio',settings:merged}).success,false);
+ assert.doesNotThrow(()=>withDefaults('studio',{constructor:{enabled:true}}));
+ assert.doesNotThrow(()=>withDefaults({toString:null},{}));
+});
