@@ -41,7 +41,7 @@ test("clock drift seeks wait for an in-flight seek and inserted silence holds th
   };
   syncVideo(video, 3, true);
   assert.equal(video.currentTime, 1);
-  assert.equal(video.paused, false);
+  assert.equal(video.paused, true);
   video.seeking = false;
   syncVideo(video, 3, true);
   assert.equal(video.currentTime, 3);
@@ -49,6 +49,31 @@ test("clock drift seeks wait for an in-flight seek and inserted silence holds th
   syncVideo(video, 3, false);
   assert.equal(video.currentTime, 3);
   assert.equal(video.paused, true);
+});
+
+test("continuous drift corrections cannot restart native decoding faster than the proxy frame rate", () => {
+  const video = {
+    readyState: 4,
+    duration: 8,
+    currentTime: 2,
+    paused: false,
+    seeking: false,
+    playbackRate: 1,
+    pause() {},
+    async play() {},
+  };
+  syncVideo(video, 2.04, true, 0);
+  assert.equal(video.currentTime, 2.04);
+  syncVideo(video, 2.08, true, 16);
+  assert.equal(video.currentTime, 2.04);
+  syncVideo(video, 2.12, true, 67);
+  assert.equal(video.currentTime, 2.12);
+  syncVideo(video, 4, true, 68);
+  assert.equal(
+    video.currentTime,
+    4,
+    "a cut jump bypasses the continuous-drift throttle",
+  );
 });
 
 test("small clock drift adjusts native playback rate without restarting decoding", () => {

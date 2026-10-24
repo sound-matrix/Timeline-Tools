@@ -551,7 +551,8 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
   const result = await video.evaluate(async (v: HTMLVideoElement) => {
     const start = (window as any).__audioStarts[0],
       samples: number[] = [],
-      clockSamples: number[] = [];
+      clockSamples: number[] = [],
+      frames: object[] = [];
     const outputAt = (wall: number) => {
       const ctx = start.context,
         stamp = ctx.getOutputTimestamp?.();
@@ -593,6 +594,15 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       if (!v.seeking) {
         samples.push(Math.abs(meta.mediaTime - source));
         clockSamples.push(Math.abs(v.currentTime - source));
+        frames.push({
+          output,
+          source,
+          pts: meta.mediaTime,
+          time: v.currentTime,
+          display: meta.expectedDisplayTime,
+          wall: performance.now(),
+          paused: v.paused,
+        });
       }
       v.requestVideoFrameCallback(sample);
     };
@@ -606,10 +616,16 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       "resume after silence",
       () => outputAt(performance.now()) >= 3.4 && !v.paused && !v.seeking,
     );
+    // Include sustained playback after the two discontinuities, not just their recovery frames.
+    await waitFor(
+      "sustained playback",
+      () => outputAt(performance.now()) >= 5.5 && !v.paused && !v.seeking,
+    );
     stopped = true;
     return {
       samples,
       clockSamples,
+      frames,
       held,
       resumed: !v.paused,
       timestamp: start.context.getOutputTimestamp?.(),
@@ -655,6 +671,11 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
       ],
     }),
   );
+  await writeFile(
+    info.outputPath("editor-video-sync.json"),
+    JSON.stringify(result),
+  );
+  console.log("EDITOR_VIDEO_FRAMES", JSON.stringify(result.frames));
   await info.attach("editor-video-sync.json", {
     body: JSON.stringify(result),
     contentType: "application/json",
