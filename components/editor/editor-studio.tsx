@@ -522,6 +522,13 @@ export default function EditorStudio({
               }));
               void upload(item);
             } catch (e) {
+              const reason =
+                e instanceof Error
+                  ? e.message
+                  : String(
+                      e ??
+                        "Your browser could not save this audio on the device.",
+                    );
               if (!journal.placed)
                 await deleteEntry(journalKey).catch(() => {});
               setUploads((v) =>
@@ -530,12 +537,12 @@ export default function EditorStudio({
                     ? {
                         ...u,
                         status: "Import failed",
-                        error: (e as Error).message,
+                        error: reason,
                       }
                     : u,
                 ),
               );
-              setMessage(`${file.name}: ${(e as Error).message}`);
+              setMessage(`${file.name}: ${reason}`);
             }
           }
         })

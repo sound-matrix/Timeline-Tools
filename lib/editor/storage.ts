@@ -1,4 +1,13 @@
 let database: Promise<IDBDatabase> | undefined;
+function storageError(event: Event, transaction: IDBTransaction) {
+  // Request errors bubble before transaction.error is populated in WebKit.
+  const request = event.target as IDBRequest;
+  return (
+    request.error ??
+    transaction.error ??
+    new Error("Your browser could not save this audio on the device.")
+  );
+}
 function db() {
   return (database ??= new Promise((resolve, reject) => {
     const r = indexedDB.open("timeline-editor-v1", 1);
@@ -24,7 +33,12 @@ export async function putEntry(key: string, value: unknown) {
     const t = d.transaction("entries", "readwrite");
     t.objectStore("entries").put(value, key);
     t.oncomplete = () => resolve();
-    t.onerror = () => reject(t.error);
+    t.onerror = (event) => reject(storageError(event, t));
+    t.onabort = () =>
+      reject(
+        t.error ??
+          new Error("Local audio storage was interrupted. Please try again."),
+      );
   });
 }
 export async function deleteEntry(key: string) {
@@ -33,7 +47,12 @@ export async function deleteEntry(key: string) {
     const t = d.transaction("entries", "readwrite");
     t.objectStore("entries").delete(key);
     t.oncomplete = () => resolve();
-    t.onerror = () => reject(t.error);
+    t.onerror = (event) => reject(storageError(event, t));
+    t.onabort = () =>
+      reject(
+        t.error ??
+          new Error("Local audio storage was interrupted. Please try again."),
+      );
   });
 }
 /** Enumerate only one owner's/project's journal namespace, including original File blobs. */
@@ -55,6 +74,11 @@ export async function localEntries<T>(
       }
     };
     t.oncomplete = () => resolve(values);
-    t.onerror = () => reject(t.error);
+    t.onerror = (event) => reject(storageError(event, t));
+    t.onabort = () =>
+      reject(
+        t.error ??
+          new Error("Local audio storage was interrupted. Please try again."),
+      );
   });
 }

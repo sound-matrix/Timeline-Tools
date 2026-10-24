@@ -2,10 +2,21 @@ import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 test.skip(!process.env.DESK_FIXTURE, "Use fixture config");
 test.beforeEach(async ({ page }) => {
-  page.on("pageerror", (error) => console.log("EDITOR_PAGE_ERROR", error.stack ?? error.message));
+  page.on("pageerror", (error) =>
+    console.log("EDITOR_PAGE_ERROR", error.stack ?? error.message),
+  );
   page.on("console", (message) => {
-    if (message.type() === "error") console.log("EDITOR_CONSOLE_ERROR", message.text());
+    if (message.type() === "error")
+      console.log("EDITOR_CONSOLE_ERROR", message.text());
   });
+});
+test.afterEach(async ({ page }, info) => {
+  if (info.status !== info.expectedStatus && !page.isClosed()) {
+    console.log(
+      "EDITOR_FAILURE_STATE",
+      await page.locator(".editor-upload, [role=alert]").allTextContents(),
+    );
+  }
 });
 function wave(seconds = 2, frequency = 440) {
   const rate = 48000,
