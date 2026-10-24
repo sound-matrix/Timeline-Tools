@@ -17,6 +17,13 @@ gpu_image = (base
     .pip_install('nvidia-cublas-cu12==12.8.4.1', 'nvidia-cudnn-cu12==9.10.2.21')
     .env({'LD_LIBRARY_PATH': '/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib'})
     .add_local_python_source('workers').add_local_file('workers/defaults.json', '/root/workers/defaults.json'))
+podcast_image = (base
+    .pip_install_from_requirements('workers/podcast-requirements.txt')
+    .env({'TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD':'1','HF_HOME':'/models/huggingface','LD_LIBRARY_PATH':'/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib'})
+    .pip_install('nvidia-cublas-cu12==12.8.4.1', 'nvidia-cudnn-cu12==9.10.2.21')
+    .add_local_python_source('workers').add_local_file('workers/defaults.json','/root/workers/defaults.json'))
+# Opt-in at deploy time, so a missing hf-token secret never disables the fallback.
+podcast_secrets = [modal.Secret.from_name('hf-token',required_keys=['HF_TOKEN'])] if os.getenv('PODCAST_USE_HF_TOKEN')=='1' else []
 models = modal.Volume.from_name('timeline-tools-asr-models', create_if_missing=True)
 secrets = modal.Secret.from_name('timeline-tools-supabase', required_keys=['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])
 
@@ -34,7 +41,7 @@ def transfer_input(url, key, input_path, target):
 
 def transfer_output(url, key, output_path, source):
     import httpx
-    mime = {'.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.json': 'application/json', '.srt': 'application/x-subrip', '.vtt': 'text/vtt'}[source.suffix]
+    mime = {'.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.json': 'application/json', '.mp4':'video/mp4', '.srt': 'application/x-subrip', '.vtt': 'text/vtt'}[source.suffix]
     def chunks():
         with source.open('rb') as file:
             while data := file.read(1024 * 1024):
@@ -47,6 +54,9 @@ def transfer_output(url, key, output_path, source):
 
 
 def handle_job(db, job, worker_id, url, key):
+    if job['type'] in ('podcast','podcast_export'):
+        from workers.podcast_worker import handle_podcast_job
+        return handle_podcast_job(db,job,worker_id,url,key)
     from workers.audio import duration, validate, process, MediaError
     job_id = job['id']
     paths = []
@@ -213,6 +223,14 @@ def studio_asr(url,key,input_path,language):
         seconds=time.perf_counter()-started
         minutes=sum(duration(folder/'assets'/c['file']) for c in manifest['clips'])/60
         return dict(segments=result,metrics=dict(model='small',device='T4',elapsed_seconds=seconds,audio_minutes=minutes,gpu_only_usd_per_audio_minute=seconds*0.000164/max(minutes,.001),pricing_basis='Modal public T4 $0.000164/s; excludes CPU, memory, language gate and storage'))
+
+
+@app.function(image=podcast_image,secrets=podcast_secrets,volumes={'/models':models},gpu='T4',cpu=2,memory=12288,timeout=3600,max_containers=2)
+def podcast_asr(url,key,source_path,speakers=None):
+    from workers.podcast import asr
+    with tempfile.TemporaryDirectory(prefix='podcast-asr-') as directory:
+        source=Path(directory)/'source.wav';transfer_stem(url,key,source_path,source)
+        result=asr(source,speakers,device='cuda');models.commit();return result
 
 
 @app.function(image=image, secrets=[secrets], volumes={'/models': models},

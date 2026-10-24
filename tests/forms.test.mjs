@@ -39,7 +39,7 @@ async function load(entry) {
           b.onResolve(
             {
               filter:
-                /^\.\/(studio-motion|input-preview|processing-status|processing-controls|visualizer|studio-daw)$/,
+                /^\.\/(studio-motion|input-preview|processing-status|processing-controls|visualizer|studio-daw|podcast-editor)$/,
             },
             (a) => ({ path: a.path, namespace: "child" }),
           );
@@ -70,6 +70,7 @@ async function load(entry) {
 for (const [label, path] of [
   ["JobForm", "components/job-form.tsx"],
   ["Studio", "components/audio-studio.tsx"],
+  ["Podcast", "components/podcast-tool.tsx"],
 ])
   test(`${label}: Start enabled without choices, inline no-file alert, file-only submission`, async () => {
     const Component = (await load(path)).default;
@@ -124,8 +125,17 @@ for (const [label, path] of [
           .props.onSubmit({ preventDefault() {} });
       });
       assert.equal(posts.length, 1);
-      assert.equal(posts[0].type, label === "Studio" ? "studio" : "clean");
+      assert.equal(
+        posts[0].type,
+        label === "Studio"
+          ? "studio"
+          : label === "Podcast"
+            ? "podcast"
+            : "clean",
+      );
       if (label === "Studio") assert.equal(posts[0].settings.line_gap_ms, 300);
+      else if (label === "Podcast")
+        assert.equal(posts[0].settings.cleanup.noise.amount, 60);
       else assert.equal(posts[0].settings.noise.amount, 60);
     } finally {
       await act(async () => view?.unmount());
@@ -151,7 +161,7 @@ test("jobs API merges defaults before insertion and rejects explicit invalid val
     db,
     user: { id: "11111111-1111-4111-8111-111111111111" },
   };
-  const request = (settings) =>
+  const request = (settings, type = "studio") =>
     new Request("http://localhost/api/jobs", {
       method: "POST",
       headers: {
@@ -159,7 +169,7 @@ test("jobs API merges defaults before insertion and rejects explicit invalid val
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        type: "studio",
+        type,
         file_name: "session",
         input_path:
           "11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222.zip",
@@ -168,6 +178,9 @@ test("jobs API merges defaults before insertion and rejects explicit invalid val
     });
   assert.equal((await POST(request({}))).status, 201);
   assert.equal(inserted.settings.line_gap_ms, 300);
+  assert.equal((await POST(request({}, "podcast"))).status, 201);
+  assert.equal(inserted.settings.cleanup.noise.amount, 60);
+  assert.equal((await POST(request({ speakers: 0 }, "podcast"))).status, 400);
   const invalid = await POST(request({ line_gap_ms: -1 }));
   assert.equal(invalid.status, 400);
   assert.equal(

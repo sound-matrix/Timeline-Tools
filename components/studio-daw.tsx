@@ -9,6 +9,7 @@ import {
 import { withDefaults } from "@/lib/defaults";
 import { alignmentReportSchema } from "@/lib/audio-studio";
 import { pcmWindow } from "@/lib/studio-preview";
+import Peaks from "./waveform-peaks";
 import StudioTimeline from "./studio-timeline";
 import ProcessingStatus from "./processing-status";
 import type { ProcessingState } from "@/lib/job-status";
@@ -18,50 +19,6 @@ const stamp = (seconds: number) => {
   const ms = Math.round(seconds * 1000);
   return `${String(Math.floor(ms / 60000)).padStart(2, "0")}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
 };
-function Peaks({
-  values,
-  start,
-  end,
-  color,
-  zoom,
-}: {
-  values: number[][];
-  start: number;
-  end: number;
-  color: string;
-  zoom: number;
-}) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    let ctx: CanvasRenderingContext2D | null;
-    try {
-      ctx = canvas.getContext("2d");
-    } catch {
-      return;
-    }
-    if (!ctx) return;
-    const width = canvas.clientWidth,
-      height = 40;
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
-    ctx.strokeStyle = color;
-    for (let x = 0; x < width; x++) {
-      const index = Math.floor(
-        start * 100 + (x / Math.max(width, 1)) * (end - start) * 100,
-      );
-      const value = values[index] ?? [0, 0];
-      ctx.beginPath();
-      ctx.moveTo(x, height / 2 + ((value[0] / 128) * height) / 2);
-      ctx.lineTo(x, height / 2 + ((value[1] / 128) * height) / 2);
-      ctx.stroke();
-    }
-  }, [values, start, end, color, zoom]);
-  return <canvas ref={ref} className="daw-peaks" aria-hidden="true" />;
-}
 export default function StudioDaw({
   jobId,
   lineGap,

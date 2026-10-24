@@ -180,15 +180,43 @@ export const studioSchema = z
         : s.ducking_db === undefined && s.bed_fit === undefined,
     "Choose ducking when a music/SFX bed is present.",
   );
+export const podcastSettingsSchema = z
+  .object({
+    cleanup: cleanSchema,
+    mode: z.enum(["sequential", "mics"]),
+    speakers: z.number().int().min(1).max(12).optional(),
+  })
+  .strict();
+export const podcastExportSchema = exportSettingsSchema.safeExtend({
+  speaker_labels: z.boolean(),
+  wav: z
+    .object({
+      bit_depth: z.union([z.literal(16), z.literal(24), z.literal("32f")]),
+      sample_rate: z.literal([44100, 48000]),
+    })
+    .strict()
+    .optional(),
+});
 export const jobSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("clean"), settings: cleanSchema }),
   z.object({ type: z.literal("master"), settings: masterSchema }),
   z.object({ type: z.literal("subtitles"), settings: subtitlesSchema }),
   z.object({ type: z.literal("studio"), settings: studioSchema }),
+  z.object({ type: z.literal("podcast"), settings: podcastSettingsSchema }),
+  z.object({
+    type: z.literal("podcast_export"),
+    settings: podcastExportSchema,
+  }),
   z.object({
     type: z.literal("studio_export"),
     settings: exportSettingsSchema,
   }),
 ]);
 export type JobType =
-  "clean" | "master" | "subtitles" | "studio" | "studio_export";
+  | "clean"
+  | "master"
+  | "subtitles"
+  | "studio"
+  | "studio_export"
+  | "podcast"
+  | "podcast_export";

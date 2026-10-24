@@ -1,0 +1,9 @@
+# Dedicated diarization image; keep the normal audio/Studio image small.
+torch==2.8.0
+torchaudio==2.8.0
+pyannote.audio==3.3.2
+speechbrain==1.0.3
+scikit-learn==1.7.2
+huggingface-hub==0.35.3
+# faster-whisper decode_audio still requires av 18.
+av==18.1.0

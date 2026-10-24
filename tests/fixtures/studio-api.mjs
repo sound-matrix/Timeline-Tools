@@ -1,4 +1,5 @@
 // Isolated HTTP fixture for the production app's desk specs. No live credentials or jobs.
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 const owner = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
@@ -35,6 +36,7 @@ const profile = {
   suspended: false,
 };
 const plan = { id: "test", name: "Test plan", max_file_mb: 25 };
+let podcasts = {};
 let jobs = [],
   reports = {},
   arrangements = {},
@@ -64,6 +66,7 @@ createServer(async (req, res) => {
   if (url.pathname === "/__reset") {
     profile.role = "user";
     jobs = [];
+    podcasts = {};
     reports = {};
     arrangements = {};
     requests = [];
@@ -75,6 +78,7 @@ createServer(async (req, res) => {
   }
   if (url.pathname === "/__requests") return send(requests);
   if (url.pathname === "/__job") {
+    if (body.podcast) podcasts[body.id] = body.podcast;
     if (body.report) reports[body.id] = body.report;
     if (body.arrangement)
       arrangements[body.id] = {
@@ -132,6 +136,48 @@ createServer(async (req, res) => {
     const id = url.pathname.split("/").at(-2);
     return reports[id] ? send(reports[id]) : send({ error: "missing" }, 404);
   }
+  if (url.pathname.startsWith("/rest/v1/podcast_")) {
+    const id = (
+      url.searchParams.get("job_id") ??
+      url.searchParams.get("project_id") ??
+      ""
+    ).slice(3);
+    const p = podcasts[id];
+    if (!p) return send(null);
+    if (url.pathname.endsWith("/podcast_projects"))
+      return send({
+        duration: p.duration,
+        revision: p.revision,
+        exports_count: p.exports_count,
+      });
+    if (url.pathname.endsWith("/podcast_transcripts"))
+      return send({ transcript: p.transcript });
+    if (url.pathname.endsWith("/podcast_edits"))
+      return send({ edits: p.edits });
+    if (url.pathname.endsWith("/podcast_media")) return send(p.media);
+  }
+  if (url.pathname === "/rest/v1/rpc/save_podcast_edits") {
+    const p = podcasts[body.p_job];
+    if (!p) return send({ message: "Unavailable" }, 404);
+    if (p.revision !== body.p_revision)
+      return send({ code: "40001", message: "Revision conflict" }, 409);
+    p.edits = body.p_edits;
+    p.revision++;
+    return send(p.revision);
+  }
+  if (
+    url.pathname.includes("/object/public/outputs/") &&
+    /proxy-\d+\.mp4$/.test(url.pathname)
+  ) {
+    const data = readFileSync("tests/fixtures/podcast-proxy.mp4");
+    res.writeHead(200, {
+      "Content-Type": "video/mp4",
+      "Access-Control-Allow-Origin": "*",
+      "Accept-Ranges": "bytes",
+    });
+    res.end(data);
+    return;
+  }
   if (url.pathname === "/rest/v1/studio_arrangements")
     return send(arrangements[url.searchParams.get("job_id")?.slice(3)] ?? null);
   if (url.pathname === "/rest/v1/rpc/save_arrangement") {
@@ -150,7 +196,7 @@ createServer(async (req, res) => {
   }
   if (
     url.pathname.includes("/object/public/outputs/") &&
-    /\/peaks\/c\d+\.json$/.test(url.pathname)
+    /(?:\/peaks\/c\d+|\/podcast-peaks)\.json$/.test(url.pathname)
   )
     return send({
       rate: 100,
@@ -158,7 +204,7 @@ createServer(async (req, res) => {
     });
   if (
     url.pathname.includes("/object/public/outputs/") &&
-    /\/stems\/c\d+\.wav$/.test(url.pathname)
+    /(?:\/stems\/c\d+\.wav|\/podcast-preview\.mp3)$/.test(url.pathname)
   ) {
     const wave = Buffer.alloc(64044);
     wave.write("RIFF");

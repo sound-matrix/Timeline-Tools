@@ -37,7 +37,7 @@ async function queue(db, user = a, kind = "clean") {
   await db.exec(
     `reset role; select set_config('request.jwt.claim.sub','${user}',false);`,
   );
-  const path = `${user}/${crypto.randomUUID()}.${kind === "studio" ? "zip" : "wav"}`;
+  const path = `${user}/${crypto.randomUUID()}.${["studio", "podcast"].includes(kind) ? "zip" : "wav"}`;
   await db.query(
     "insert into storage.objects(bucket_id,name,metadata) values('uploads',$1,'{\"size\":1024}')",
     [path],
@@ -477,6 +477,166 @@ test("DAW revision locks, ownership, immutable sources and first-export billing"
           [parent],
         )
       ).rows[0].n,
+      2,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("Podcast migration: idempotent, owner RLS, revision snapshots, included export and exact output billing", async () => {
+  const db = await database();
+  try {
+    const migration = readdirSync("supabase/migrations").find((f) =>
+      f.endsWith("_podcast.sql"),
+    );
+    await db.exec(readFileSync("supabase/migrations/" + migration, "utf8"));
+    await db.exec(
+      `insert into auth.users(id,email,raw_user_meta_data) values('${a}','pod-a@example.invalid','{}'),('${b}','pod-b@example.invalid','{}');`,
+    );
+    const id = await queue(db, a, "podcast");
+    const worker = "pod-worker";
+    await rpc(db, "worker_claim", [worker]);
+    assert.equal(
+      (await rpc(db, "worker_prepare", [id, worker, 120]))[0].worker_prepare,
+      true,
+    );
+    const source = `${a}/${id}/podcast-source.wav`;
+    await db.query(
+      "insert into storage.objects(bucket_id,name,metadata) values('outputs',$1,'{\"size\":100}')",
+      [source],
+    );
+    const t = {
+      speakers: [{ id: "s0", name: "Speaker 1" }],
+      words: [{ w: "Hello", start: 1, end: 2, speaker: "s0", conf: 0.9 }],
+      segments: [],
+      method: "synthetic",
+    };
+    await db.query(
+      "insert into public.podcast_projects(job_id,user_id,duration,source_path,peaks_path) values($1,$2,120,$3,$3)",
+      [id, a, source],
+    );
+    await db.query(
+      "insert into public.podcast_transcripts(project_id,user_id,transcript) values($1,$2,$3)",
+      [id, a, JSON.stringify(t)],
+    );
+    await db.query(
+      "insert into public.podcast_edits(project_id,user_id) values($1,$2)",
+      [id, a],
+    );
+    assert.equal(
+      (
+        await rpc(db, "worker_complete", [id, worker, JSON.stringify([source])])
+      )[0].worker_complete,
+      true,
+    );
+    await db.exec(
+      `reset role;update public.profiles set minutes_balance=10 where id='${a}';set role authenticated;select set_config('request.jwt.claim.sub','${b}',false);`,
+    );
+    for (const table of [
+      "podcast_projects",
+      "podcast_transcripts",
+      "podcast_edits",
+    ])
+      assert.equal(
+        (await db.query(`select * from public.${table}`)).rows.length,
+        0,
+      );
+    await assert.rejects(
+      rpc(db, "save_podcast_edits", [id, 1, "{}"]),
+      /Unavailable|permission/,
+    );
+    await db.exec(`select set_config('request.jwt.claim.sub','${a}',false);`);
+    const edits = {
+      operations: [
+        { op: "delete", start: 10, end: 71 },
+        { op: "insert", at: 120, duration: 1 },
+      ],
+      corrections: { 0: "Welcome" },
+      speaker_names: { s0: "Host" },
+    };
+    assert.equal(
+      (await rpc(db, "save_podcast_edits", [id, 1, JSON.stringify(edits)]))[0]
+        .save_podcast_edits,
+      2,
+    );
+    await assert.rejects(
+      rpc(db, "save_podcast_edits", [id, 1, JSON.stringify(edits)]),
+      /Revision conflict/,
+    );
+    await assert.rejects(
+      db.query("update public.podcast_edits set edits=$1 where project_id=$2", [
+        JSON.stringify(edits),
+        id,
+      ]),
+      /permission denied/,
+    );
+    const exportJob = async (cost) =>
+      (
+        await db.query(
+          "insert into public.jobs(file_name,input_path,type,parent_job_id,confirmed_export_minutes,settings) values('Podcast export','placeholder','podcast_export',$1,$2,'{\"revision\":2}') returning id,arrangement_snapshot",
+          [id, cost],
+        )
+      ).rows[0];
+    const first = await exportJob(0);
+    assert.deepEqual(first.arrangement_snapshot.edits, edits);
+    await assert.rejects(exportJob(0), /price changed/i);
+    await db.exec("reset role;set role service_role;");
+    await rpc(db, "worker_claim", ["free-worker"]);
+    assert.equal(
+      (await rpc(db, "worker_prepare", [first.id, "free-worker", 60]))[0]
+        .worker_prepare,
+      true,
+    );
+    assert.equal(
+      (
+        await rpc(db, "worker_complete", [
+          first.id,
+          "free-worker",
+          await output(db, first.id),
+        ])
+      )[0].worker_complete,
+      true,
+    );
+    assert.equal(
+      Number(
+        (
+          await db.query(
+            "select minutes_balance from public.profiles where id=$1",
+            [a],
+          )
+        ).rows[0].minutes_balance,
+      ),
+      10,
+    );
+    await db.exec("reset role;set role authenticated;");
+    const second = await exportJob(1);
+    await db.exec("reset role;set role service_role;");
+    await rpc(db, "worker_claim", ["paid-worker"]);
+    await rpc(db, "worker_prepare", [second.id, "paid-worker", 60]);
+    await rpc(db, "worker_complete", [
+      second.id,
+      "paid-worker",
+      await output(db, second.id),
+    ]);
+    assert.equal(
+      Number(
+        (
+          await db.query(
+            "select minutes_balance from public.profiles where id=$1",
+            [a],
+          )
+        ).rows[0].minutes_balance,
+      ),
+      9,
+    );
+    assert.equal(
+      (
+        await db.query(
+          "select exports_count from public.podcast_projects where job_id=$1",
+          [id],
+        )
+      ).rows[0].exports_count,
       2,
     );
   } finally {
