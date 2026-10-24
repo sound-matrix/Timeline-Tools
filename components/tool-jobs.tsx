@@ -16,5 +16,10 @@ export default async function ToolJobs({
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) throw error;
-  return <JobsTable jobs={data ?? []} />;
+  return (
+    <JobsTable
+      jobs={data ?? []}
+      title={type === "studio_export" ? "Recent exports" : "Recent jobs"}
+    />
+  );
 }

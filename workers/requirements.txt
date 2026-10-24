@@ -5,3 +5,5 @@ numpy==2.3.5
 soundfile==0.14.0
 noisereduce==3.0.3
 faster-whisper==1.2.1
+rapidfuzz==3.14.3
+lingua-language-detector==2.1.1

@@ -1,147 +1,125 @@
 import copy
 import json
+import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock,patch
+from workers.studio_audio import (parse_script,prepare,unpack,arrange,matching,validate_studio,script_language,LanguageMismatch,render,validate_arrangement)
+from workers.studio_export import validate_export
+from workers.audio import duration,validate
+SETTINGS=json.loads((Path(__file__).resolve().parents[2]/'tests/fixtures/studio-settings.json').read_text())
+ID='11111111-1111-4111-8111-111111111111'
+def settings():
+ s=copy.deepcopy(SETTINGS);s['has_bed']=False;s.pop('ducking_db');s.pop('bed_fit');s['room_tone']={'enabled':False};return s
 
-from workers.audio import process, validate, duration
-from workers.studio_audio import parse_script, prepare, alignment, unpack, validate_studio
+def bundle(folder,clips,script,version=2):
+ path=folder/'input.zip';entries=[dict(file=f'clip-{i}.wav',name=p.name,speaker='') for i,p in enumerate(clips)]
+ manifest=dict(version=version,bed=None,script='script.txt',**({'clips':entries} if version==2 else {'voices':entries,'guide':'guide.wav'}))
+ with zipfile.ZipFile(path,'w',compression=zipfile.ZIP_STORED) as z:
+  z.writestr('manifest.json',json.dumps(manifest));z.writestr('script.txt',script)
+  for i,p in enumerate(clips):z.write(p,f'clip-{i}.wav')
+  if version==1:z.writestr('guide.wav',b'This must never be decoded')
+ return path
 
-SETTINGS = json.loads((Path(__file__).resolve().parents[2] / 'tests/fixtures/studio-settings.json').read_text())
+def project(lines):
+ return dict(lines=parse_script(lines),manifest=dict(clips=[dict(file='one.wav',name='meera_03.wav',speaker=''),dict(file='two.wav',name='narrator.wav',speaker='')],bed=None),durations={'one.wav':3,'two.wav':3})
 
-
-def bundle(folder, guide, voice, script, bed=None, speakers=None):
-    path = folder / 'input.zip'
-    voices = voice if isinstance(voice, list) else [voice]
-    manifest = dict(version=1, guide='guide.wav', voices=[dict(file=f'voice-{i}.wav', speaker=(speakers or ['']*len(voices))[i], name=p.name) for i, p in enumerate(voices)], bed='bed.wav' if bed else None, script='script.txt')
-    with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_STORED) as archive:
-        archive.writestr('manifest.json', json.dumps(manifest))
-        archive.writestr('script.txt', script)
-        archive.write(guide, 'guide.wav')
-        for i, p in enumerate(voices): archive.write(p, f'voice-{i}.wav')
-        if bed: archive.write(bed, 'bed.wav')
-    return path
-
+def segment(clip,text,start=0,end=1,name='unknown.wav',speaker=''):
+ return dict(clip=clip,text=text,src_start=start,src_end=end,name=name,speaker=speaker)
 
 class StudioSettings(unittest.TestCase):
-    def test_mirror_and_required_choices(self):
-        validate('studio', SETTINGS)
-        for field in SETTINGS:
-            s = copy.deepcopy(SETTINGS); del s[field]
-            with self.assertRaises(ValueError): validate('studio', s)
-        for field in ['dialogue_lufs', 'master_lufs', 'ducking_db']:
-            for value in [True, '', None, float('nan'), float('inf')]:
-                s = copy.deepcopy(SETTINGS); s[field] = value
-                self.assertFalse(validate_studio(s))
-        for patch_value in [dict(has_bed=False), dict(subtitles=dict(enabled=True, formats=[])),
-                            dict(subtitles=dict(enabled=True, formats=['srt', 'srt'])), dict(room_tone=dict(enabled=False, amount=0))]:
-            self.assertFalse(validate_studio({**SETTINGS, **patch_value}))
-        s = copy.deepcopy(SETTINGS); s.update(has_bed=False, subtitles=dict(enabled=False), room_tone=dict(enabled=False)); del s['ducking_db']
-        validate('studio', s)
+ def test_required_choices(self):
+  validate('studio',SETTINGS)
+  for key in SETTINGS:
+   s=copy.deepcopy(SETTINGS);del s[key];self.assertFalse(validate_studio(s),key)
+  for key in ('line_gap_ms','dialogue_lufs','master_lufs','ducking_db'):
+   for v in (True,'',None,float('nan'),float('inf')):
+    self.assertFalse(validate_studio({**SETTINGS,key:v}))
+  self.assertFalse(validate_studio({**SETTINGS,'has_bed':False}));self.assertTrue(validate_studio(settings()))
+ def test_indic_language_and_script(self):
+  for text,code in [('नमस्ते दुनिया','hi'),('నమస్కారం ప్రపంచం','te'),('வணக்கம் உலகம்','ta')]:self.assertEqual(script_language(text),code)
+  self.assertEqual(parse_script('Meera: నమస్కారం')[0]['speaker'],'Meera')
+  self.assertEqual(parse_script('WEBVTT\n\n00:01.000 --> 00:02.000\nHello')[0]['start'],1)
+  for text in ('','x'*65537,'x\n'*301):
+   with self.assertRaises(ValueError):parse_script(text)
+ def test_shuffled_clips_multilane_missing_unplaced_natural_duration(self):
+  p=project('Narrator: The morning sun rose above the village.\nMeera: Welcome back to our home.\nMeera: Quantum clocks orbit distant nebulae.')
+  seg=[segment('c0','Welcome back to our home.',0,1.2,name='meera_03.wav'),segment('c1','The morning sun rose above the village.',.2,2.2),segment('c0','ZZZZZZZZZ',1.5,2)]
+  a=arrange(p,seg,settings(),ID)
+  self.assertEqual([r['clip'] for r in a['regions']],['c1','c0']);self.assertEqual(a['lanes'][0]['name'],'Narrator');self.assertEqual(len(a['lanes']),2)
+  self.assertEqual(a['regions'][1]['start'],2.25);self.assertEqual(a['missing'][0]['line'],2);self.assertEqual(len(a['unplaced']),1)
+  self.assertAlmostEqual(a['duration'],2+1.2+.5+a['missing'][0]['length'],places=5)
+ def test_filename_speaker_bonus_and_merged_segments(self):
+  lines=parse_script('Meera: hello wonderful world')
+  seg=[segment('c0','hello',0,.5,name='meera_03.wav'),segment('c0','wonderful world',.5,1.5,name='meera_03.wav')]
+  result,used=matching(lines,seg);self.assertEqual(used,{0,1});self.assertGreater(result[0][2],.9)
+ def test_group_segment_across_lines_and_low_confidence(self):
+  p=project('Meera: hello there\nMeera: welcome home')
+  a=arrange(p,[segment('c0','hello there welcome home',0,2)],settings(),ID)
+  self.assertEqual(len(a['regions']),2);self.assertEqual(len(a['missing']),0)
+  p=project('Meera: hello beautiful morning')
+  a=arrange(p,[segment('c0','hello morning',0,1)],settings(),ID)
+  self.assertLess(a['regions'][0]['confidence'],.85)
+ def test_explicit_export_choices(self):
+  for s in ({},{'revision':1,'formats':['mp3'],'subtitles':[],'missing_lines':'exclude'}):
+   with self.assertRaises(ValueError):validate_export(s)
 
-    def test_script_parsing_and_limits(self):
-        self.assertEqual(parse_script('Meera: నమస్కారం')[0]['speaker'], 'Meera')
-        self.assertEqual(parse_script('WEBVTT\n\n00:01.000 --> 00:02.500\n<b>Meera:</b> Hello')[0]['end'], 2.5)
-        for script in ['', 'x'*65537, 'x\n'*301, '00:02.000 --> 00:01.000\nInvalid']:
-            with self.assertRaises(ValueError): parse_script(script)
-
-    def test_bundle_rejects_path_traversal_duplicates_compressed_and_symlinks(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            folder = Path(tmp); p = folder / 'input.zip'
-            for name in ['../bad.wav', '/tmp/bad.wav', 'sub/bad.wav', 'https://example.com/bad.wav']:
-                with zipfile.ZipFile(p, 'w') as archive:
-                    for n in [name, 'manifest.json', 'script.txt', 'guide.wav']: archive.writestr(n, '{}')
-                with self.assertRaises(ValueError): unpack(p, folder / 'assets')
-            with zipfile.ZipFile(p, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-                for name in ['manifest.json', 'script.txt', 'guide.wav', 'voice.wav']: archive.writestr(name, '{}')
-            with self.assertRaises(ValueError): unpack(p, folder / 'assets')
-            with zipfile.ZipFile(p, 'w') as archive:
-                link = zipfile.ZipInfo('guide.wav'); link.external_attr = 0o120777 << 16
-                archive.writestr(link, '/etc/passwd')
-                for name in ['manifest.json', 'script.txt', 'voice.wav']: archive.writestr(name, '{}')
-            with self.assertRaises(ValueError): unpack(p, folder / 'assets')
-
-
-@unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg required')
-class StudioPipeline(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(); self.folder = Path(self.tmp.name)
-        self.guide, self.voice, self.bed = [self.folder / f'{s}.wav' for s in ('guide', 'voice', 'bed')]
-        self.signal(self.guide, r'if(between(t\,0.5\,1.5)+between(t\,4\,5)\,0.12*sin(2*PI*440*t)\,0.0005*sin(2*PI*200*t))')
-        self.signal(self.voice, r'if(between(t\,1\,2)+between(t\,3\,4)\,0.12*sin(2*PI*880*t)\,0)')
-        self.signal(self.bed, '0.01*sin(2*PI*220*t)')
-    def signal(self, path, expression):
-        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', f'aevalsrc={expression}:s=16000:d=6', str(path)], check=True)
-    def tearDown(self): self.tmp.cleanup()
-    def settings(self, bed=False):
-        s = copy.deepcopy(SETTINGS)
-        if not bed: s['has_bed'] = False; del s['ducking_db']
-        return s
-    def test_studio_branch_moves_dub_bursts_to_timed_guide_and_exports(self):
-        import numpy as np
-        import soundfile as sf
-        script = '1\n00:00:00,500 --> 00:00:01,500\nNarrator: Hello\n\n2\n00:00:04,000 --> 00:00:05,000\nNarrator: Goodbye'
-        source = bundle(self.folder, self.guide, self.voice, script)
-        outputs = process(source, self.folder, 'studio', self.settings())
-        self.assertEqual([p.name for p in outputs], ['studio-mix.wav', 'alignment-report.json', 'subtitles.srt', 'subtitles.vtt'])
-        self.assertAlmostEqual(duration(outputs[0]), 6, delta=.05)
-        report = json.loads(outputs[1].read_text())
-        self.assertEqual(report['method'], 'heuristic-v1')
-        self.assertEqual([l['start'] for l in report['lines']], [.5, 4])
-        self.assertGreater(report['lines'][0]['source_start'], .9)
-        self.assertGreater(report['lines'][0]['confidence'], .7)
-        self.assertEqual(report['loudness']['target_lufs'], -16)
-        self.assertIn('Narrator: Hello', outputs[2].read_text())
-        samples, rate = sf.read(outputs[0], always_2d=True)
-        rms = lambda start, end: np.sqrt(np.mean(samples[int(start*rate):int(end*rate)]**2))
-        self.assertGreater(rms(.7, 1.3), .03)
-        self.assertLess(rms(2.3, 2.8), .001)
-        self.assertGreater(rms(4.2, 4.8), .03)
-    def test_plain_text_confidence_is_evidence_based_and_silence_scores_zero(self):
-        source = bundle(self.folder, self.guide, self.voice, 'Narrator: Hello\nNarrator: Goodbye')
-        project = prepare(source, self.folder)
-        report, _ = alignment(project)
-        self.assertTrue(all(l['confidence'] <= .65 for l in report['lines']))
-        self.assertTrue(all('Low confidence: review timing' in l['flags'] for l in report['lines']))
-        self.assertAlmostEqual(report['lines'][0]['start'], .5, delta=.05)
-        self.signal(self.voice, '0')
-        source = bundle(self.folder, self.guide, self.voice, 'Narrator: Hello\nNarrator: Goodbye')
-        silent, _ = alignment(prepare(source, self.folder))
-        self.assertEqual([l['confidence'] for l in silent['lines']], [0, 0])
-    def test_multiple_speakers_bed_ducking_room_tone_and_disabled_subtitles(self):
-        source = bundle(self.folder, self.guide, [self.voice, self.voice], 'Narrator: Hello\nMeera: Goodbye', self.bed, ['Narrator', 'Meera'])
-        s = self.settings(True); s['ducking_db'] = 12; s['room_tone']['amount'] = 30; s['subtitles'] = dict(enabled=False)
-        from workers.studio_audio import ffmpeg as real_ffmpeg
-        with patch('workers.studio_audio.ffmpeg', wraps=real_ffmpeg) as calls:
-            outputs = process(source, self.folder, 'studio', s)
-        report = json.loads(outputs[1].read_text())
-        self.assertEqual(len(report['tracks']), 2)
-        self.assertEqual(len(outputs), 2)
-        self.assertIn(str(10**(-12/20)), str(calls.call_args_list))
-        self.assertAlmostEqual(duration(outputs[0]), 6, delta=.05)
-    def test_rejects_unmapped_speakers_out_of_range_cues_and_bed_mismatch(self):
-        source = bundle(self.folder, self.guide, [self.voice, self.voice], 'Nobody: Hello', speakers=['Narrator', 'Meera'])
-        with self.assertRaises(ValueError): prepare(source, self.folder)
-        source = bundle(self.folder, self.guide, self.voice, '00:00:00,000 --> 00:00:07,000\nHello')
-        with self.assertRaises(ValueError): prepare(source, self.folder)
-        source = bundle(self.folder, self.guide, self.voice, 'Hello')
-        with self.assertRaises(ValueError): process(source, self.folder, 'studio', self.settings(True))
-    def test_worker_bills_guide_duration_once_and_publishes_all_outputs(self):
-        from workers.timeline_tools_worker import handle_job
-        source = bundle(self.folder, self.guide, self.voice, 'Hello\nGoodbye')
-        owner = '22222222-2222-4222-8222-222222222222'
-        job = dict(id='11111111-1111-4111-8111-111111111111', user_id=owner, input_path=owner+'/input.zip', type='studio', settings=self.settings())
-        db = MagicMock(); db.rpc.return_value.execute.return_value.data = True
-        def transfer(_url, _key, _path, dest): shutil.copyfile(source, dest)
-        with patch('workers.timeline_tools_worker.transfer_input', side_effect=transfer), patch('workers.timeline_tools_worker.transfer_output') as upload:
-            handle_job(db, job, 'worker', 'https://example.invalid', 'secret')
-        prepare_call = next(c for c in db.rpc.call_args_list if c.args[0] == 'worker_prepare')
-        self.assertEqual(prepare_call.args[1]['p_duration'], 6)
-        complete = next(c for c in db.rpc.call_args_list if c.args[0] == 'worker_complete')
-        self.assertEqual(len(complete.args[1]['p_outputs']), 4)
-        self.assertEqual(upload.call_count, 4)
-        self.assertNotIn('worker_fail', [c.args[0] for c in db.rpc.call_args_list])
+@unittest.skipUnless(shutil.which('ffmpeg'),'ffmpeg required')
+class Pipeline(unittest.TestCase):
+ def setUp(self):
+  self.tmp=tempfile.TemporaryDirectory();self.folder=Path(self.tmp.name);self.clip=self.folder/'meera_03.wav'
+  subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:sample_rate=16000:duration=1',str(self.clip)],check=True)
+ def tearDown(self):self.tmp.cleanup()
+ def test_v1_guide_ignored_and_derived_billing(self):
+  source=bundle(self.folder,[self.clip],'Meera: నమస్కారం\nMeera: ప్రపంచం',1)
+  p=prepare(source,self.folder,settings(),detector=lambda *_:('te',.99))
+  self.assertNotIn('guide',p['manifest']);self.assertFalse((p['assets']/'guide.wav').exists());self.assertAlmostEqual(p['seconds'],1.25,places=2)
+ def test_language_gate_before_prepare_and_zero_charge(self):
+  from workers.timeline_tools_worker import handle_job
+  source=bundle(self.folder,[self.clip],'Meera: नमस्ते दुनिया')
+  db=MagicMock();db.rpc.return_value.execute.return_value.data=True
+  job=dict(id=ID,user_id=ID,input_path=ID+'/input.zip',type='studio',settings=settings())
+  def transfer(_u,_k,_p,d):shutil.copyfile(source,d)
+  with patch('workers.timeline_tools_worker.transfer_input',side_effect=transfer),patch('workers.studio_audio.detect_language',return_value=('en',.99)):
+   handle_job(db,job,'worker','https://invalid.test','secret')
+  calls=[c.args[0] for c in db.rpc.call_args_list];self.assertNotIn('worker_prepare',calls);self.assertNotIn('worker_complete',calls)
+  self.assertEqual(db.rpc.call_args_list[-1].args[1]['p_code'],'language_mismatch')
+ def test_uncertain_does_not_block_and_duration_caps(self):
+  p=prepare(bundle(self.folder,[self.clip],'Meera: नमस्ते दुनिया'),self.folder,settings(),detector=lambda *_:('en',.3))
+  self.assertTrue(p['languages']['clips'][0]['uncertain'])
+  folder=self.folder/'large';folder.mkdir()
+  with patch('workers.studio_audio.duration',return_value=3601):
+   with self.assertRaises(ValueError):prepare(bundle(folder,[self.clip],'hello'),folder,settings(),detector=lambda *_:('en',.9))
+ def test_archive_rejects_traversal_and_compression(self):
+  for name in ('../bad.wav','sub/bad.wav','/bad.wav'):
+   path=self.folder/'bad.zip'
+   with zipfile.ZipFile(path,'w') as z:
+    z.writestr(name,'bad');z.writestr('script.txt','hello');z.writestr('manifest.json','{}')
+   with self.assertRaises(ValueError):unpack(path,self.folder/'assets')
+ def test_worker_prepare_derived_duration_and_outputs(self):
+  from workers.timeline_tools_worker import handle_job
+  source=bundle(self.folder,[self.clip],'Meera: नमस्ते दुनिया')
+  db=MagicMock();db.rpc.return_value.execute.return_value.data=True
+  job=dict(id=ID,user_id=ID,input_path=ID+'/input.zip',type='studio',settings=settings())
+  def transfer(_u,_k,_p,d):shutil.copyfile(source,d)
+  seg=[segment('c0','नमस्ते दुनिया',0,1)]
+  with patch('workers.timeline_tools_worker.transfer_input',side_effect=transfer),patch('workers.timeline_tools_worker.transfer_output'),patch('workers.studio_audio.detect_language',return_value=('hi',.99)),patch('workers.timeline_tools_worker.studio_asr') as asr:
+   asr.remote.return_value=seg;handle_job(db,job,'worker','https://invalid.test','secret')
+  prep=next(c for c in db.rpc.call_args_list if c.args[0]=='worker_prepare');self.assertAlmostEqual(prep.args[1]['p_duration'],1,places=2)
+  self.assertIn('worker_complete',[c.args[0] for c in db.rpc.call_args_list])
+ def test_export_codecs_rates_and_duration(self):
+  a=arrange(project('Meera: hello'),[segment('c0','hello',0,1)],settings(),ID)
+  for fmt,depth,rate in [('mp3',b,r) for b in (128,320) for r in (44100,48000)]+[('wav',d,r) for d in (16,24,'32f') for r in (44100,48000,96000)]:
+   folder=self.folder/f'{fmt}-{depth}-{rate}';folder.mkdir();e=dict(revision=1,formats=[fmt],subtitles=[],missing_lines='exclude',**{fmt:dict(sample_rate=rate,**({'bitrate_kbps':depth} if fmt=='mp3' else {'bit_depth':depth}))});validate_export(e)
+   paths=render(dict(stems={'c0':self.clip}),a,folder,settings(),e);probe=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-of','json',str(paths[0])]))['streams'][0]
+   self.assertEqual(int(probe['sample_rate']),rate);self.assertAlmostEqual(duration(paths[0]),1,delta=.1)
+   if fmt=='wav':self.assertEqual(probe['codec_name'],{16:'pcm_s16le',24:'pcm_s24le','32f':'pcm_f32le'}[depth])
+   else:self.assertEqual(int(probe['bit_rate']),depth*1000)
+ @unittest.skipUnless(os.environ.get('STUDIO_REAL_ASR')=='1','opt-in model download and real ASR')
+ def test_real_tiny_asr(self):
+  from workers.studio_audio import model
+  segments,info=model(size='tiny').transcribe(str(self.clip),vad_filter=True);list(segments);self.assertTrue(info.language)

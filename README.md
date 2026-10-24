@@ -263,86 +263,83 @@ header's decorative animation pauses whenever a session panel is present.
 with `modal deploy -m workers.timeline_tools_worker` in the existing `sound-matrix` workspace; no secrets or SQL changes are
 needed. This PR does not deploy Modal or merge automatically.
 
-## Phase 2A — Audio Studio
+## Audio Studio — script-driven DAW
 
-`/studio` accepts a guide (audio/video), 1–8 voice/dub stems, an optional music/SFX
-bed and a UTF-8 plain-text/SRT/VTT script. The desk appears after guide, voices and
-script are present. Every mix choice starts empty: dialogue LUFS, final master
-LUFS, room tone Off/amount, subtitles Off/On + formats, and bed ducking when a bed
-is present. Presets fill only the dialogue field when clicked. There are no new
-payments, auth providers, secrets or publishing controls.
+Upload a UTF-8 TXT/SRT/VTT script, 1–200 audio clips (named or unnamed), and an
+optional bed. Speaker tags and per-clip speaker labels are optional; matching
+filename prefixes add speaker evidence. No guide/reference input exists. SRT/VTT
+timestamps determine script order only. Clips retain their natural speed.
 
-**Transport and limits.** The browser creates one uncompressed/stored ZIP with
-`manifest.json`, `script.txt`, `guide.<ext>`, `voice-N.<ext>` and optional `bed.<ext>`.
-It uploads to `uploads/<owner UUID>/<random UUID>.zip`; `input_path` is this one
-path. JSONB settings hold only the compact processing choices (well under 8192
-bytes), never the script, extra Storage paths, signed URLs or media. The new
-migration extends upload authorization to owner-prefixed ZIPs and adds `studio`
-to the existing job type check; all existing RLS/grants/size checks remain.
-The complete bundle must fit both the plan limit and 250 MB. The worker accepts
-only flat, unique, stored ZIP members, rejects links/traversal/unexpected files,
-and bounds extraction before reading media. Scripts: 64 KB, 300 lines, 1000
-characters per line. Audio: 60 minutes per file, 120 minutes combined. Multiple
-voice stems require unique speaker labels matching all script speakers. A single
-unlabeled dub can contain all dialogue in script order. The guide is a timing
-reference and is excluded from the final dialogue mix; longer voice/bed material
-outside the guide duration is omitted.
+Every new processing choice starts blank: line gap (0–5000 ms), match strictness,
+dialogue/master LUFS, room tone on/off and amount, subtitles on/off and formats,
+and bed ducking/fit when a bed exists. New settings reject missing choices.
+Transport is a flat stored ZIP, manifest **v2** `{version,clips:[{file,name,speaker?}],bed,script}`.
+Limits remain 250 MB AND the plan cap, 64 KB script, 300 lines, 1000 characters per
+line, 3600 seconds per file and 7200 seconds combined. v1 bundles map `voices` to
+clips; their guide member is never extracted, probed, decoded or billed. Completed
+`heuristic-v1` reports remain available in a read-only compatibility view.
 
-**Alignment approach: heuristic-v1, CPU only.** FFmpeg silence detection (-35 dB,
-150 ms minimum silence) finds guide/dub acoustic regions. Existing SRT/VTT cues
-supply guide timing. Otherwise, one-region-per-line matches are used when counts
-agree; mismatched counts distribute script line lengths across cumulative speech
-time. Each speaker stem follows its own ordered script lines. Dub segments are
-trimmed, pitch-preserving time-stretched and delayed into guide positions. This
-is **not ML forced alignment**: there is no word recognition, semantic verification
-or ±150 ms accuracy guarantee. Background sound or missing/reordered words can
-mislead acoustic detection. Review the mix and all timings before publishing.
+### Pipeline and billing
 
-Confidence is a reproducible **evidence score**, not a calibrated probability:
-`guide speech coverage × dub speech coverage × boundary evidence × stretch
-agreement`. Boundary evidence is 1 for an exact region/line count, otherwise .45;
-stretch agreement is `min(ratio, 1/ratio)`. Scores cap at .65 for inferred guide
-timing and .85 for supplied cue timing. Silence scores zero; scores below .70
-and large stretches are flagged in the script table and report.
+1. CPU ffprobe and bounded extraction enforce upload/duration limits.
+2. Script-language detection (Indic block recognition + Lingua) and faster-whisper
+   language detection on each clip’s first ≤30 seconds of detected speech happen
+   **before worker_prepare**. Results below 0.5 are uncertain and flagged. Confident
+   mismatches fail with `language_mismatch`, language details and zero charge.
+3. Estimate duration from VAD speech plus chosen gaps (bed tail only for extend),
+   then call `worker_prepare` before full ASR/mixing. If final placement is shorter,
+   lower the billed duration to the final length. Never raise the estimate after
+   ASR. Completion charges `ceil(min(estimate,final duration)/60)` atomically.
+4. faster-whisper **small**, T4, int8_float16, batch 8, cached `/models` Volume;
+   CPU int8/batch 2 fallback. Language is forced and word timestamps enabled.
+5. `script-match-v1` normalizes NFKC/script characters, combines character/text
+   similarity and speaker evidence, solves monotonic per-clip DP with grouped
+   lines/segments, then resolves competing clips by confidence. Clips may be
+   shuffled across characters. Scores are evidence, not accuracy guarantees.
+6. Place sequentially in script order on per-character lanes, narrator first.
+   Missing lines become silent placeholders (minimum 1.5 seconds); unmatched
+   segments stay in an unplaced bin. No time-stretch.
 
-**Mix/output.** Each dialogue stem uses the chosen LUFS target; the optional bed
-is attenuated by the chosen dB amount in aligned dialogue windows (0 is bypass).
-Room-tone fill loops a detected quiet guide sample in dialogue gaps at the chosen
-percentage; if none exists it is skipped and noted in the report. Final mastering
-uses the chosen LUFS target and loudnorm's 0 dBTP safety bound. Silence or peak
-constraints may prevent the target; achieved loudness is included in the JSON
-report. Outputs are `studio-mix.wav`, `alignment-report.json`, and optional
-`subtitles.srt` / `subtitles.vtt` (at most four, compatible with `worker_complete`).
-Only the guide duration is sent to `worker_prepare`, then charged once through
-the unchanged `worker_complete` transaction. Failures do not charge minutes.
+Outputs: `arrangement-r1.json`, `report.json`, normalized `stems/cN.wav`, and
+100-Hz signed 8-bit min/max `peaks/cN.json`. No preview mix is rendered until the
+user chooses export settings. The initial Storage snapshot is immutable; edits
+are stored as versioned JSON rows via revision-checked `save_arrangement`.
 
-The page polls the real worker lifecycle and restores the latest studio job after
-reload. Clip snapping is explicitly an activity illustration, without invented
-percentages/timings. Final clip positions and confidence come from the worker's
-private report. Select clips/table rows to seek the finished mix; report/subtitle
-exports remain available. Report retrieval authenticates the owner, checks the
-completed studio job and exact output path, then reads through user-scoped Storage
-RLS. It never sends private bucket paths in JSON responses. Timed scripts can be
-exported before mixing; plain text needs completed alignment. Motion can be paused
-and respects `prefers-reduced-motion`.
+The DAW shows real peaks with play/pause, seek/draggable playhead, zoom, move/trim,
+split/delete/nudge, lane mute/solo/gain, region gain, snap-to-gap, undo/redo,
+unplaced placement and a line/confidence report. Autosave waits about two seconds;
+409 conflicts stop edits/exports until reload. Browser WebAudio is **preview only**
+(dialogue lanes); the bed, ducking, room tone and master are rendered server-side.
+Mobile is horizontally scrollable, view-only editing. Reduced motion uses stepped
+playhead updates, no smoothing. Original source metadata cannot be changed by saves.
 
-**Operator release steps (not performed by this PR).** Apply
-`supabase/migrations/20261023112541_audio_studio.sql`, then **redeploy
-`timeline-tools-worker`** from the repo root:
+### Export
 
-```sh
-modal deploy -m workers.timeline_tools_worker
-```
+`studio_export` captures the parent’s arrangement revision at queue time. MP3:
+128/192/256/320 kbps, 44.1/48 kHz. WAV: 16/24/32f, 44.1/48/96 kHz. Choose one or both
+formats, subtitle formats/none, and whether to exclude or mark missing lines;
+encoding controls are never preselected. The worker applies trims, gains,
+mute/solo, bed trim/loop/extend, ducking, room tone from quiet clip regions, and
+chosen dialogue/master LUFS. Output length is the arrangement length.
 
-The old Modal worker does not understand `studio` jobs. Coordinate migration,
-worker redeploy and app release before accepting studio submissions. This PR
-does not deploy Modal or change secrets.
+**The first successful export is included.** Re-exports charge
+`ceil(arrangement duration/60)` minutes. A parent-row lock reserves at most one
+free in-flight export, preventing concurrent free renders. Failed exports charge
+nothing and release the free reservation. Exports have unique marker input paths;
+the original upload uniqueness constraint is retained. Render settings and the
+arrangement snapshot are server-validated. Audio is never mixed for export in the
+browser. See [billing details](docs/studio-daw/BILLING.md).
 
-**Checks.** `npm test`, `npm run typecheck`, `npm run build`, and
-`python -m unittest discover -s workers/tests -v`. Isolated Playwright desk tests
-cover both Phase 1 and Audio Studio, including ZIP payload, required choices,
-status polling, subtitle export, private report retrieval, confidence warnings,
-reload, mobile overflow and reduced motion:
+### Release and verification
+
+Do not merge or deploy automatically. After merge, a human must apply
+`supabase/migrations/20261024003917_studio_daw.sql` and redeploy
+`timeline-tools-worker`, including its T4 ASR function and model Volume. Coordinate
+app/worker rollout before accepting v2 sessions. No live migrations, secrets,
+Cashfree, prices or other desks are changed by this implementation.
+
+Run `npm test`, `npm run typecheck`, `npm run build`,
+`python -m unittest workers.tests.test_studio`, and the isolated desk suite:
 
 ```sh
 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54331 \
@@ -350,4 +347,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=desk-test-key npm run build
 npx playwright test --config=playwright.desk.config.ts
 ```
 
-The `desk` CI job runs this fixture build without live account credentials.
+ASR is mocked in default unit tests. `STUDIO_REAL_ASR=1 python -m unittest
+workers.tests.test_studio.Pipeline.test_real_tiny_asr` opts into a real tiny model
+download. Model accuracy and GPU COGS need a real speech benchmark after the human
+worker rollout; no measured GPU cost is claimed from fixture tests. See
+[ASR and COGS](docs/studio-daw/ASR-COGS.md).

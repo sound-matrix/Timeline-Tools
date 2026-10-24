@@ -8,10 +8,14 @@ export function processingSettings(type: JobType, values: Choices) {
       : undefined;
   if (type === "studio")
     return {
+      line_gap_ms: n("lineGap"),
+      match_strictness: values.matchStrictness || undefined,
       dialogue_lufs: n("dialogueLufs"),
       master_lufs: n("masterLufs"),
       has_bed: values.hasBed === true,
-      ...(values.hasBed === true ? { ducking_db: n("duckingDb") } : {}),
+      ...(values.hasBed === true
+        ? { ducking_db: n("duckingDb"), bed_fit: values.bedFit || undefined }
+        : {}),
       room_tone:
         values.roomTone === "off"
           ? { enabled: false }

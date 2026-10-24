@@ -7,7 +7,9 @@ export default async function Page() {
   const { user, plan, db } = await studioContext();
   const { data: last } = await db
     .from("jobs")
-    .select("id,file_name,status,error,duration_sec,output_paths")
+    .select(
+      "id,file_name,status,error,error_code,error_detail,duration_sec,output_paths",
+    )
     .eq("user_id", user.id)
     .eq("type", "studio")
     .order("created_at", { ascending: false })
@@ -19,6 +21,8 @@ export default async function Page() {
         fileName: last.file_name,
         status: last.status,
         error: last.error,
+        errorCode: last.error_code,
+        errorDetail: last.error_detail,
         durationSec: last.duration_sec,
         downloads:
           last.status === "done"
@@ -32,8 +36,8 @@ export default async function Page() {
         <p className="eyebrow">YOUR SOUND, IN SYNC</p>
         <h2>Audio Studio</h2>
         <p className="muted">
-          Bring your guide, voices and script together. Align, mix and master in
-          one private workspace.
+          Upload your script and audio clips. Arrange by script, edit your
+          timeline, then export your mix.
         </p>
       </div>
       <AudioStudio
@@ -42,6 +46,7 @@ export default async function Page() {
         initial={initial}
       />
       <ToolJobs userId={user.id} type="studio" />
+      <ToolJobs userId={user.id} type="studio_export" />
     </>
   );
 }

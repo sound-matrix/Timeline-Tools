@@ -17,6 +17,9 @@ test("studio requires explicit choices, preserves zeros and rejects blank/nonfin
   assert.equal(valid(fixture), true);
   assert.equal(valid(processingSettings("studio", {})), false);
   const choices = {
+    lineGap: "250",
+    matchStrictness: "normal",
+    bedFit: "trim",
     dialogueLufs: "-23",
     masterLufs: "-16",
     hasBed: true,
@@ -71,6 +74,7 @@ test("studio refines bed, subtitle formats and room tone state", () => {
     subtitles: { enabled: false },
   };
   delete noBed.ducking_db;
+  delete noBed.bed_fit;
   assert.equal(valid(noBed), true);
   assert.ok(Buffer.byteLength(JSON.stringify(fixture)) < 8192);
 });
@@ -95,7 +99,6 @@ test("plain and timed scripts retain speaker labels and Unicode; timed exports s
     "a".repeat(65537),
     "x\n".repeat(301),
     "00:02.000 --> 00:01.000\ninvalid",
-    "1\n00:00:01,000 --> 00:00:03,000\nOne\n\n2\n00:00:02,000 --> 00:00:04,000\nTwo",
   ])
     assert.throws(() => parseScript(script));
   assert.equal(
