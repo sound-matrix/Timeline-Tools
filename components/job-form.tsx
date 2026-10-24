@@ -7,6 +7,8 @@ import ProcessingStatus from "./processing-status";
 import { uploadFile } from "@/lib/upload";
 import { browserClient } from "@/lib/supabase/client";
 import { extensions, jobSchema, type JobType } from "@/lib/settings";
+import { withDefaults, DEFAULT_HELP } from "@/lib/defaults";
+import { fieldErrors } from "@/lib/validation";
 import type { ProcessingState } from "@/lib/job-status";
 import ProcessingControls from "./processing-controls";
 import { processingSettings, type Choices } from "@/lib/processing-form";
@@ -29,12 +31,13 @@ export default function JobForm({
   const [message, setMessage] = useState("");
   const [over, setOver] = useState(false);
   const [live, setLive] = useState<ProcessingState | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [choices, setChoices] = useState<Choices>({});
   const running = live?.status === "queued" || live?.status === "processing";
   const locked = busy || running;
   const selection = jobSchema.safeParse({
     type,
-    settings: processingSettings(type, choices),
+    settings: withDefaults(type, processingSettings(type, choices)),
   });
 
   function choose(f?: File) {
@@ -62,7 +65,17 @@ export default function JobForm({
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!file || locked || submitting.current || !selection.success) return;
+    if (locked || submitting.current) return;
+    setErrors({});
+    if (!file) {
+      setMessage("Choose at least one audio or video file.");
+      return;
+    }
+    if (!selection.success) {
+      setErrors(fieldErrors(selection.error.issues));
+      setMessage("Check the highlighted processing settings.");
+      return;
+    }
     submitting.current = true;
     setBusy(true);
     setMessage("");
@@ -134,7 +147,7 @@ export default function JobForm({
   return (
     <div className="processing-desk">
       <StudioMotion type={type} active={live !== null} />
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <fieldset disabled={locked}>
           <section className="card upload-card" aria-label="Upload file">
             <p className="eyebrow">01 · YOUR FILE</p>
@@ -179,7 +192,7 @@ export default function JobForm({
               accept={extensions.map((e) => "." + e).join(",")}
               onChange={(e) => choose(e.target.files?.[0])}
             />
-            {message && <p role="alert">{message}</p>}
+
             {file && <InputPreview file={file} />}
           </section>
           {file && (
@@ -190,21 +203,21 @@ export default function JobForm({
               <p className="eyebrow">02 · PROCESSING</p>
               <h3>Your processing desk</h3>
               <p className="muted">
-                Enable the processes you need. Every setting is your choice.
+                Choose any settings, or leave them blank to use the defaults
+                described below.
               </p>
               <ProcessingControls
                 type={type}
                 values={choices}
                 setValues={setChoices}
+                errors={errors}
               />
             </section>
           )}
           <div className="processing-start">
-            <button
-              className="btn"
-              disabled={!file || locked || !selection.success}
-              aria-describedby={helpId}
-            >
+            {message && <p role="alert">{message}</p>}
+            {errors.settings && <p role="alert">{errors.settings}</p>}
+            <button className="btn" disabled={locked} aria-describedby={helpId}>
               {live?.status === "uploading" && busy
                 ? "Uploading…"
                 : busy || live?.status === "queued"
@@ -214,13 +227,9 @@ export default function JobForm({
                     : "Start Processing"}
             </button>
             <p id={helpId} className="muted">
-              {!file
-                ? "Choose a file to continue."
-                : !selection.success
-                  ? "Select your options above."
-                  : locked
-                    ? "Your processing session is active below."
-                    : "Your selected options are ready."}
+              {locked
+                ? "Your processing session is active below."
+                : DEFAULT_HELP[type as keyof typeof DEFAULT_HELP]}
             </p>
           </div>
         </fieldset>

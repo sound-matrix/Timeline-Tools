@@ -92,9 +92,9 @@ test("v2 ZIP, blank settings, real peak lanes, playback and server export choice
     name: "Start Processing",
     exact: true,
   });
-  await expect(start).toBeDisabled();
+  await expect(start).toBeEnabled();
   await files(page);
-  await expect(start).toBeDisabled();
+  await expect(start).toBeEnabled();
   await expect(page.getByLabel("Line gap (ms)", { exact: true })).toHaveValue(
     "",
   );
@@ -157,11 +157,11 @@ test("v2 ZIP, blank settings, real peak lanes, playback and server export choice
   const dialog = page.getByRole("dialog", { name: "Export your mix" });
   await expect(
     dialog.getByRole("button", { name: "Confirm export" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await dialog.getByLabel("MP3", { exact: true }).check();
   await expect(
     dialog.getByRole("button", { name: "Confirm export" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await dialog
     .getByLabel("MP3 bitrate (kbps)", { exact: true })
     .selectOption("320");

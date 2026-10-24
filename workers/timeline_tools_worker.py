@@ -12,11 +12,11 @@ app = modal.App('timeline-tools-worker')
 base = (modal.Image.debian_slim(python_version='3.12')
     .apt_install('ffmpeg', 'libsndfile1')
     .pip_install_from_requirements('workers/requirements.txt'))
-image = base.add_local_python_source('workers')
+image = base.add_local_python_source('workers').add_local_file('workers/defaults.json', '/root/workers/defaults.json')
 gpu_image = (base
     .pip_install('nvidia-cublas-cu12==12.8.4.1', 'nvidia-cudnn-cu12==9.10.2.21')
     .env({'LD_LIBRARY_PATH': '/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib'})
-    .add_local_python_source('workers'))
+    .add_local_python_source('workers').add_local_file('workers/defaults.json', '/root/workers/defaults.json'))
 models = modal.Volume.from_name('timeline-tools-asr-models', create_if_missing=True)
 secrets = modal.Secret.from_name('timeline-tools-supabase', required_keys=['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])
 
@@ -64,6 +64,8 @@ def handle_job(db, job, worker_id, url, key):
         # Never log exception messages/tracebacks: they may contain URLs or keys.
         print(f'job {job_id} step={failed_step or step} {type(error).__name__}')
     try:
+        from workers.defaults import with_defaults
+        job = {**job, 'settings': with_defaults(job['type'], job['settings'])}
         if job['type'] == 'studio_export':
             from workers.studio_export import validate_export
             validate_export(job['settings'])

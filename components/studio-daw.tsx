@@ -6,6 +6,7 @@ import {
   exportSettingsSchema,
   type Arrangement,
 } from "@/lib/arrangement";
+import { withDefaults } from "@/lib/defaults";
 import { alignmentReportSchema } from "@/lib/audio-studio";
 import { pcmWindow } from "@/lib/studio-preview";
 import StudioTimeline from "./studio-timeline";
@@ -570,7 +571,9 @@ export default function StudioDaw({
             : undefined,
     missing_lines: value("missing") || undefined,
   };
-  const validExport = exportSettingsSchema.safeParse(exportSettings);
+  const validExport = exportSettingsSchema.safeParse(
+    withDefaults("studio_export", exportSettings),
+  );
   async function exportMix() {
     if (!a || !validExport.success || saved !== "Saved" || conflict.current)
       return;
@@ -764,323 +767,368 @@ export default function StudioDaw({
       <p className="muted daw-mobile-note">
         Mobile: listen, seek and inspect. Editing is available on desktop.
       </p>
-      <div className="daw-scroll" ref={scroll}>
-        <div className="daw-surface" style={{ width: 180 + a.duration * zoom }}>
+      <div className="studio-workspace">
+        <div className="daw-scroll" ref={scroll}>
           <div
-            className="daw-ruler"
-            aria-label="Time ruler"
-            role="slider"
-            tabIndex={0}
-            aria-valuenow={playhead}
-            aria-valuemin={0}
-            aria-valuemax={a.duration}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                e.preventDefault();
-                e.stopPropagation();
-                seek(playhead + (e.key === "ArrowLeft" ? -1 : 1));
-              }
-            }}
-            onPointerDown={(e) => {
-              e.currentTarget.setPointerCapture(e.pointerId);
-              seek(
-                (e.clientX - e.currentTarget.getBoundingClientRect().left) /
-                  zoom,
-              );
-            }}
-            onPointerMove={(e) => {
-              if (e.buttons)
+            className="daw-surface"
+            style={{ width: 180 + a.duration * zoom }}
+          >
+            <div
+              className="daw-ruler"
+              aria-label="Time ruler"
+              role="slider"
+              tabIndex={0}
+              aria-valuenow={playhead}
+              aria-valuemin={0}
+              aria-valuemax={a.duration}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  seek(playhead + (e.key === "ArrowLeft" ? -1 : 1));
+                }
+              }}
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture(e.pointerId);
                 seek(
                   (e.clientX - e.currentTarget.getBoundingClientRect().left) /
                     zoom,
                 );
-            }}
-          >
-            {Array.from(
-              {
-                length: Math.min(
-                  200,
-                  Math.ceil(a.duration / (zoom < 15 ? 60 : 5)),
-                ),
-              },
-              (_, i) => (
-                <span key={i} style={{ left: i * (zoom < 15 ? 60 : 5) * zoom }}>
-                  {stamp(i * (zoom < 15 ? 60 : 5))}
-                </span>
-              ),
-            )}
-          </div>
-          {a.lanes.map((l) => (
-            <div
-              className="daw-lane"
-              data-lane={l.id}
-              key={l.id}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const i = Number(e.dataTransfer.getData("text/plain"));
-                const u = a.unplaced[i];
-                if (!u || matchMedia("(max-width:700px)").matches) return;
-                commit({
-                  ...a,
-                  regions: [
-                    ...a.regions,
-                    {
-                      id: crypto.randomUUID(),
-                      lane: l.id,
-                      kind: "clip",
-                      clip: u.clip,
-                      src_start: u.src_start,
-                      src_end: u.src_end,
-                      start: Math.max(
-                        0,
-                        (e.clientX -
-                          e.currentTarget.getBoundingClientRect().left -
-                          180) /
-                          zoom,
-                      ),
-                      gain_db: 0,
-                      line: 0,
-                      confidence: 0,
-                    },
-                  ],
-                  unplaced: a.unplaced.filter((_, j) => j !== i),
-                });
+              }}
+              onPointerMove={(e) => {
+                if (e.buttons)
+                  seek(
+                    (e.clientX - e.currentTarget.getBoundingClientRect().left) /
+                      zoom,
+                  );
               }}
             >
+              {Array.from(
+                {
+                  length: Math.min(
+                    200,
+                    Math.ceil(a.duration / (zoom < 15 ? 60 : 5)),
+                  ),
+                },
+                (_, i) => (
+                  <span
+                    key={i}
+                    style={{ left: i * (zoom < 15 ? 60 : 5) * zoom }}
+                  >
+                    {stamp(i * (zoom < 15 ? 60 : 5))}
+                  </span>
+                ),
+              )}
+            </div>
+            {a.lanes.map((l) => (
               <div
-                className="daw-lane-controls"
-                style={{ borderLeft: `3px solid ${l.color}` }}
+                className="daw-lane"
+                data-lane={l.id}
+                key={l.id}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const i = Number(e.dataTransfer.getData("text/plain"));
+                  const u = a.unplaced[i];
+                  if (!u || matchMedia("(max-width:700px)").matches) return;
+                  commit({
+                    ...a,
+                    regions: [
+                      ...a.regions,
+                      {
+                        id: crypto.randomUUID(),
+                        lane: l.id,
+                        kind: "clip",
+                        clip: u.clip,
+                        src_start: u.src_start,
+                        src_end: u.src_end,
+                        start: Math.max(
+                          0,
+                          (e.clientX -
+                            e.currentTarget.getBoundingClientRect().left -
+                            180) /
+                            zoom,
+                        ),
+                        gain_db: 0,
+                        line: 0,
+                        confidence: 0,
+                      },
+                    ],
+                    unplaced: a.unplaced.filter((_, j) => j !== i),
+                  });
+                }}
               >
-                <b>{l.name}</b>
-                <div className="daw-edit">
-                  <label>
-                    <input
-                      type="checkbox"
-                      aria-label={`Mute ${l.name}`}
-                      checked={l.mute}
-                      onChange={(e) =>
-                        commit({
-                          ...a,
-                          lanes: a.lanes.map((x) =>
-                            x.id === l.id
-                              ? { ...x, mute: e.target.checked }
-                              : x,
-                          ),
-                        })
-                      }
-                    />
-                    Mute
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      aria-label={`Solo ${l.name}`}
-                      checked={l.solo}
-                      onChange={(e) =>
-                        commit({
-                          ...a,
-                          lanes: a.lanes.map((x) =>
-                            x.id === l.id
-                              ? { ...x, solo: e.target.checked }
-                              : x,
-                          ),
-                        })
-                      }
-                    />
-                    Solo
-                  </label>
-                  <label>
-                    Gain
-                    <input
-                      type="number"
-                      min={-60}
-                      max={24}
-                      aria-label={`Gain ${l.name}`}
-                      value={l.gain_db}
-                      onChange={(e) => {
-                        if (e.target.value.trim())
+                <div
+                  className="daw-lane-controls"
+                  style={{ borderLeft: `3px solid ${l.color}` }}
+                >
+                  <b>{l.name}</b>
+                  <div className="daw-edit">
+                    <label>
+                      <input
+                        type="checkbox"
+                        aria-label={`Mute ${l.name}`}
+                        checked={l.mute}
+                        onChange={(e) =>
                           commit({
                             ...a,
                             lanes: a.lanes.map((x) =>
                               x.id === l.id
-                                ? {
-                                    ...x,
-                                    gain_db: Math.min(
-                                      24,
-                                      Math.max(-60, Number(e.target.value)),
-                                    ),
-                                  }
+                                ? { ...x, mute: e.target.checked }
                                 : x,
                             ),
-                          });
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
-              <div
-                className="daw-lane-track"
-                onPointerDown={(e) => {
-                  if (e.target === e.currentTarget)
-                    seek(
-                      (e.clientX -
-                        e.currentTarget.getBoundingClientRect().left) /
-                        zoom,
-                    );
-                }}
-              >
-                {a.regions
-                  .filter((r) => r.lane === l.id)
-                  .map((r) => (
-                    <div
-                      key={r.id}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Region ${a.lines[r.line]?.text ?? r.id}`}
-                      aria-pressed={selected === r.id}
-                      className={
-                        "daw-region" + (selected === r.id ? " selected" : "")
-                      }
-                      style={{
-                        left: r.start * zoom,
-                        width: Math.max(4, (r.src_end - r.src_start) * zoom),
-                        borderColor: l.color,
-                      }}
-                      onFocus={() => setSelected(r.id)}
-                      onClick={() => setSelected(r.id)}
-                      onPointerDown={(e) => pointerDown(e, r.id, "move")}
-                      onPointerMove={pointerMove}
-                      onPointerUp={pointerUp}
-                      onPointerCancel={pointerUp}
-                    >
-                      <span
-                        className="daw-trim start daw-edit"
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`Trim start ${r.id}`}
-                        onPointerDown={(e) => pointerDown(e, r.id, "start")}
-                        onKeyDown={(e) => {
-                          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            const v = Math.max(
-                              0,
-                              Math.min(
-                                r.src_end - 0.02,
-                                r.src_start +
-                                  (e.key === "ArrowRight" ? 0.01 : -0.01),
+                          })
+                        }
+                      />
+                      Mute
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        aria-label={`Solo ${l.name}`}
+                        checked={l.solo}
+                        onChange={(e) =>
+                          commit({
+                            ...a,
+                            lanes: a.lanes.map((x) =>
+                              x.id === l.id
+                                ? { ...x, solo: e.target.checked }
+                                : x,
+                            ),
+                          })
+                        }
+                      />
+                      Solo
+                    </label>
+                    <label>
+                      Gain
+                      <input
+                        type="number"
+                        min={-60}
+                        max={24}
+                        aria-label={`Gain ${l.name}`}
+                        value={l.gain_db}
+                        onChange={(e) => {
+                          if (e.target.value.trim())
+                            commit({
+                              ...a,
+                              lanes: a.lanes.map((x) =>
+                                x.id === l.id
+                                  ? {
+                                      ...x,
+                                      gain_db: Math.min(
+                                        24,
+                                        Math.max(-60, Number(e.target.value)),
+                                      ),
+                                    }
+                                  : x,
                               ),
-                            );
-                            changeRegion(r.id, {
-                              src_start: v,
-                              start: Math.max(0, r.start + v - r.src_start),
                             });
-                          }
                         }}
                       />
-                      {peaks[r.clip] ? (
-                        <Peaks
-                          values={peaks[r.clip]}
-                          start={r.src_start}
-                          end={r.src_end}
-                          color={l.color}
-                          zoom={zoom}
-                        />
-                      ) : (
-                        <span className="muted">Loading waveform…</span>
-                      )}
-                      <small>{a.lines[r.line]?.text}</small>
-                      <span
-                        className="daw-trim end daw-edit"
+                    </label>
+                  </div>
+                </div>
+                <div
+                  className="daw-lane-track"
+                  onPointerDown={(e) => {
+                    if (e.target === e.currentTarget)
+                      seek(
+                        (e.clientX -
+                          e.currentTarget.getBoundingClientRect().left) /
+                          zoom,
+                      );
+                  }}
+                >
+                  {a.regions
+                    .filter((r) => r.lane === l.id)
+                    .map((r) => (
+                      <div
+                        key={r.id}
                         role="button"
                         tabIndex={0}
-                        aria-label={`Trim end ${r.id}`}
-                        onPointerDown={(e) => pointerDown(e, r.id, "end")}
-                        onKeyDown={(e) => {
-                          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            changeRegion(r.id, {
-                              src_end: Math.max(
-                                r.src_start + 0.02,
+                        aria-label={`Region ${a.lines[r.line]?.text ?? r.id}`}
+                        aria-pressed={selected === r.id}
+                        className={
+                          "daw-region" + (selected === r.id ? " selected" : "")
+                        }
+                        style={{
+                          left: r.start * zoom,
+                          width: Math.max(4, (r.src_end - r.src_start) * zoom),
+                          borderColor: l.color,
+                        }}
+                        onFocus={() => setSelected(r.id)}
+                        onClick={() => setSelected(r.id)}
+                        onPointerDown={(e) => pointerDown(e, r.id, "move")}
+                        onPointerMove={pointerMove}
+                        onPointerUp={pointerUp}
+                        onPointerCancel={pointerUp}
+                      >
+                        <span
+                          className="daw-trim start daw-edit"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Trim start ${r.id}`}
+                          onPointerDown={(e) => pointerDown(e, r.id, "start")}
+                          onKeyDown={(e) => {
+                            if (
+                              e.key === "ArrowRight" ||
+                              e.key === "ArrowLeft"
+                            ) {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              const v = Math.max(
+                                0,
                                 Math.min(
-                                  a.clips.find((c) => c.id === r.clip)!
-                                    .duration,
-                                  r.src_end +
+                                  r.src_end - 0.02,
+                                  r.src_start +
                                     (e.key === "ArrowRight" ? 0.01 : -0.01),
                                 ),
-                              ),
-                            });
-                          }
-                        }}
-                      />
-                    </div>
-                  ))}
-                {a.missing
-                  .filter((m) => m.lane === l.id)
-                  .map((m) => (
-                    <div
-                      key={m.line}
-                      className="daw-missing"
-                      style={{ left: m.start * zoom, width: m.length * zoom }}
-                    >
-                      Missing line: {m.text}
-                    </div>
-                  ))}
+                              );
+                              changeRegion(r.id, {
+                                src_start: v,
+                                start: Math.max(0, r.start + v - r.src_start),
+                              });
+                            }
+                          }}
+                        />
+                        {peaks[r.clip] ? (
+                          <Peaks
+                            values={peaks[r.clip]}
+                            start={r.src_start}
+                            end={r.src_end}
+                            color={l.color}
+                            zoom={zoom}
+                          />
+                        ) : (
+                          <span className="muted">Loading waveform…</span>
+                        )}
+                        <small>{a.lines[r.line]?.text}</small>
+                        <span
+                          className="daw-trim end daw-edit"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Trim end ${r.id}`}
+                          onPointerDown={(e) => pointerDown(e, r.id, "end")}
+                          onKeyDown={(e) => {
+                            if (
+                              e.key === "ArrowRight" ||
+                              e.key === "ArrowLeft"
+                            ) {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              changeRegion(r.id, {
+                                src_end: Math.max(
+                                  r.src_start + 0.02,
+                                  Math.min(
+                                    a.clips.find((c) => c.id === r.clip)!
+                                      .duration,
+                                    r.src_end +
+                                      (e.key === "ArrowRight" ? 0.01 : -0.01),
+                                  ),
+                                ),
+                              });
+                            }
+                          }}
+                        />
+                      </div>
+                    ))}
+                  {a.missing
+                    .filter((m) => m.lane === l.id)
+                    .map((m) => (
+                      <div
+                        key={m.line}
+                        className="daw-missing"
+                        style={{ left: m.start * zoom, width: m.length * zoom }}
+                      >
+                        Missing line: {m.text}
+                      </div>
+                    ))}
+                </div>
               </div>
-            </div>
-          ))}
-          <div
-            className="daw-playhead"
-            style={{ left: 180 + playhead * zoom }}
-            role="slider"
-            tabIndex={0}
-            aria-label="Playhead"
-            aria-valuenow={playhead}
-            aria-valuemin={0}
-            aria-valuemax={a.duration}
-            onPointerDown={(e) => {
-              e.currentTarget.setPointerCapture(e.pointerId);
-              stop();
-            }}
-            onPointerMove={(e) => {
-              if (e.buttons)
-                seek(
-                  (e.clientX -
-                    e.currentTarget.parentElement!.getBoundingClientRect()
-                      .left -
-                    180) /
-                    zoom,
-                );
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                e.stopPropagation();
-                e.preventDefault();
-                seek(playhead + (e.key === "ArrowLeft" ? -0.1 : 0.1));
-              }
-            }}
-          />
+            ))}
+            <div
+              className="daw-playhead"
+              style={{ left: 180 + playhead * zoom }}
+              role="slider"
+              tabIndex={0}
+              aria-label="Playhead"
+              aria-valuenow={playhead}
+              aria-valuemin={0}
+              aria-valuemax={a.duration}
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture(e.pointerId);
+                stop();
+              }}
+              onPointerMove={(e) => {
+                if (e.buttons)
+                  seek(
+                    (e.clientX -
+                      e.currentTarget.parentElement!.getBoundingClientRect()
+                        .left -
+                      180) /
+                      zoom,
+                  );
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  seek(playhead + (e.key === "ArrowLeft" ? -0.1 : 0.1));
+                }
+              }}
+            />
+          </div>
         </div>
+        {selectedRegion && (
+          <label className="daw-edit">
+            Region gain (dB)
+            <input
+              type="number"
+              min={-60}
+              max={24}
+              value={selectedRegion.gain_db}
+              onChange={(e) => {
+                if (e.target.value.trim())
+                  changeRegion(selected, {
+                    gain_db: Math.min(
+                      24,
+                      Math.max(-60, Number(e.target.value)),
+                    ),
+                  });
+              }}
+            />
+          </label>
+        )}
+        <aside className="card daw-transcript" aria-label="Session transcript">
+          <h3>Transcript</h3>
+          <p className="muted">Read-only · select a line to seek.</p>
+          {a.lines.map((line) => {
+            const region = a.regions.find((r) => r.line === line.index);
+            return (
+              <button
+                type="button"
+                className="btn ghost"
+                key={line.index}
+                aria-current={
+                  region &&
+                  playhead >= region.start &&
+                  playhead < region.start + region.src_end - region.src_start
+                    ? "true"
+                    : undefined
+                }
+                onClick={() => {
+                  seek(region?.start ?? 0);
+                  setSelected(region?.id ?? "");
+                }}
+              >
+                {line.speaker ? `${line.speaker}: ` : ""}
+                {line.text}
+              </button>
+            );
+          })}
+        </aside>
       </div>
-      {selectedRegion && (
-        <label className="daw-edit">
-          Region gain (dB)
-          <input
-            type="number"
-            min={-60}
-            max={24}
-            value={selectedRegion.gain_db}
-            onChange={(e) => {
-              if (e.target.value.trim())
-                changeRegion(selected, {
-                  gain_db: Math.min(24, Math.max(-60, Number(e.target.value))),
-                });
-            }}
-          />
-        </label>
-      )}
       <details open={a.unplaced.length > 0}>
         <summary>Unplaced segments ({a.unplaced.length})</summary>
         <div className="daw-unplaced">

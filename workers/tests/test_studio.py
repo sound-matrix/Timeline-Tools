@@ -203,3 +203,32 @@ class AsrCompatibility(unittest.TestCase):
    self.assertEqual(failed.args[1]['p_code'],code,step)
    self.assertNotIn('worker_prepare',[c.args[0] for c in db.rpc.call_args_list])
    log.assert_called_once_with(f'job {ID} step={step} {type(exception).__name__}')
+
+class AutoTranscript(unittest.TestCase):
+ def test_transcribe_arrangement_uses_order_and_speakers_without_matching(self):
+  from workers.defaults import with_defaults
+  p=dict(lines=[],manifest=dict(mode='transcribe',script=None,clips=[dict(file='one.wav',name='host.wav',speaker='Host'),dict(file='two.wav',name='guest.wav',speaker='')],bed=None),durations={'one.wav':3,'two.wav':3})
+  with patch('workers.studio_audio.matching',side_effect=AssertionError('No script matching')):
+   a=arrange(p,[segment('c0','hello',0,1,name='host.wav',speaker='Host'),segment('c1','welcome',.2,1.2,name='guest.wav')],with_defaults('studio',{}),ID)
+  self.assertEqual([l['name'] for l in a['lanes']],['Host','guest'])
+  self.assertEqual(a['regions'][1]['start'],1.3)
+  self.assertEqual(a['lines'][1]['text'],'welcome')
+ def test_no_script_gate_and_billing_before_asr(self):
+  from workers.timeline_tools_worker import handle_job
+  from workers.defaults import with_defaults
+  db=MagicMock();db.rpc.return_value.execute.return_value.data=True
+  with tempfile.TemporaryDirectory() as tmp:
+   folder=Path(tmp); path=folder/'source.zip'
+   manifest=dict(version=2,mode='transcribe',script=None,bed=None,clips=[dict(file='one.wav',name='one.wav',speaker='')])
+   with zipfile.ZipFile(path,'w',compression=zipfile.ZIP_STORED) as z:
+    z.writestr('manifest.json',json.dumps(manifest));z.writestr('one.wav',b'audio')
+   events=[]
+   def rpc(name,*args): events.append(name);return MagicMock(execute=lambda:MagicMock(data=True))
+   db.rpc.side_effect=rpc
+   def asr(*args): events.append('ASR');raise RuntimeError('asr unavailable')
+   def transfer(_u,_k,_p,d):shutil.copyfile(path,d)
+   with patch('workers.timeline_tools_worker.transfer_input',side_effect=transfer),patch('workers.studio_audio.duration',return_value=2),patch('workers.studio_audio.speech_regions',return_value=([(0,2)],[])),patch('workers.studio_audio.detect_language',side_effect=AssertionError('gate called')),patch('workers.studio_audio.script_language',side_effect=AssertionError('gate called')),patch('workers.timeline_tools_worker.studio_asr.remote',side_effect=asr),patch('workers.studio_audio.transcribe',side_effect=asr):
+    handle_job(db,dict(id=ID,user_id=ID,input_path=ID+'/input.zip',type='studio',settings={}), 'worker','https://invalid.test','secret')
+   self.assertLess(events.index('worker_prepare'),events.index('ASR'))
+   self.assertIn('worker_fail',events)
+   self.assertEqual(db.rpc.call_args_list[-1].args[1]['p_code'],'processing')

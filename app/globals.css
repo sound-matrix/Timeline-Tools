@@ -2880,3 +2880,11 @@ select {
   width: 20px;
   margin: 0;
 }
+
+.daw-transcript { max-height: 28rem; overflow: auto; }
+.daw-transcript .btn { display: block; text-align: left; white-space: normal; margin-block: .4rem; }
+.daw-transcript [aria-current="true"] { border-color: var(--accent, #818cf8); }
+small[role="alert"] { display: block; color: #fda4af; }
+.studio-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 28%); gap: 1rem; align-items: start; }
+.studio-workspace > * { min-width: 0; }
+@media (max-width: 900px) { .studio-workspace { grid-template-columns: minmax(0, 1fr); } }

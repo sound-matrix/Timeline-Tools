@@ -103,13 +103,16 @@ def unpack(source, folder):
     try:
         with zipfile.ZipFile(source) as z:
             infos=z.infolist(); names=[i.filename for i in infos]
-            if not 3<=len(infos)<=204 or len(set(names))!=len(names) or sum(i.file_size for i in infos)>MAX_BYTES: raise ValueError('Invalid bundle')
+            if not 2<=len(infos)<=204 or len(set(names))!=len(names) or sum(i.file_size for i in infos)>MAX_BYTES: raise ValueError('Invalid bundle')
             for i in infos:
                 if not re.fullmatch(r'[A-Za-z0-9_-]+\.[a-z0-9]+',i.filename) or i.compress_type!=zipfile.ZIP_STORED or i.flag_bits&1 or (i.external_attr>>16)&0o170000==0o120000: raise ValueError('Unsafe bundle')
             if z.getinfo('manifest.json').file_size>131072: raise ValueError('Manifest too large')
             m=json.loads(z.read('manifest.json'))
             if m.get('version') not in (1,2): raise ValueError('Invalid version')
-            if set(m) != ({'version','guide','voices','bed','script'} if m['version']==1 else {'version','clips','bed','script'}): raise ValueError('Invalid manifest')
+            expected = {'version','guide','voices','bed','script'} if m['version']==1 else {'version','clips','bed','script'}
+            if set(m) not in (expected, expected|{'mode'} if m['version']==2 else expected): raise ValueError('Invalid manifest')
+            mode = m.get('mode', 'transcribe' if m.get('script') is None and m['version']==2 else 'script')
+            if mode not in ('script','transcribe') or (mode=='transcribe' and (m['version']!=2 or m['script'] is not None)) or (mode=='script' and m['script'] is None): raise ValueError('Invalid mode')
             clips=m.get('clips',m.get('voices'))
             if not isinstance(clips,list) or not 1<=len(clips)<=200: raise ValueError('Use 1-200 clips')
             def media(n): return isinstance(n,str) and n in names and n.split('.')[-1] in MEDIA
@@ -118,17 +121,18 @@ def unpack(source, folder):
                 c.setdefault('speaker','')
             if m['bed'] is not None and not media(m['bed']): raise ValueError('Invalid bed')
             script=m['script']
-            if script not in ('script.txt','script.srt','script.vtt') or z.getinfo(script).file_size>65536: raise ValueError('Invalid script')
-            required=['manifest.json',script]+[c['file'] for c in clips]+([m['bed']] if m['bed'] else [])
+            if script is not None and (script not in ('script.txt','script.srt','script.vtt') or z.getinfo(script).file_size>65536): raise ValueError('Invalid script')
+            media_names=[c['file'] for c in clips]+([m['bed']] if m['bed'] else [])
+            required=['manifest.json']+([script] if script else [])+media_names
             # v1 guide is accepted for compatibility, but NEVER read, extracted, probed or billed.
             allowed=set(required)|({m['guide']} if m['version']==1 and isinstance(m['guide'],str) else set())
             if len(set(required))!=len(required) or set(names)!=allowed: raise ValueError('Unexpected members')
-            lines=parse_script(z.read(script).decode('utf-8-sig'))
+            lines=parse_script(z.read(script).decode('utf-8-sig')) if script else []
             folder.mkdir(exist_ok=True)
-            for name in required[2:]:
+            for name in media_names:
                 with z.open(name) as src, (folder/name).open('wb') as dst:
                     while chunk:=src.read(1024*1024): dst.write(chunk)
-            return dict(version=2,clips=clips,bed=m['bed'],script=script),lines
+            return dict(version=2,clips=clips,bed=m['bed'],script=script,mode=mode),lines
     except (zipfile.BadZipFile,KeyError,TypeError,UnicodeError,json.JSONDecodeError) as e: raise ValueError('Invalid studio bundle') from e
 
 
@@ -175,16 +179,19 @@ def prepare(source,folder,settings=None,detector=None,on_step=None):
     if max(durations.values())>3600 or sum(durations.values())>7200: raise ValueError('60 minutes per file / 120 minutes combined')
     step('studio_decode')
     regions={n:speech_regions(assets/n,durations[n]) for n in names}
-    step('studio_language_gate')
-    lang=script_language(' '.join(l['text'] for l in lines)); languages=[]
-    for i,c in enumerate(m['clips']):
-        code,prob=(detector or detect_language)(assets/c['file'],regions[c['file']][0],folder,i)
-        languages.append(dict(name=c['name'],lang=code,prob=prob,uncertain=prob<.5))
+    lang=None; languages=[]
+    if m['script'] is not None:
+        step('studio_language_gate')
+        lang=script_language(' '.join(l['text'] for l in lines))
+        for i,c in enumerate(m['clips']):
+            code,prob=(detector or detect_language)(assets/c['file'],regions[c['file']][0],folder,i)
+            languages.append(dict(name=c['name'],lang=code,prob=prob,uncertain=prob<.5))
     detail=dict(script_lang=lang,clips=languages)
-    if any(c['prob']>=.5 and c['lang']!=lang for c in languages): raise LanguageMismatch(detail)
+    if lang and any(c['prob']>=.5 and c['lang']!=lang for c in languages): raise LanguageMismatch(detail)
     step('studio_plan')
     gap=(settings or {}).get('line_gap_ms',0)/1000
     seconds=sum(b-a for c in m['clips'] for a,b in regions[c['file']][0])+max(0,len(lines)-1)*gap
+    if m['mode']=='transcribe': seconds=sum(durations.values())
     # Reserve missing-line silence in the estimate, preventing later underfunded processing.
     seconds=max(.001,seconds)
     if m['bed'] and (settings or {}).get('bed_fit')=='extend': seconds=max(seconds,durations[m['bed']])
@@ -196,7 +203,7 @@ def transcribe(project,device='cpu'):
     from faster_whisper import BatchedInferencePipeline
     pipeline=BatchedInferencePipeline(model=model(device))
     for i,c in enumerate(project['manifest']['clips']):
-        segments,_=pipeline.transcribe(str(project['assets']/c['file']),language=project['languages']['script_lang'],word_timestamps=True,vad_filter=True,batch_size=8 if device=='cuda' else 2)
+        segments,_=pipeline.transcribe(str(project['assets']/c['file']),language=project['languages'].get('script_lang'),word_timestamps=True,vad_filter=True,batch_size=8 if device=='cuda' else 2)
         for segment in segments:
             words=getattr(segment,'words',None)
             groups=[]; group=[]
@@ -254,7 +261,16 @@ def matching(lines,segments):
 
 
 def arrange(project,segments,settings,job_id):
-    lines=project['lines']; matches,used=matching(lines,segments); byline={}
+    lines=project['lines']; byline={}
+    if project['manifest'].get('mode')=='transcribe':
+        # ASR emits clip order, then monotonic segment order. No text matching or
+        # language gate for an absent script; preserve speech on speaker lanes.
+        if not segments: raise ValueError('No speech detected')
+        if len(segments)>2000: raise ValueError('Transcript exceeds 2000 segments')
+        lines=[dict(text=s['text'][:1000],speaker=s.get('speaker') or Path(s['name']).stem[:60]) for s in segments]
+        matches=[([i],[i],1.0) for i in range(len(segments))]; used=set(range(len(segments)))
+    else:
+        matches,used=matching(lines,segments)
     for ss,ll,score in matches:
         first,last=segments[ss[0]],segments[ss[-1]]; start,end=first['src_start'],last['src_end']
         weights=[max(1,len(normal(lines[j]['text']))) for j in ll]; total=sum(weights); cursor=start
@@ -322,7 +338,7 @@ def mix(project,folder,settings,job_id=None,segments=None):
     a=arrange(project,segments if segments is not None else transcribe(project),settings,job_id or '00000000-0000-4000-8000-000000000000')
     outputs=normalize_clips(project,folder,settings)
     path=folder/'arrangement-r1.json'; path.write_text(json.dumps(a,ensure_ascii=False,allow_nan=False)); outputs.append(path)
-    report=folder/'report.json'; report.write_text(json.dumps(dict(method='script-match-v1',note=NOTE,languages=project['languages'],asr=project.get('asr',{'model':'small','device':'cpu-fallback','cost_measurement':'Not measured'}),missing=a['missing'],unplaced=a['unplaced'],matches=a['regions'],low_confidence=[r['id'] for r in a['regions'] if r['confidence']<{'strict':.85,'normal':.7,'loose':.5}[settings['match_strictness']]]),ensure_ascii=False)); outputs.append(report)
+    report=folder/'report.json'; report.write_text(json.dumps(dict(method='auto-transcribe-v1' if project['manifest'].get('mode')=='transcribe' else 'script-match-v1',note=NOTE,languages=project['languages'],asr=project.get('asr',{'model':'small','device':'cpu-fallback','cost_measurement':'Not measured'}),missing=a['missing'],unplaced=a['unplaced'],matches=a['regions'],low_confidence=[r['id'] for r in a['regions'] if r['confidence']<{'strict':.85,'normal':.7,'loose':.5}[settings['match_strictness']]]),ensure_ascii=False)); outputs.append(report)
     if settings['subtitles']['enabled']:
         cues=[SimpleNamespace(start=r['start'],end=r['start']+r['src_end']-r['src_start'],text=(a['lines'][r['line']]['speaker']+': ' if a['lines'][r['line']]['speaker'] else '')+a['lines'][r['line']]['text']) for r in a['regions']]
         outputs+=write_subtitles(cues,folder,settings['subtitles']['formats'])

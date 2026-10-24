@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { jobSchema, extensions } from "@/lib/settings";
+import { withDefaults } from "@/lib/defaults";
 export async function POST(request: Request) {
   if (request.headers.get("origin") !== new URL(request.url).origin)
     return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
@@ -11,7 +12,20 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
-  const parsed = jobSchema.safeParse(body);
+  if (!body || typeof body !== "object" || Array.isArray(body))
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  const parsed = jobSchema.safeParse({
+    ...body,
+    settings: withDefaults(body.type, body.settings),
+  });
+  if (!parsed.success)
+    return NextResponse.json(
+      {
+        error: "Check the processing settings below.",
+        issues: parsed.error.issues,
+      },
+      { status: 400 },
+    );
   if (parsed.success && parsed.data.type === "studio_export") {
     if (!Number.isInteger(body.expected_cost) || body.expected_cost < 0)
       return NextResponse.json(

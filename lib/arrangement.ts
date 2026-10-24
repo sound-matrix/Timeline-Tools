@@ -41,7 +41,7 @@ export const arrangementSchema = z
           src_end: time,
           start: time,
           gain_db: gain,
-          line: z.number().int().min(0).max(299),
+          line: z.number().int().min(0).max(1999),
           confidence: z.number().min(0).max(1),
         }),
       )
@@ -49,7 +49,7 @@ export const arrangementSchema = z
     missing: z
       .array(
         z.object({
-          line: z.number().int().min(0).max(299),
+          line: z.number().int().min(0).max(1999),
           lane: id,
           start: time,
           length: time.positive(),
@@ -70,13 +70,13 @@ export const arrangementSchema = z
     lines: z
       .array(
         z.object({
-          index: z.number().int().min(0).max(299),
+          index: z.number().int().min(0).max(1999),
           speaker: z.string().max(60),
           text: z.string().max(1000),
         }),
       )
       .min(1)
-      .max(300),
+      .max(2000),
   })
   .strict()
   .superRefine((a, ctx) => {
