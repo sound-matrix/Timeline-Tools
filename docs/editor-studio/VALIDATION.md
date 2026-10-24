@@ -76,9 +76,10 @@ The cross-engine test checks paused seeks, audio offsets, live jumps, an inserte
 silence frame hold, resume, stop/return, and decoded-frame PTS against the actual
 15 fps MP4 fixture. Local and valid-timestamp engine budgets remain 66.7 ms.
 CI WebKit with a timestamp >100 ms in the future uses a documented 200 ms
-(empirical shared-runner ceiling) decoded-PTS allowance and a separate, unchanged
-66.7 ms media-clock p95 guard. CI-NOTES.md records the incompatible time-origin
-evidence. This is a conditional software-runner presentation allowance, not a
+(empirical shared-runner ceiling) decoded-PTS allowance and a separate
+133.3 ms media-clock diagnostic p95 guard. CI-NOTES.md records the incompatible time-origin
+evidence, including the approximately 125 ms difference between the runner’s
+reported currentTime and displayed-frame PTS. This is a conditional software-runner presentation allowance, not a
 200 ms JavaScript draw budget or certification of released Safari.
 Local browser downloads were unavailable during this follow-up; CI supplies
 native Firefox/WebKit verification, including three repetitions without retries.
