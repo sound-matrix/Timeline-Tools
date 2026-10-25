@@ -19,6 +19,7 @@ export default async function ToolJobs({
   return (
     <JobsTable
       jobs={data ?? []}
+      subtitleEditor={type === "subtitles"}
       title={type.endsWith("_export") ? "Recent exports" : "Recent jobs"}
     />
   );

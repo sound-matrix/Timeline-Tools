@@ -414,3 +414,23 @@ web app (the list requires `archived_at`). Existing master/track insert JSON nee
 no migration. Redeploy the audio worker with
 `modal deploy -m workers.timeline_tools_worker` to pick up the corrected insert
 order and normalization ceiling in cloud exports.
+
+### Subtitle result editor
+
+`/subs` opens the newest completed subtitle job and offers **Open editor** on older
+jobs. Cue-list and SRT-source views share undo/redo, timing validation and literal
+find/replace. Valid edits save automatically after a short pause; **Save edits**
+retries a failed save. Invalid source text stays in the editor until corrected.
+Downloads are generated locally as SRT, VTT, TXT, segment JSON or basic ASS.
+**Revert to original** restores the immutable worker output and saves that version.
+Source audio preview is optional and disappears if the upload has expired.
+
+Apply `supabase/migrations/20261025093906_subtitle_edits.sql` before deploying this
+feature. It adds the owner-only `subtitle_edits` table; existing job and storage
+policies and original subtitle outputs are unchanged. No worker deployment is
+needed. Originals load through the existing signed download route, preferring
+segment JSON, then SRT, then VTT (including jobs that requested only VTT).
+
+Verification: `node --test tests/subtitles.test.mjs tests/subtitle-edits-db.test.mjs`
+and `npx playwright test --config=playwright.desk.config.ts subtitles.spec.ts`
+(using the fixture environment and production build documented in `tests/README.md`).

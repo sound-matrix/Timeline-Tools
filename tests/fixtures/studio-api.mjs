@@ -36,6 +36,7 @@ const profile = {
   suspended: false,
 };
 const plan = { id: "test", name: "Test plan", max_file_mb: 25 };
+let subtitleEdits = {}, subtitleOutputs = {};
 let podcasts = {};
 let editors={}, editorAssets={},editorVersions={};
 let jobs = [],
@@ -102,6 +103,7 @@ createServer(async (req, res) => {
   if (url.pathname === "/__reset") {
     profile.role = "user";
     jobs = [];
+    subtitleEdits = {}; subtitleOutputs = {};
     podcasts = {};editors={};editorAssets={};editorVersions={};
     reports = {};
     arrangements = {};
@@ -114,6 +116,7 @@ createServer(async (req, res) => {
   }
   if (url.pathname === "/__requests") return send(requests);
   if (url.pathname === "/__job") {
+    if (body.subtitleOutputs) Object.assign(subtitleOutputs, body.subtitleOutputs);
     if (body.podcast) podcasts[body.id] = body.podcast;
     if (body.report) reports[body.id] = body.report;
     if (body.arrangement)
@@ -251,9 +254,14 @@ createServer(async (req, res) => {
     a.revision++;
     return send(a.revision);
   }
+  if (url.pathname.startsWith("/storage/v1/object/sign/uploads/")) return send({message:"Source expired"},404);
+  if (url.pathname.includes("/object/public/outputs/") && subtitleOutputs[url.pathname.split("/outputs/")[1]] !== undefined) {
+    res.writeHead(200,{...headers,"Content-Type":"text/plain"});
+    return res.end(subtitleOutputs[url.pathname.split("/outputs/")[1]]);
+  }
   if (url.pathname.startsWith("/storage/v1/object/sign/outputs/")) {
     return send({
-      signedURL: "/object/public/outputs/" + url.pathname.split("/outputs/")[1],
+      signedURL: "/object/public/outputs/" + url.pathname.split("/outputs/")[1] + "?token=fixture",
     });
   }
   if (
@@ -292,6 +300,10 @@ createServer(async (req, res) => {
   }
   if (url.pathname.startsWith("/storage/v1/object/"))
     return send({ Key: "uploads/test.wav", Id: jobId });
+  if (url.pathname === "/rest/v1/subtitle_edits") {
+    if (req.method === "POST") { subtitleEdits[body.job_id] = body; return send(body); }
+    return send(subtitleEdits[url.searchParams.get("job_id")?.slice(3)] ?? null);
+  }
   if (url.pathname === "/rest/v1/profiles") return send(profile);
   if (url.pathname === "/rest/v1/plans") return send(plan);
   if (url.pathname === "/rest/v1/jobs") {
