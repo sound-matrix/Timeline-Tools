@@ -153,6 +153,7 @@ test("Podcast file-only start, speaker lanes, synchronized edits, autosave and d
     .click();
   await expect(page).toHaveURL(/editor\/[0-9a-f-]{36}/);
   await expect(page.getByRole("main", { name: "Editor Studio" })).toBeVisible();
+  await page.getByRole("button", { name: "Library", exact: true }).click();
   await expect(
     page.getByText(
       "Podcast word edits are kept as non-destructive overlays in playback and exports.",

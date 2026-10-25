@@ -1,38 +1,6 @@
-import { test as base, expect } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./editor-fixture";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-// WebKit's ephemeral sessions cannot persist IDB File/Blob values (upstream
-// microsoft/playwright#42795). A fresh persistent profile models normal Safari.
-const test = base.extend({
-  context: async (
-    {
-      context,
-      browserName,
-      playwright,
-      launchOptions,
-      baseURL,
-      viewport,
-      headless,
-    },
-    use,
-  ) => {
-    if (browserName !== "webkit") {
-      await use(context);
-      return;
-    }
-    const regular = await playwright.webkit.launchPersistentContext("", {
-      ...launchOptions,
-      baseURL,
-      viewport,
-      headless,
-      acceptDownloads: true,
-    });
-    try {
-      await use(regular);
-    } finally {
-      await regular.close();
-    }
-  },
-});
 test.skip(!process.env.DESK_FIXTURE, "Use fixture config");
 test.beforeEach(async ({ page }) => {
   page.on("pageerror", (error) =>
@@ -170,25 +138,27 @@ test("blank Editor: OS drop three clips, split/move/fade/history, save/reload, f
   await page.getByRole("region", { name: "DAW timeline", exact: true }).focus();
   await page.keyboard.press("s");
   await expect(
-    page.getByText("Regions (6) · select with keyboard"),
+    page.locator(".daw-toolstrip").getByText("6 clips", { exact: false }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(
-    page.getByText("Regions (3) · select with keyboard"),
+    page.locator(".daw-toolstrip").getByText("3 clips", { exact: false }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Redo", exact: true }).click();
   await page.mouse.move(b.x + 205, b.y + 80);
   await page.mouse.down();
   await page.mouse.move(b.x + 220, b.y + 80, { steps: 5 });
   await page.mouse.up();
-  await page.getByLabel("Fade in (default 0 s)", { exact: true }).fill("0.1");
+  await page.getByRole("button", { name: "Dock · X" }).click();
+  await page.getByRole("tab", { name: "Regions", exact: true }).click();
+  await page.getByLabel("Fade in", { exact: true }).fill("0.1");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByRole("status", { name: "Editor save status" }),
   ).toHaveText("Saved");
   await page.reload();
   await expect(
-    page.getByText("Regions (6) · select with keyboard"),
+    page.locator(".daw-toolstrip").getByText("6 clips", { exact: false }),
   ).toBeVisible();
   await page.screenshot({ path: info.outputPath("editor-studio.png") });
   await page.getByRole("button", { name: "Export", exact: true }).click();
@@ -351,7 +321,7 @@ test("reload during peak generation resumes the original file and saves exactly 
     .getByLabel("Import audio files", { exact: true })
     .setInputFiles(sourcePath);
   await expect(
-    page.getByText("Regions (1) · select with keyboard"),
+    page.locator(".daw-toolstrip").getByText("1 clips", { exact: false }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
@@ -366,7 +336,7 @@ test("reload during peak generation resumes the original file and saves exactly 
     page.getByRole("status", { name: "Editor save status" }),
   ).toHaveText("Saved", { timeout: 20000 });
   await expect(
-    page.getByText("Regions (1) · select with keyboard"),
+    page.locator(".daw-toolstrip").getByText("1 clips", { exact: false }),
   ).toBeVisible();
   await expect(page.locator(".pro-header")).toHaveCount(1);
   await page.getByRole("button", { name: "Export", exact: true }).click();
@@ -404,10 +374,11 @@ test("an interrupted local storage write leaves Editor usable and import can be 
     buffer: wave(2, 770),
   };
   await input.setInputFiles(file);
+  await page.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.locator(".editor-upload [role=alert]")).toBeVisible();
   await expect(page.getByRole("main", { name: "Editor Studio" })).toBeVisible();
   await expect(
-    page.getByText("Regions (0) · select with keyboard"),
+    page.locator(".daw-toolstrip").getByText("0 clips", { exact: false }),
   ).toBeVisible();
   await page.evaluate(() => {
     (window as any).__restorePut();
@@ -415,7 +386,7 @@ test("an interrupted local storage write leaves Editor usable and import can be 
   });
   await input.setInputFiles(file);
   await expect(
-    page.getByText("Regions (1) · select with keyboard"),
+    page.locator(".daw-toolstrip").getByText("1 clips", { exact: false }),
   ).toBeVisible();
   await expect(
     page.getByRole("status", { name: "Editor save status" }),
@@ -509,6 +480,7 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
     });
   });
   await page.goto(`/editor/new?source=podcast&job=${id}`);
+  await page.getByRole("button", { name: "Library", exact: true }).click();
   const video = page.getByLabel("Podcast video preview", { exact: true });
   await expect(video).toBeVisible();
   await expect
@@ -517,7 +489,7 @@ test("Podcast fork preview follows paused seeks, live jumps and inserted silence
   const canvas = page.getByLabel("Timeline waveform canvas"),
     box = (await canvas.boundingBox())!;
   const seek = (time: number) =>
-    page.mouse.click(box.x + 180 + time * 50, box.y + 15);
+    page.mouse.click(box.x + 200 + time * 50, box.y + 15);
   await seek(2.4);
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))

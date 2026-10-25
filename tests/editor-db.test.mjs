@@ -25,17 +25,56 @@ test("Editor RLS: foreign users cannot read/save/register, source assets are val
       null,
     ]);
     let a = blankArrangement(id);
+    await db.query("update public.editor_projects set name=$1 where id=$2", [
+      "Renamed",
+      id,
+    ]);
+    assert.equal(
+      (
+        await db.query("select name from public.editor_projects where id=$1", [
+          id,
+        ])
+      ).rows[0].name,
+      "Renamed",
+    );
     await assert.rejects(
-      db.query("update public.editor_projects set name=$1 where id=$2", [
-        "attack",
+      db.query("update public.editor_projects set revision=100 where id=$1", [
         id,
       ]),
       /permission denied/,
     );
+    await db.exec("reset role");
+    await db.query("update public.profiles set suspended=true where id=$1", [
+      owner,
+    ]);
+    await as(db, owner);
+    assert.equal(
+      (
+        await db.query(
+          "update public.editor_projects set name='blocked' where id=$1 returning id",
+          [id],
+        )
+      ).rows.length,
+      0,
+    );
+    await db.exec("reset role");
+    await db.query("update public.profiles set suspended=false where id=$1", [
+      owner,
+    ]);
+    await as(db, owner);
     const asset = crypto.randomUUID(),
       path = `editor/${owner}/${id}/${asset}.wav`,
       peaks = `editor/${owner}/${id}/${asset}.peaks`;
     await as(db, other);
+    assert.equal(
+      (
+        await db.query(
+          "update public.editor_projects set name=$1 where id=$2 returning id",
+          ["attack", id],
+        )
+      ).rows.length,
+      0,
+    );
     for (const table of [
       "editor_projects",
       "editor_assets",

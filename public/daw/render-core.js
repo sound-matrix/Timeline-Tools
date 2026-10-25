@@ -77,8 +77,11 @@ function makeSurface(w, h) {
 }
 function snapshot(surface) {
   // Bitmap export can fail on a software/context-lost renderer. Retain the canvas.
-  try { return surface.transferToImageBitmap?.() ?? surface; }
-  catch { return surface; }
+  try {
+    return surface.transferToImageBitmap?.() ?? surface;
+  } catch {
+    return surface;
+  }
 }
 function fadeValue(r, position) {
   const ramp = (x, n) => (n > 0 ? Math.min(1, Math.max(0, x / n)) : 1);
@@ -133,6 +136,10 @@ export class TimelineRenderer {
       rows,
       overlays,
       videos,
+      headerWidth = 180,
+      dualRuler = false,
+      contentOnly = false,
+      rulerOnly = false,
     } = state;
     if (!surface || !a || !view) return;
 
@@ -141,7 +148,10 @@ export class TimelineRenderer {
     const dpr = state.dpr,
       { x: sx, y: sy, w, h } = view;
     if (w <= 0 || h <= 0) return;
-    const ctx = surface.getContext("2d");
+    const ctx = surface.getContext("2d", {
+      alpha: !!state.tileOnly,
+      desynchronized: true,
+    });
     if (!ctx) return;
     if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
       c.width = Math.round(w * dpr);
@@ -149,60 +159,101 @@ export class TimelineRenderer {
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const x = (t) => 180 + t * zoom - sx,
-      visibleStart = Math.max(0, (sx - 180) / zoom),
-      visibleEnd = (sx + w - 180) / zoom;
-    const gridKey = JSON.stringify([
-      sx,
-      sy,
-      w,
-      h,
-      dpr,
-      zoom,
-      ruler,
-      a.tempo,
-      a.time_signature,
-    ]);
-    if (this.gridKey !== gridKey) {
-      const grid = makeSurface(Math.round(w * dpr), Math.round(h * dpr)),
-        gridCtx = grid.getContext("2d");
-      gridCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      gridCtx.fillStyle = "#0F1220";
-      gridCtx.fillRect(0, 0, w, h);
-      const base = 10 ** Math.floor(Math.log10(100 / zoom));
-      const step =
-        [1, 2, 5, 10].map((n) => n * base).find((s) => s * zoom >= 100) ??
-        base * 10;
-      gridCtx.font = "11px ui-monospace";
-      for (
-        let t = Math.floor(visibleStart / step) * step;
-        t <= visibleEnd;
-        t += step
-      ) {
-        const px = x(t);
-        if (px < 180) continue;
-        gridCtx.strokeStyle = "#303952";
-        gridCtx.beginPath();
-        gridCtx.moveTo(px, 0);
-        gridCtx.lineTo(px, h);
-        gridCtx.stroke();
-        gridCtx.fillStyle = "#ABB3CE";
-        gridCtx.fillText(rulerStamp(t, ruler, a), px + 3, 16);
-      }
+    const x = (t) => headerWidth + t * zoom - sx,
+      visibleStart = Math.max(0, (sx - headerWidth) / zoom),
+      visibleEnd = (sx + w - headerWidth) / zoom;
+    if (state.tileOnly) ctx.clearRect(0, 0, w, h);
+    else {
+      const gridKey = JSON.stringify([
+        sx,
+        sy,
+        w,
+        h,
+        dpr,
+        zoom,
+        ruler,
+        headerWidth,
+        dualRuler,
+        a.tempo,
+        a.time_signature,
+        contentOnly,
+      ]);
+      if (this.gridKey !== gridKey) {
+        // Reuse the backing surface while panning instead of allocating and
+        // exporting a viewport-sized bitmap on every scroll event.
+        const grid = (this.grid ??= makeSurface(
+          Math.round(w * dpr),
+          Math.round(h * dpr),
+        ));
+        if (grid.width !== Math.round(w * dpr))
+          grid.width = Math.round(w * dpr);
+        if (grid.height !== Math.round(h * dpr))
+          grid.height = Math.round(h * dpr);
+        const gridCtx = grid.getContext("2d", { alpha: false });
+        gridCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        gridCtx.fillStyle = "#0F1220";
+        gridCtx.fillRect(0, 0, w, h);
+        const base = 10 ** Math.floor(Math.log10(100 / zoom));
+        const step =
+          [1, 2, 5, 10].map((n) => n * base).find((s) => s * zoom >= 100) ??
+          base * 10;
+        gridCtx.font = "11px ui-monospace";
+        for (
+          let t = Math.floor(visibleStart / step) * step;
+          t <= visibleEnd;
+          t += step
+        ) {
+          const px = x(t);
+          if (!contentOnly && px < headerWidth) continue;
+          gridCtx.strokeStyle = "#303952";
+          gridCtx.beginPath();
+          gridCtx.moveTo(px, 0);
+          gridCtx.lineTo(px, h);
+          gridCtx.stroke();
+          if (contentOnly) continue;
+          gridCtx.fillStyle = "#ABB3CE";
+          gridCtx.fillText(rulerStamp(t, ruler, a), px + 3, 13);
+          if (dualRuler) {
+            gridCtx.fillStyle = "#6f7e9f";
+            gridCtx.fillText(
+              rulerStamp(t, ruler === "bars" ? "minsec" : "bars", a),
+              px + 3,
+              28,
+            );
+          }
+        }
 
-      this.grid?.close?.();
-      this.grid = snapshot(grid);
-      this.gridKey = gridKey;
+        this.gridKey = gridKey;
+      }
+      ctx.drawImage(this.grid, 0, 0, w, h);
     }
-    ctx.drawImage(this.grid, 0, 0, w, h);
     ctx.font = "11px ui-monospace";
+    if (rulerOnly) {
+      ctx.fillStyle = "#161B2E";
+      ctx.fillRect(0, 0, headerWidth, h);
+      ctx.fillStyle = "#ABB3CE";
+      ctx.fillText(videos.length ? "VIDEO / TRACKS" : "TRACKS", 10, 20);
+      for (const m of a.markers) {
+        const px = x(m.time);
+        if (px < headerWidth || px > w) continue;
+        ctx.fillStyle = m.color;
+        ctx.fillRect(px, 20, 2, h);
+        ctx.fillText(`◆ ${m.name}`, px + 4, 30);
+      }
+      return;
+    }
     ctx.save();
     ctx.beginPath();
-    ctx.rect(180, 36, w - 180, h - 36);
+    ctx.rect(
+      contentOnly ? 0 : headerWidth,
+      contentOnly ? 0 : 36,
+      contentOnly ? w : w - headerWidth,
+      contentOnly ? h : h - 36,
+    );
     ctx.clip();
     if (videos.length) {
       ctx.fillStyle = "#1A2136";
-      ctx.fillRect(180, 36 - sy, w, 72);
+      ctx.fillRect(headerWidth, 36 - sy, w, 72);
       ctx.fillStyle = "#E0E7FF";
       for (const video of videos) {
         ctx.fillRect(
@@ -215,9 +266,11 @@ export class TimelineRenderer {
     }
     for (const lane of rows) {
       const y = lane.y - sy;
-      if (y + lane.height < 36 || y > h) continue;
-      ctx.fillStyle = "#161B2E";
-      ctx.fillRect(180, y, w, lane.height - 1);
+      if (y + lane.height < (contentOnly ? 0 : 36) || y > h) continue;
+      if (!state.tileOnly) {
+        ctx.fillStyle = "#161B2E";
+        ctx.fillRect(contentOnly ? 0 : headerWidth, y, w, lane.height - 1);
+      }
       for (const r of this.index.query(lane.id, visibleStart, visibleEnd)) {
         if (r.lane !== lane.id || end(r) < visibleStart || r.start > visibleEnd)
           continue;
@@ -226,16 +279,23 @@ export class TimelineRenderer {
           top = y + 6,
           rh = lane.height - 12,
           color = r.color ?? lane.color;
-        ctx.fillStyle = selection.includes(r.id) ? "#303E68" : "#222A42";
-        ctx.fillRect(left, top, right - left, rh);
+        ctx.fillStyle = color + (selection.includes(r.id) ? "70" : "38");
+        ctx.beginPath();
+        ctx.roundRect(left, top, right - left, rh, 5);
+        ctx.fill();
+        ctx.fillStyle = color + "55";
+        ctx.fillRect(left, top, right - left, 19);
         ctx.strokeStyle = selection.includes(r.id) ? "#E0E7FF" : color;
         ctx.strokeRect(left + 0.5, top + 0.5, right - left - 1, rh - 1);
         ctx.save();
         ctx.beginPath();
         ctx.rect(
-          Math.max(180, left + 1),
+          Math.max(contentOnly ? 0 : headerWidth, left + 1),
           top + 1,
-          Math.max(0, right - Math.max(180, left + 1) - 1),
+          Math.max(
+            0,
+            right - Math.max(contentOnly ? 0 : headerWidth, left + 1) - 1,
+          ),
           rh - 2,
         );
         ctx.clip();
@@ -245,29 +305,31 @@ export class TimelineRenderer {
         if (asset)
           for (const candidate of asset.levels)
             if (candidate.rate >= zoom * 0.6) level = candidate;
-        const center = top + rh * 0.55,
-          amp = Math.max(5, rh * 0.31);
         ctx.strokeStyle = color;
         ctx.globalAlpha = r.mute ? 0.25 : 1;
         for (
-          let tileStart = Math.floor(Math.max(180, left) / 256) * 256;
-          tileStart < Math.min(w, right);
+          let tileStart =
+            Math.floor(
+              Math.max(0, (contentOnly ? 0 : headerWidth) - left) / 256,
+            ) * 256;
+          tileStart < Math.min(w - left, right - left);
           tileStart += 256
         ) {
-          const tileEnd = Math.min(tileStart + 256, Math.ceil(right));
+          const tileEnd = Math.min(tileStart + 256, Math.ceil(right - left));
           const key = [
             asset?.hash,
             level?.rate,
             derived?.src_start,
             r.src_start,
             r.src_end,
+            r.reverse,
             r.fade_in,
             r.fade_out,
             r.fade_curve,
             color,
             rh,
             zoom,
-            tileStart - left,
+            tileStart,
           ].join("/");
           let tile = this.tiles.get(key);
           if (!tile) {
@@ -279,7 +341,9 @@ export class TimelineRenderer {
             // Continuous per-pixel min/max: sample all bins represented by the pixel.
             tileCtx.beginPath();
             for (let px = tileStart; px < tileEnd; px++) {
-              const source = r.src_start + (px - left) / zoom;
+              const source = r.reverse
+                ? r.src_end - (px + 1) / zoom
+                : r.src_start + px / zoom;
               let lo = 0,
                 hi = 0;
               if (level) {
@@ -306,7 +370,7 @@ export class TimelineRenderer {
                   hi = Math.max(hi, level.values[2 * k + 1] ?? 0);
                 }
               }
-              const env = fadeValue(r, source - r.src_start);
+              const env = fadeValue(r, px / zoom);
               tileCtx.moveTo(px - tileStart, center + (lo / 128) * amp * env);
               tileCtx.lineTo(
                 px - tileStart,
@@ -318,7 +382,7 @@ export class TimelineRenderer {
             tile = snapshot(image);
             this.tiles.set(key, tile);
           }
-          ctx.drawImage(tile, tileStart, y);
+          ctx.drawImage(tile, left + tileStart, y);
         }
         ctx.globalAlpha = 1;
         ctx.fillStyle = "#E0E7FF";
@@ -327,6 +391,14 @@ export class TimelineRenderer {
           left + 6,
           top + 14,
         );
+        if (dualRuler) {
+          const gainY = y + 25 + ((24 - r.gain_db) / 84) * (lane.height - 40);
+          ctx.strokeStyle = "#e0e7ff88";
+          ctx.beginPath();
+          ctx.moveTo(left, gainY);
+          ctx.lineTo(right, gainY);
+          ctx.stroke();
+        }
         ctx.strokeStyle = "#FCD34D";
         for (const [seconds, inward] of [
           [r.fade_in, 1],
@@ -385,20 +457,37 @@ export class TimelineRenderer {
     }
     if (range) {
       ctx.fillStyle = "#818CF833";
-      ctx.fillRect(x(range[0]), 36, (range[1] - range[0]) * zoom, h);
+      ctx.fillRect(
+        x(range[0]),
+        contentOnly ? 0 : 36,
+        (range[1] - range[0]) * zoom,
+        h,
+      );
     }
     if (a.loop.enabled) {
       ctx.fillStyle = "#FCD34D12";
-      ctx.fillRect(x(a.loop.start), 36, (a.loop.end - a.loop.start) * zoom, h);
+      ctx.fillRect(
+        x(a.loop.start),
+        contentOnly ? 0 : 36,
+        (a.loop.end - a.loop.start) * zoom,
+        h,
+      );
     }
     ctx.restore();
+    if (contentOnly) {
+      for (const m of a.markers) {
+        ctx.fillStyle = m.color;
+        ctx.fillRect(x(m.time), 0, 2, h);
+      }
+      return;
+    }
     ctx.fillStyle = "#161B2E";
-    ctx.fillRect(0, 0, 180, h);
+    ctx.fillRect(0, 0, headerWidth, h);
     ctx.fillStyle = "#ABB3CE";
     ctx.fillText(videos.length ? "VIDEO / TRACKS" : "TRACKS", 10, 20);
     for (const m of a.markers) {
       const px = x(m.time);
-      if (px < 180 || px > w) continue;
+      if (px < headerWidth || px > w) continue;
       ctx.fillStyle = m.color;
       ctx.fillRect(px, 20, 2, h);
       ctx.fillText(`◆ ${m.name}`, px + 4, 30);

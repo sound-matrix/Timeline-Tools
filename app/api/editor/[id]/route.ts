@@ -132,3 +132,40 @@ export async function PUT(
     );
   return NextResponse.json({ revision: data }, { headers: privateHeaders });
 }
+
+export async function PATCH(
+  r: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { db, user } = await requireUser();
+  const { id } = await params;
+  let body;
+  try {
+    body = await requestBody(r, 4096);
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid rename request" },
+      { status: 400, headers: privateHeaders },
+    );
+  }
+  if (
+    !projectId.safeParse(id).success ||
+    typeof body?.name !== "string" ||
+    !body.name.trim() ||
+    body.name.length > 120 ||
+    Object.keys(body).some((k) => k !== "name")
+  )
+    return NextResponse.json(
+      { error: "Invalid project name" },
+      { status: 400, headers: privateHeaders },
+    );
+  const { data, error } = await db
+    .from("editor_projects")
+    .update({ name: body.name.trim() })
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .select("id,name")
+    .maybeSingle();
+  if (error || !data) return unavailable();
+  return NextResponse.json(data, { headers: privateHeaders });
+}

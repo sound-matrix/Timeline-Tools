@@ -1,15 +1,36 @@
 import { z } from "zod";
+import { validEffect } from "./daw/effects.ts";
 const time = z.number().finite().min(0).max(14400);
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 const gain = z.number().finite().min(-60).max(24);
 export const pluginSlotSchema = z
   .object({
     id,
-    type: z.enum(["eq", "compressor", "limiter", "reverb", "delay"]),
+    type: z.enum([
+      "eq",
+      "compressor",
+      "limiter",
+      "reverb",
+      "delay",
+      "saturation",
+      "gate",
+      "deesser",
+    ]),
     enabled: z.boolean(),
     parameters: z.record(z.string(), z.number().finite()),
   })
-  .strict();
+  .strict()
+  .refine(
+    (s) => validEffect(s.type, s.parameters),
+    "Invalid effect parameters",
+  );
+const insertChainSchema = z
+  .array(pluginSlotSchema)
+  .max(16)
+  .refine(
+    (slots) => new Set(slots.map((s) => s.id)).size === slots.length,
+    "Duplicate effect IDs",
+  );
 export type PluginSlot = z.infer<typeof pluginSlotSchema>;
 const v2Schema = z
   .object({
@@ -32,6 +53,18 @@ const v2Schema = z
         z.union([z.literal(2), z.literal(4), z.literal(8), z.literal(16)]),
       ])
       .default([4, 4]),
+    sections: z
+      .array(
+        z.object({
+          id,
+          name: z.string().max(60),
+          start: time,
+          end: time,
+          color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+        }),
+      )
+      .max(300)
+      .default([]),
     markers: z
       .array(
         z.object({
@@ -47,7 +80,7 @@ const v2Schema = z
     master: z.object({
       gain_db: gain,
       reference_gain_db: gain.default(0),
-      inserts: z.array(pluginSlotSchema).max(0),
+      inserts: insertChainSchema,
     }),
     line_gap_ms: z.number().int().min(0).max(5000).optional(),
     match_strictness: z.enum(["strict", "normal", "loose"]).optional(),
@@ -58,8 +91,8 @@ const v2Schema = z
           name: z.string().max(60),
           color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
           pan: z.number().finite().min(-1).max(1).default(0),
-          height: z.number().int().min(60).max(400).default(120),
-          inserts: z.array(pluginSlotSchema).max(0).default([]),
+          height: z.number().int().min(60).max(400).default(96),
+          inserts: insertChainSchema.default([]),
           gain_db: gain,
           mute: z.boolean(),
           solo: z.boolean(),
@@ -78,6 +111,8 @@ const v2Schema = z
           gain_db: gain,
           fade_in: time,
           fade_out: time,
+          reverse: z.boolean().default(false),
+          inserts: insertChainSchema.default([]),
           fade_curve: z.enum(["linear", "equal_power"]),
         }),
       )
@@ -112,6 +147,8 @@ const v2Schema = z
             .string()
             .regex(/^#[0-9a-fA-F]{6}$/)
             .optional(),
+          reverse: z.boolean().default(false),
+          inserts: insertChainSchema.default([]),
           mute: z.boolean().default(false),
           fade_in: time.default(0),
           fade_out: time.default(0),
@@ -171,6 +208,10 @@ const v2Schema = z
         code: "custom",
         message: "Source arrangement must contain tracks, clips and lines",
       });
+    if (new Set(a.sections.map((s) => s.id)).size !== a.sections.length)
+      ctx.addIssue({ code: "custom", message: "Duplicate section IDs" });
+    if (a.sections.some((s) => s.end <= s.start || s.end > a.duration))
+      ctx.addIssue({ code: "custom", message: "Invalid section" });
     const lanes = new Set(a.lanes.map((l) => l.id)),
       clips = new Map(
         [...a.clips, ...a.derived_clips].map((c) => [c.id, c.duration]),

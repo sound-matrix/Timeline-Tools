@@ -1,3 +1,8 @@
+import {
+  createEffectChain,
+  prepareEffectContext,
+  type EffectGraph,
+} from "./effects.ts";
 import type { Arrangement } from "../arrangement";
 import { pcmWindow } from "../studio-preview";
 import {
@@ -18,6 +23,8 @@ function releaseVoice(param: AudioParam, now: number) {
   param.setTargetAtTime(0, now, 0.001);
 }
 export class DawPlayback {
+  tempo = 120;
+  regionInputs = new Map<string, GainNode>();
   derived: Arrangement["derived_clips"] = [];
   reader:
     | ((
@@ -48,11 +55,17 @@ export class DawPlayback {
     if (derived) {
       const sourceUrl = this.sourceUrls[derived.source];
       if (!sourceUrl) throw Error("Bounce source unavailable");
+      const renderStart = derived.inserts?.some((s) => s.enabled)
+          ? Math.max(0, start - 60)
+          : start,
+        preroll = start - renderStart;
       const input = await (this.reader ?? pcmWindow)(
         ctx,
         sourceUrl,
-        derived.src_start + start,
-        length,
+        derived.reverse
+          ? derived.src_end - renderStart - length - preroll
+          : derived.src_start + renderStart,
+        length + preroll,
       );
       const offline = new OfflineAudioContext(
           2,
@@ -61,24 +74,76 @@ export class DawPlayback {
         ),
         source = offline.createBufferSource(),
         gain = offline.createGain();
-      source.buffer = input;
+      if (derived.reverse) {
+        const copy = offline.createBuffer(
+          input.numberOfChannels,
+          input.length,
+          input.sampleRate,
+        );
+        for (let c = 0; c < input.numberOfChannels; c++)
+          copy.getChannelData(c).set(input.getChannelData(c).slice().reverse());
+        source.buffer = copy;
+      } else source.buffer = input;
       const values = new Float32Array(input.length);
       for (let i = 0; i < values.length; i++)
         values[i] =
           10 ** (derived.gain_db / 20) *
           fadeValue(
             { ...derived, src_start: 0, src_end: derived.duration },
-            start + i / input.sampleRate,
+            renderStart + i / input.sampleRate,
           );
       gain.gain.setValueCurveAtTime(values, 0, input.duration);
-      source.connect(gain).connect(offline.destination);
+      await prepareEffectContext(offline);
+      const fx = createEffectChain(
+        offline,
+        derived.inserts ?? [],
+        this.active?.tempo ?? this.tempo,
+      );
+      source.connect(gain).connect(fx.input);
+      fx.output.connect(offline.destination);
       source.start();
       b = await offline.startRendering();
+      if (preroll) {
+        const cropped = ctx.createBuffer(
+          b.numberOfChannels,
+          Math.round(length * b.sampleRate),
+          b.sampleRate,
+        );
+        for (let c = 0; c < b.numberOfChannels; c++)
+          cropped
+            .getChannelData(c)
+            .set(
+              b
+                .getChannelData(c)
+                .subarray(
+                  Math.round(preroll * b.sampleRate),
+                  Math.round((preroll + length) * b.sampleRate),
+                ),
+            );
+        b = cropped;
+      }
     } else b = await (this.reader ?? pcmWindow)(ctx, url, start, length);
     this.buffers.set(key, b);
     if (this.buffers.size > 64)
       this.buffers.delete(this.buffers.keys().next().value!);
     return b;
+  }
+  async regionWindow(
+    r: Arrangement["regions"][number],
+    offset: number,
+    length: number,
+  ) {
+    const at = r.reverse ? r.src_end - offset - length : r.src_start + offset;
+    const b = await this.window(this.urlMap[r.clip] ?? r.clip, at, length);
+    if (!r.reverse) return b;
+    const out = this.context!.createBuffer(
+      b.numberOfChannels,
+      b.length,
+      b.sampleRate,
+    );
+    for (let c = 0; c < b.numberOfChannels; c++)
+      out.getChannelData(c).set(b.getChannelData(c).slice().reverse());
+    return out;
   }
   stop() {
     this.running = false;
@@ -99,19 +164,21 @@ export class DawPlayback {
     }
     this.sources.clear();
     this.voices.clear();
-    const old = this.nodes;
+    const old = this.nodes,
+      graphs = [...this.effects.values()];
     this.nodes = [];
-    setTimeout(
-      () =>
-        old.forEach((n) => {
-          try {
-            n.disconnect();
-          } catch {}
-        }),
-      10,
-    );
+    setTimeout(() => {
+      graphs.forEach((g) => g.graph.dispose());
+      old.forEach((n) => {
+        try {
+          n.disconnect();
+        } catch {}
+      });
+    }, 10);
     this.dispose?.();
     this.dispose = null;
+    this.effects.clear();
+    this.regionInputs.clear();
     this.active = null;
   }
   async close() {
@@ -128,10 +195,39 @@ export class DawPlayback {
     string,
     { gain: GainNode; left: GainNode; right: GainNode; insert: GainNode }
   >();
+  effects = new Map<
+    string,
+    { key: string; graph: EffectGraph; output: AudioNode }
+  >();
   master: GainNode | null = null;
+  masterInput: GainNode | null = null;
+  effectGraph(
+    id: string,
+    slots: Arrangement["master"]["inserts"],
+    tempo: number,
+    input: AudioNode,
+    output: AudioNode,
+  ) {
+    const key = JSON.stringify([slots, tempo]),
+      old = this.effects.get(id);
+    if (old?.key === key) {
+      if (old.output !== output) {
+        old.graph.output.disconnect();
+        old.graph.output.connect(output);
+        old.output = output;
+      }
+      return;
+    }
+    input.disconnect();
+    old?.graph.dispose();
+    const graph = createEffectChain(this.context!, slots, tempo);
+    input.connect(graph.input);
+    graph.output.connect(output);
+    this.effects.set(id, { key, graph, output });
+  }
   nodes: AudioNode[] = [];
   tickNow: (() => void) | null = null;
-  /** Empty insert chain is a real passthrough graph node for PR D. */
+  /** Track insert entry point, also used by metering and the effects dock. */
   insertChain(trackId: string): GainNode | undefined {
     return this.tracks.get(trackId)?.insert;
   }
@@ -171,11 +267,18 @@ export class DawPlayback {
         split.connect(right, 1);
         left.connect(merge, 0, 0);
         right.connect(merge, 0, 1);
-        merge.connect(insert).connect(this.master!);
+        merge.connect(insert);
         track = { gain, left, right, insert };
         this.tracks.set(lane.id, track);
         this.nodes.push(gain, split, merge, left, right, insert);
       }
+      this.effectGraph(
+        lane.id,
+        lane.inserts,
+        a.tempo,
+        track.insert,
+        this.masterInput!,
+      );
       track.gain.gain.setTargetAtTime(
         lane.mute || (solo && !lane.solo) ? 0 : 10 ** (lane.gain_db / 20),
         ctx.currentTime,
@@ -188,6 +291,44 @@ export class DawPlayback {
     for (const [id, track] of this.tracks)
       if (!a.lanes.some((l) => l.id === id))
         track.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.001);
+    this.effectGraph(
+      "master",
+      a.master.inserts,
+      a.tempo,
+      this.masterInput!,
+      this.master!,
+    );
+    for (const r of a.regions) {
+      if (!this.tracks.has(r.lane) || !r.inserts?.some((s) => s.enabled))
+        continue;
+      let input = this.regionInputs.get(r.id);
+      if (!input) {
+        input = ctx.createGain();
+        this.regionInputs.set(r.id, input);
+        this.nodes.push(input);
+      }
+      this.effectGraph(
+        `region/${r.id}`,
+        r.inserts ?? [],
+        a.tempo,
+        input,
+        this.tracks.get(r.lane)!.gain,
+      );
+    }
+    for (const [key, value] of this.effects) {
+      if (
+        key.startsWith("region/") &&
+        !a.regions.some(
+          (r) => `region/${r.id}` === key && r.inserts?.some((s) => s.enabled),
+        )
+      ) {
+        value.graph.dispose();
+        this.effects.delete(key);
+        const input = this.regionInputs.get(key.slice(7));
+        input?.disconnect();
+        this.regionInputs.delete(key.slice(7));
+      }
+    }
     this.master!.gain.setTargetAtTime(
       10 ** ((a.master.gain_db + (a.master.reference_gain_db ?? 0)) / 20),
       ctx.currentTime,
@@ -209,7 +350,8 @@ export class DawPlayback {
     }
     const epoch = this.epoch,
       ctx = (this.context ??= new AudioContext({ sampleRate: a.sample_rate }));
-    await ctx.resume();
+    await Promise.all([ctx.resume(), prepareEffectContext(ctx)]);
+    if (epoch !== this.epoch) return;
     this.derived = a.derived_clips;
     this.sourceUrls = urls;
     this.urlMap = urls;
@@ -220,13 +362,14 @@ export class DawPlayback {
     master.connect(analyser).connect(ctx.destination);
     master.connect(split);
     this.master = master;
+    this.masterInput = ctx.createGain();
     this.analyser = analyser;
     this.meters = [ctx.createAnalyser(), ctx.createAnalyser()];
     this.meters.forEach((m, i) => {
       m.fftSize = 1024;
       split.connect(m, i);
     });
-    this.nodes = [master, analyser, split, ...this.meters];
+    this.nodes = [this.masterInput!, master, analyser, split, ...this.meters];
     this.tracks.clear();
     this.scheduled.clear();
     this.voices.clear();
@@ -242,10 +385,10 @@ export class DawPlayback {
           STREAM_CHUNK_SECONDS,
           r.src_end - r.src_start - offset,
         ),
-        key = `${url}/${r.src_start + offset}/${length}`;
+        key = `${url}/${r.src_start + offset}/${length}/${r.reverse}`;
       let promise = loading.get(key);
       if (!promise) {
-        promise = this.window(url, r.src_start + offset, length);
+        promise = this.regionWindow(r, offset, length);
         loading.set(key, promise);
         promise.finally(() => loading.delete(key)).catch(() => {});
       }
@@ -305,7 +448,9 @@ export class DawPlayback {
               source
                 .connect(gain)
                 .connect(release)
-                .connect(this.tracks.get(r.lane)!.gain);
+                .connect(
+                  this.regionInputs.get(r.id) ?? this.tracks.get(r.lane)!.gain,
+                );
               const points = [
                 ...new Set(
                   [

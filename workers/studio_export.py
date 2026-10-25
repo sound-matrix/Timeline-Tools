@@ -15,8 +15,8 @@ def validate_export(s):
         elif set(o)!={'bit_depth','sample_rate'} or o['bit_depth'] not in (16,24,'32f') or isinstance(o['bit_depth'],bool) or type(o['sample_rate']) is not int or o['sample_rate'] not in (44100,48000,96000): raise ValueError('Invalid WAV')
 
 
-def apply_inserts(samples, slots):
-    """PR D hook. Empty chain is a passthrough; unimplemented DSP never runs silently."""
-    if slots:
-        raise ValueError('Insert plugins require PR D')
-    return samples
+def apply_inserts(samples, slots, rate=48000, tempo=120):
+    from workers.editor_dsp import InsertChain, validate_slots
+    validate_slots(slots)
+    if samples is None or not slots:return samples
+    return InsertChain(slots,rate,tempo).process(samples)

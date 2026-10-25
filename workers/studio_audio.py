@@ -303,11 +303,12 @@ def migrate_arrangement(a):
     a=copy.deepcopy(a); a['version']=2
     a.setdefault('pan_law','legacy' if legacy else 'equal_power')
     a.setdefault('legacy_mastering',legacy)
-    a.setdefault('derived_clips',[]); a.setdefault('markers',[]); a.setdefault('loop',dict(enabled=False,start=0,end=a['duration']))
+    a.setdefault('sections',[]); a.setdefault('derived_clips',[]); a.setdefault('markers',[]); a.setdefault('loop',dict(enabled=False,start=0,end=a['duration']))
     a.setdefault('tempo',120); a.setdefault('time_signature',[4,4]); a.setdefault('master',dict(gain_db=0,inserts=[]));a['master'].setdefault('reference_gain_db',0)
     for lane in a['lanes']:
         lane.setdefault('pan',0); lane.setdefault('height',120); lane.setdefault('inserts',[])
     for r in a['regions']:
+        r.setdefault('reverse',False);r.setdefault('inserts',[])
         r.setdefault('lines',[dict(line=r['line'],src_start=r['src_start'],src_end=r['src_end'],confidence=r['confidence'])])
         r.setdefault('fade_in',0); r.setdefault('fade_out',0); r.setdefault('fade_curve','linear'); r.setdefault('mute',False)
     return a
@@ -384,12 +385,19 @@ def validate_arrangement(a):
     if unique_source_seconds([dict(r,clip=c['source'],src_start=c['src_start']+r['src_start'],src_end=c['src_start']+r['src_end']) if (c:=next((c for c in a['derived_clips'] if c['id']==r['clip']),None)) else r for r in a['regions']])>(288000 if a.get('editor_project') else 14400): raise ValueError('Arrangement render budget exceeded')
     for l in a['lanes']:
         l['gain_db']=real(l['gain_db'],-60,24);l['pan']=real(l['pan'],-1,1);real(l['height'],60,400)
-        if type(l['mute']) is not bool or type(l['solo']) is not bool or l['inserts']!=[]: raise ValueError('Invalid lane')
+        if type(l['mute']) is not bool or type(l['solo']) is not bool: raise ValueError('Invalid lane')
+        from workers.editor_dsp import validate_slots
+        validate_slots(l['inserts'])
     real(a['tempo'],20,300)
     sig=a['time_signature']
     if len(sig)!=2 or type(sig[0]) is not int or not 1<=sig[0]<=16 or sig[1] not in (2,4,8,16): raise ValueError('Invalid time signature')
     real(a['master']['gain_db'],-60,24);real(a['master'].get('reference_gain_db',0),-60,24)
-    if a['master']['inserts']!=[]: raise ValueError('Plugins require PR D')
+    validate_slots(a['master']['inserts'])
+    for r in a['regions']+a['derived_clips']:
+        validate_slots(r.get('inserts',[]))
+        if type(r.get('reverse',False)) is not bool:raise ValueError('Invalid reverse')
+    for section in a['sections']:
+        if not 0<=real(section['start'],0,14400)<real(section['end'],0,14400)<=a['duration']:raise ValueError('Invalid section')
     if type(a['loop']['enabled']) is not bool or not 0<=real(a['loop']['start'],0,14400)<real(a['loop']['end'],0,14400)<=a['duration']+.001: raise ValueError('Invalid loop')
     if len(a['markers'])>1000: raise ValueError('Too many markers')
     for m in a['markers']: real(m['time'],0,a['duration'])
@@ -470,6 +478,7 @@ def render(project,a,folder,settings,export):
     import numpy as np
     import soundfile as sf
     from contextlib import ExitStack
+    from workers.editor_dsp import InsertChain
     dialogue=folder/'dialogue.wav'
     audible=[r for r in a['regions'] if not r.get('mute',False) and not lanes[r['lane']]['mute'] and (not solo or lanes[r['lane']]['solo'])]
     with ExitStack() as stack:
@@ -484,33 +493,45 @@ def render(project,a,folder,settings,export):
             path=folder/f"bounce-{len(inputs)}.wav"
             source=inputs[c['source']]
             with sf.SoundFile(path,'w',samplerate=48000,channels=2,format='RF64',subtype='FLOAT') as dst:
-                total=round(c['duration']*48000)
+                total=round(c['duration']*48000);chain=InsertChain(c.get('inserts',[]),48000,a['tempo'])
                 for offset in range(0,total,24000):
-                    count=min(24000,total-offset);source.seek(round(c['src_start']*48000)+offset)
+                    count=min(24000,total-offset);source.seek(round(c['src_end']*48000)-offset-count if c.get('reverse') else round(c['src_start']*48000)+offset)
                     samples=source.read(count,dtype='float32',always_2d=True)
+                    if c.get('reverse'):samples=samples[::-1]
                     envelope=fade_envelope(dict(c,src_start=0,src_end=c['duration']), (np.arange(len(samples))+offset)/48000)
-                    dst.write(samples*(10**(c['gain_db']/20)*envelope[:,None]))
+                    dst.write(chain.process(samples*(10**(c['gain_db']/20)*envelope[:,None])))
             inputs[c['id']]=stack.enter_context(sf.SoundFile(path))
         out=stack.enter_context(sf.SoundFile(dialogue,mode='w',samplerate=48000,channels=2,format='RF64',subtype='FLOAT'))
         total=round(seconds*48000); blocksize=24000
         spans=[(round(r['start']*48000),round((r['start']+r['src_end']-r['src_start'])*48000),r) for r in audible]
+        track_chains={l['id']:InsertChain(l['inserts'],48000,a['tempo']) for l in a['lanes']}
+        region_chains={r['id']:InsertChain(r.get('inserts',[]),48000,a['tempo']) for r in audible if any(s['enabled'] for s in r.get('inserts',[]))}
+        master_chain=InsertChain(a['master']['inserts'],48000,a['tempo'])
+        master_gain=10**((a['master'].get('gain_db',0)+a['master'].get('reference_gain_db',0))/20)
         for offset in range(0,total,blocksize):
             count=min(blocksize,total-offset); block=np.zeros((count,2),dtype='float32')
+            tracks={l['id']:np.zeros_like(block) for l in a['lanes']}
             for start,end,r in spans:
-                left=max(offset,start); right=min(offset+count,end)
-                if right<=left: continue
-                source=inputs[r['clip']];source_at=max(0,round(r['src_start']*48000)+left-start)
-                if source_at>=len(source): continue
-                source.seek(source_at)
-                samples=source.read(right-left,dtype='float32',always_2d=True)
-                gain=10**((r['gain_db']+lanes[r['lane']]['gain_db'])/20)
-                positions=(np.arange(len(samples))+left-start)/48000
-                envelope=fade_envelope(r,positions)
-                pan=np.asarray(pan_gains(lanes[r['lane']].get('pan',0)))
+                left=max(offset,start); right=min(offset+count,end);samples=None
+                region=np.zeros_like(block) if r['id'] in region_chains else None
+                if right>left:
+                    source=inputs[r['clip']]
+                    source_at=max(0,round(r['src_end']*48000)-(left-start)-(right-left) if r.get('reverse') else round(r['src_start']*48000)+left-start)
+                    if source_at<len(source):
+                        source.seek(source_at);samples=source.read(right-left,dtype='float32',always_2d=True)
+                        if r.get('reverse'):samples=samples[::-1]
+                        envelope=fade_envelope(r,(np.arange(len(samples))+left-start)/48000)
+                        samples=samples*(10**(r['gain_db']/20)*envelope[:,None])
+                        if region is not None:region[left-offset:left-offset+len(samples)]=samples
+                if region is not None:tracks[r['lane']]+=region_chains[r['id']].process(region)
+                elif samples is not None:tracks[r['lane']][left-offset:left-offset+len(samples)]+=samples
+            for lane_id,samples in tracks.items():
+                lane=lanes[lane_id]
+                if lane['mute'] or (solo and not lane['solo']):continue
+                pan=np.asarray(pan_gains(lane.get('pan',0)))
                 if a.get('pan_law')=='legacy':pan=np.minimum(1,pan*math.sqrt(2))
-                master_gain=10**((a['master'].get('gain_db',0)+a['master'].get('reference_gain_db',0))/20)
-                block[left-offset:left-offset+len(samples)]+=samples*(gain*master_gain*envelope[:,None]*pan)
-            out.write(block)
+                block+=track_chains[lane_id].process(samples*pan*10**(lane['gain_db']/20))
+            out.write(master_chain.process(block)*master_gain)
     parts.append(dialogue)
     activity='+'.join(f"between(t,{r['start']},{r['start']+r['src_end']-r['src_start']})" for r in a['regions'] if not lanes[r['lane']]['mute'] and (not solo or lanes[r['lane']]['solo'])) or '0'
     if project.get('bed'):

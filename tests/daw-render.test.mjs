@@ -24,3 +24,82 @@ test('a collapsed timeline skips bitmap allocation during layout changes', () =>
  assert.equal(renderer.grid,null);
  renderer.close();
 });
+
+test("panning reuses clip-relative waveform tiles and the grid backing surface", () => {
+  const previous = globalThis.OffscreenCanvas;
+  const context = new Proxy(
+    {},
+    {
+      get(target, key) {
+        return target[key] ?? (() => {});
+      },
+    },
+  );
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+    }
+    getContext() {
+      return context;
+    }
+  };
+  const renderer = new TimelineRenderer();
+  try {
+    const r = {
+      id: "r",
+      lane: "track",
+      clip: "voice",
+      start: 0,
+      src_start: 0,
+      src_end: 6,
+      fade_in: 0,
+      fade_out: 0,
+      lines: [],
+      gain_db: 0,
+    };
+    const state = {
+      a: {
+        regions: [r],
+        clips: [{ id: "voice", name: "Voice" }],
+        derived_clips: [],
+        missing: [],
+        markers: [],
+        loop: { enabled: false },
+        tempo: 120,
+        time_signature: [4, 4],
+      },
+      view: { x: 0, y: 0, w: 900, h: 400 },
+      zoom: 100,
+      dpr: 1,
+      headerWidth: 200,
+      peaks: {
+        voice: {
+          hash: "voice",
+          levels: [{ rate: 100, values: new Int8Array(1200) }],
+        },
+      },
+      selection: [],
+      rows: [{ id: "track", y: 36, height: 96, color: "#818CF8" }],
+      overlays: [],
+      videos: [],
+      ruler: "minsec",
+    };
+    const surface = new OffscreenCanvas(900, 400);
+    renderer.draw(surface, state);
+    const grid = renderer.grid,
+      tiles = [...renderer.tiles.items.values()];
+    renderer.draw(surface, { ...state, view: { ...state.view, x: 37, y: 13 } });
+    assert.equal(renderer.grid, grid);
+    assert.deepEqual(
+      [...renderer.tiles.items.values()].sort(
+        (a, b) => tiles.indexOf(a) - tiles.indexOf(b),
+      ),
+      tiles,
+    );
+  } finally {
+    renderer.close();
+    if (previous) globalThis.OffscreenCanvas = previous;
+    else delete globalThis.OffscreenCanvas;
+  }
+});
