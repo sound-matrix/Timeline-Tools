@@ -52,12 +52,14 @@ function event(target: HTMLVideoElement, name: string) {
   });
 }
 export default function VideoStrip({
+  headerWidth = 180,
   videos,
   zoom,
   x,
   y,
   width,
 }: {
+  headerWidth?: number;
   videos: DawVideo[];
   zoom: number;
   x: number;
@@ -72,8 +74,8 @@ export default function VideoStrip({
     const elements: HTMLVideoElement[] = [];
     void (async () => {
       const interval = Math.max(1, Math.ceil(110 / zoom)),
-        left = Math.max(0, (x - 180) / zoom),
-        right = (x + width - 180) / zoom,
+        left = Math.max(0, (x - headerWidth) / zoom),
+        right = (x + width - headerWidth) / zoom,
         result: { key: string; time: number; url: string }[] = [];
       for (const item of videos) {
         if (item.start + item.duration < left || item.start > right) continue;
@@ -147,11 +149,11 @@ export default function VideoStrip({
         v.load();
       }
     };
-  }, [videos, zoom, x, width]);
+  }, [videos, zoom, x, width, headerWidth]);
   return (
     <div
       className="pro-thumbnails"
-      style={{ top: 36 - y }}
+      style={{ left: headerWidth, top: 36 - y }}
       aria-label="Video thumbnail lane"
     >
       {frames.map((f) => (

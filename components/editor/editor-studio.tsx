@@ -134,6 +134,9 @@ export default function EditorStudio({
       NonNullable<ComponentProps<typeof DawTimeline>["assets"]>
     >({}),
     [uploads, setUploads] = useState<Upload[]>([]),
+    [binOpen, setBinOpen] = useState(false),
+    [viewOpen, setViewOpen] = useState(false),
+    [projectName, setProjectName] = useState(name),
     [settings, setSettings] = useState(false),
     [versions, setVersions] = useState(false),
     [exporting, setExporting] = useState(false),
@@ -753,7 +756,7 @@ export default function EditorStudio({
         const url = URL.createObjectURL(blob),
           link = document.createElement("a");
         link.href = url;
-        link.download = `${name.replace(/[^a-z0-9_-]/gi, "-")}.${mixOptions.format}`;
+        link.download = `${projectName.replace(/[^a-z0-9_-]/gi, "-")}.${mixOptions.format}`;
         link.click();
         setTimeout(() => URL.revokeObjectURL(url), 60000);
         if (podcastEdits && project?.source_overlay && subtitles.length) {
@@ -767,7 +770,7 @@ export default function EditorStudio({
               ),
               link = document.createElement("a");
             link.href = href;
-            link.download = `${name}.${format}`;
+            link.download = `${projectName}.${format}`;
             link.click();
             setTimeout(() => URL.revokeObjectURL(href), 60000);
           }
@@ -802,7 +805,10 @@ export default function EditorStudio({
     <main
       className="editor-studio"
       aria-label="Editor Studio"
-      onDragOver={(e) => e.preventDefault()}
+      onDragOver={(e) => {
+        e.preventDefault();
+        if (e.dataTransfer.types.includes("Files")) setBinOpen(true);
+      }}
       onDrop={(e) => {
         if (e.defaultPrevented) return;
         e.preventDefault();
@@ -815,8 +821,36 @@ export default function EditorStudio({
         </a>
         <div>
           <small>EDITOR STUDIO</small>
-          <h1>{name}</h1>
+          <input
+            aria-label="Project name"
+            value={projectName}
+            maxLength={100}
+            onChange={(e) => setProjectName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+            onBlur={() => {
+              if (!projectName.trim()) {
+                setProjectName(project.name);
+                return;
+              }
+              if (projectName.trim() && projectName !== project.name)
+                void fetch(`/api/editor/${projectId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ name: projectName.trim() }),
+                })
+                  .then(async (r) => {
+                    if (!r.ok) throw Error("Could not rename project");
+                    setProject((p) =>
+                      p ? { ...p, name: projectName.trim() } : p,
+                    );
+                  })
+                  .catch((e) => setMessage(e.message));
+            }}
+          />
         </div>
+        <div id="editor-transport" />
         <span role="status" aria-label="Editor save status">
           {status}
         </span>
@@ -824,7 +858,7 @@ export default function EditorStudio({
           Save
         </button>
         <button className="btn" onClick={() => picker.current?.click()}>
-          Import audio…
+          Import
         </button>
         <button
           className="btn"
@@ -843,8 +877,15 @@ export default function EditorStudio({
         <button className="btn ghost" onClick={() => setVersions((v) => !v)}>
           Versions
         </button>
-        <button className="btn ghost" onClick={() => setSettings((v) => !v)}>
+        <button className="btn ghost" onClick={() => setViewOpen((v) => !v)}>
           Settings
+        </button>
+        <button
+          className="btn ghost"
+          aria-expanded={binOpen}
+          onClick={() => setBinOpen((v) => !v)}
+        >
+          Library
         </button>
       </header>
       <input
@@ -872,9 +913,16 @@ export default function EditorStudio({
           {message}
         </p>
       )}
-      <div className="editor-workspace">
+      <div className={`editor-workspace ${binOpen ? "bin-open" : ""}`}>
         <div className="editor-desk">
           <DawTimeline
+            fullPage
+            viewOpen={viewOpen}
+            onViewClose={() => setViewOpen(false)}
+            onProjectSettings={() => {
+              setViewOpen(false);
+              setSettings(true);
+            }}
             arrangement={a}
             playbackArrangement={rendered ?? a}
             audioUrls={urls}
@@ -933,6 +981,7 @@ export default function EditorStudio({
         </div>
         <aside
           className="editor-bin"
+          hidden={!binOpen}
           aria-label="Clip bin"
           onDragOver={(e) => {
             e.preventDefault();
@@ -947,7 +996,16 @@ export default function EditorStudio({
             });
           }}
         >
-          <h2>Clip bin</h2>
+          <h2>
+            Clip bin{" "}
+            <button
+              aria-label="Close library"
+              onClick={() => setBinOpen(false)}
+            >
+              ×
+            </button>
+          </h2>
+          <button onClick={() => setSettings(true)}>Project settings</button>
           <p className="muted">
             Drop audio here to import without placing it. File and total Editor
             storage limit: {maxMb} MB for your plan.
@@ -958,7 +1016,14 @@ export default function EditorStudio({
             </p>
           )}
           {a.clips.map((c) => (
-            <div className="editor-clip" key={c.id}>
+            <div
+              className="editor-clip"
+              key={c.id}
+              draggable
+              onDragStart={(e) =>
+                e.dataTransfer.setData("application/x-editor-clip", c.id)
+              }
+            >
               <b>{c.name}</b>
               <small>{c.duration.toFixed(2)} s</small>
               <button
@@ -1013,7 +1078,7 @@ export default function EditorStudio({
         >
           <h2>Project settings</h2>
           <label>
-            Project sample rate (default 48 kHz)
+            Project sample rate
             <select
               value={a.sample_rate}
               onChange={(e) =>
@@ -1044,7 +1109,7 @@ export default function EditorStudio({
                 setShortcutPreset(e.target.value as ShortcutPreset)
               }
             >
-              <option value="timeline">Timeline Tools (default)</option>
+              <option value="timeline">Timeline Tools</option>
               <option value="logic">Logic-like</option>
               <option value="protools">Pro Tools-like</option>
               <option value="cubase">Cubase-like</option>
@@ -1120,7 +1185,7 @@ export default function EditorStudio({
               }
             }}
           >
-            Keep mine (default)
+            Keep mine
           </button>
           <button
             className="btn ghost"
@@ -1159,7 +1224,7 @@ export default function EditorStudio({
                 }))
               }
             >
-              <option value="wav">WAV (default)</option>
+              <option value="wav">WAV</option>
               <option value="mp3">MP3</option>
             </select>
           </label>
@@ -1176,7 +1241,7 @@ export default function EditorStudio({
             >
               {[44100, 48000, 96000].map((n) => (
                 <option key={n} value={n}>
-                  {n} Hz{n === 48000 ? " (default)" : ""}
+                  {n} Hz
                 </option>
               ))}
             </select>
@@ -1193,7 +1258,7 @@ export default function EditorStudio({
                   }))
                 }
               >
-                <option value={24}>24-bit (default)</option>
+                <option value={24}>24-bit</option>
                 <option value={16}>16-bit</option>
               </select>
             </label>
@@ -1211,7 +1276,7 @@ export default function EditorStudio({
               >
                 {[128, 192, 256, 320].map((n) => (
                   <option key={n} value={n}>
-                    {n} kbps{n === 320 ? " (default)" : ""}
+                    {n} kbps
                   </option>
                 ))}
               </select>
@@ -1223,7 +1288,7 @@ export default function EditorStudio({
               value={range}
               onChange={(e) => setRange(e.target.value as typeof range)}
             >
-              <option value="whole">Whole project (default)</option>
+              <option value="whole">Whole project</option>
               <option value="loop">Loop Window</option>
               <option value="selection">Selection</option>
             </select>
@@ -1236,11 +1301,11 @@ export default function EditorStudio({
                 setMixOptions((v) => ({ ...v, normalize: e.target.checked }))
               }
             />
-            Peak normalize (default off)
+            Peak normalize
           </label>
           {project.source_overlay && (
             <fieldset>
-              <legend>Subtitles (default off)</legend>
+              <legend>Subtitles</legend>
               {(["srt", "vtt"] as const).map((format) => (
                 <label key={format}>
                   <input

@@ -1,0 +1,54 @@
+{
+  "EDITOR_DAW_PERF": {
+    "tracks": 16,
+    "clips": 800,
+    "p50": 16.699999999999818,
+    "p95": 16.700000000000273,
+    "max": 16.800000000000182
+  },
+  "DAW_PERFORMANCE": {
+    "p50_frame_ms": 16.7,
+    "max_frame_ms": 33.3,
+    "p95_frame_ms": 16.8,
+    "payload_bytes": 150263,
+    "tracks": 20,
+    "regions": 500,
+    "duration": 3600,
+    "renderer": "worker",
+    "browser": "Chromium headless; shared container, not an M1/i5 hardware certification"
+  },
+  "EDITOR_STREAMING_MEMORY": {
+    "tracks": 20,
+    "source_duration_seconds": 3600,
+    "total_source_hours": 20,
+    "decoded_cache_bytes": 122880000,
+    "decoded_cache_windows": 64,
+    "max_range_bytes": 960000,
+    "range_requests": 240,
+    "js_heap_bytes": 6888616,
+    "scope": "Chromium shared Linux container; three seeks across twenty logical one-hour range-served WAV sources; not total browser RSS or an 8 GB Mac certification"
+  },
+  "baseline_video": {
+    "fps": 15,
+    "decoded_budget_seconds": 0.06666666666666667,
+    "clock_budget_seconds": 0.06666666666666667,
+    "ci_invalid_timestamp_allowance": false,
+    "samples": 58,
+    "p95_seconds": 0.0729116666665739,
+    "transition_p95_seconds": 0.0729195000000935,
+    "transition_clock_p95_seconds": 0.07379083333342651,
+    "max_seconds": 1.03950483333338,
+    "timestamp": {
+      "contextTime": 5.491563166666666,
+      "performanceTime": 5913.100000000093
+    },
+    "renderTime": 5.533333333333333,
+    "wallTime": 5921.5,
+    "baseLatency": 0.010020833333333333,
+    "outputLatency": 0.032,
+    "clock_p95_seconds": 0.08848766666657415,
+    "reported_pts_clock_offset_p95_seconds": 0.03220600000000007,
+    "cut_recovery_ms": 33.199999999953434,
+    "cut_recovery_budget_ms": 250
+  }
+}

@@ -206,10 +206,642 @@
   }
 }
 /* Compact controls remain visible at the default 120 px track height. */
-.editor-desk .pro-header input,.editor-desk .pro-header button{min-height:0;margin:0}
-.editor-desk .pro-header>input{height:23px;line-height:19px}
-.editor-desk .pro-header label{margin:0;line-height:18px;min-height:18px}
-.editor-desk .pro-header label input{height:18px;min-height:18px}
-.editor-desk .pro-track-row{height:23px;align-items:center}
-.editor-desk .pro-track-row button{height:21px;padding:1px 8px;font-size:10px}
-.editor-desk .pro-track-row input{height:20px;min-height:20px}
+.editor-desk .pro-header input,
+.editor-desk .pro-header button {
+  min-height: 0;
+  margin: 0;
+}
+.editor-desk .pro-header > input {
+  height: 23px;
+  line-height: 19px;
+}
+.editor-desk .pro-header label {
+  margin: 0;
+  line-height: 18px;
+  min-height: 18px;
+}
+.editor-desk .pro-header label input {
+  height: 18px;
+  min-height: 18px;
+}
+.editor-desk .pro-track-row {
+  height: 23px;
+  align-items: center;
+}
+.editor-desk .pro-track-row button {
+  height: 21px;
+  padding: 1px 8px;
+  font-size: 10px;
+}
+.editor-desk .pro-track-row input {
+  height: 20px;
+  min-height: 20px;
+}
+/* The full-page editor keeps browsing controls out of the arranging surface. */
+.editor-top {
+  height: 48px;
+  min-height: 48px;
+  padding: 0 12px;
+  flex-wrap: nowrap;
+  gap: 8px;
+  background: #161b2e;
+}
+.editor-top > div {
+  flex: 0 1 165px;
+  min-width: 0;
+}
+.editor-top small {
+  display: none;
+}
+.editor-top input[aria-label="Project name"] {
+  padding: 4px 6px;
+  margin: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  width: 150px;
+  font-size: 12px;
+  min-height: 28px;
+  color: #e0e7ff;
+}
+.editor-top input[aria-label="Project name"]:focus {
+  border-color: #818cf8;
+}
+.editor-top #editor-transport {
+  flex: 1;
+  min-width: 410px;
+  display: flex;
+  justify-content: center;
+}
+.editor-top .btn {
+  padding: 4px 7px;
+  min-height: 28px;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.editor-top > [role="status"] {
+  font-size: 10px;
+  max-width: 82px;
+}
+.editor-top > a {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.editor-workspace {
+  display: flex;
+  position: relative;
+}
+.editor-desk {
+  flex: 1;
+  overflow: hidden;
+}
+.editor-bin {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 270px;
+  z-index: 22;
+  box-shadow: -16px 0 40px #0005;
+}
+.editor-bin[hidden] {
+  display: none;
+}
+.editor-bin h2 {
+  display: flex;
+  justify-content: space-between;
+}
+.editor-bin button {
+  color: #c7d2fe;
+  background: #222a42;
+  border: 1px solid #394462;
+  border-radius: 4px;
+}
+.editor-desk .pro-scroll {
+  min-height: 0;
+}
+.editor-message {
+  flex: none;
+  padding: 4px 12px;
+}
+.editor-studio button:focus-visible,
+.editor-studio input:focus-visible,
+.editor-studio select:focus-visible,
+.editor-studio [tabindex]:focus-visible,
+.daw-menu button:focus-visible {
+  outline: 2px solid #fbbf24;
+  outline-offset: 2px;
+}
+.daw-transport {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+.daw-transport button {
+  background: #222a42;
+  color: #e0e7ff;
+  border: 1px solid #394462;
+  border-radius: 4px;
+  min-width: 25px;
+  height: 27px;
+  padding: 0 5px;
+}
+.daw-transport button[aria-pressed="true"] {
+  color: #fff;
+  background: #6366f1;
+}
+.daw-transport button:disabled {
+  opacity: 0.35;
+}
+.daw-transport output {
+  font: 12px ui-monospace;
+  color: #f9a8d4;
+  min-width: 74px;
+  text-align: center;
+}
+.daw-transport label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+}
+.daw-transport input {
+  width: 46px;
+  padding: 2px;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+  font-size: 11px;
+}
+.daw-fullpage {
+  position: relative;
+}
+.daw-toolstrip {
+  height: 36px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 12px;
+  border-bottom: 1px solid #303952;
+  background: #161b2e;
+  font-size: 11px;
+}
+.daw-toolstrip button,
+.daw-statusbar button,
+.daw-dock button,
+.daw-inspector button {
+  background: #222a42;
+  border: 1px solid #394462;
+  color: #c7d2fe;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.daw-toolstrip button[aria-pressed="true"] {
+  background: #6366f1;
+  color: #fff;
+}
+.daw-toolstrip svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.daw-tool-fill {
+  flex: 1;
+}
+.daw-tool-divider {
+  height: 20px;
+  border-left: 1px solid #394462;
+  margin: 0 5px;
+}
+.daw-view-popover {
+  position: absolute;
+  top: 36px;
+  right: 12px;
+  width: 420px;
+  max-height: 70vh;
+  overflow: auto;
+  background: #1a2136;
+  border: 1px solid #818cf8;
+  box-shadow: 0 12px 40px #0009;
+  z-index: 40;
+  border-radius: 8px;
+  padding: 10px;
+}
+.daw-view-popover > .pro-toolbar[aria-label="Timeline tools"] {
+  display: none;
+}
+.daw-view-popover .daw-view-controls > button,
+.daw-view-popover .daw-view-controls > output {
+  display: none;
+}
+.daw-info {
+  flex: none;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 2px 12px;
+  background: #1a2136;
+  font-size: 10px;
+  border-bottom: 1px solid #303952;
+}
+.daw-info label {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin: 0;
+}
+.daw-info input {
+  width: 85px;
+  height: 24px;
+  min-height: 24px;
+  padding: 2px 4px;
+  margin: 0;
+  font-size: 11px;
+}
+.daw-info > input {
+  width: 190px;
+}
+.daw-fullpage .pro-headers,
+.daw-fullpage .pro-header {
+  width: var(--header-width);
+}
+.daw-fullpage .pro-header {
+  padding: 3px 8px;
+}
+.daw-fullpage .pro-header > input {
+  height: 19px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+.daw-fullpage .pro-track-row {
+  height: 22px;
+}
+.daw-fullpage .pro-track-row button {
+  padding: 1px 6px;
+}
+.daw-fullpage .pro-header label {
+  height: 20px;
+}
+.daw-fullpage .pro-header label input {
+  width: 75px;
+}
+.daw-fullpage .pro-header label small {
+  font-size: 9px;
+}
+.daw-statusbar {
+  height: 29px;
+  flex: none;
+  padding: 3px 12px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 10px;
+  border-top: 1px solid #303952;
+  background: #161b2e;
+}
+.daw-statusbar > span {
+  flex: 1;
+  color: #abb3ce;
+}
+.daw-header-width {
+  position: absolute;
+  top: 36px;
+  bottom: 0;
+  width: 6px;
+  z-index: 9;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.daw-header-width:hover {
+  background: #818cf8;
+}
+.daw-menu {
+  position: fixed;
+  max-height: min(540px, 90vh);
+  z-index: 150;
+  min-width: 225px;
+}
+.daw-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.daw-inspector {
+  position: absolute;
+  left: 0;
+  top: 36px;
+  bottom: 29px;
+  width: 200px;
+  background: #161b2ef5;
+  border: 1px solid #818cf8;
+  z-index: 20;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 11px;
+  overflow: auto;
+}
+.daw-inspector select {
+  width: 100%;
+}
+.daw-dock {
+  flex: none;
+  min-height: 160px;
+  background: #161b2e;
+  border-top: 1px solid #475174;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.daw-dock-resize {
+  position: absolute;
+  top: -4px;
+  height: 7px;
+  left: 0;
+  right: 0;
+  cursor: ns-resize;
+  z-index: 5;
+  touch-action: none;
+}
+.daw-dock [role="tablist"] {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 8px 12px 5px;
+  border-bottom: 1px solid #303952;
+  flex: none;
+}
+.daw-dock [role="tab"][aria-selected="true"] {
+  background: #6366f1;
+  color: white;
+}
+.daw-dock [role="tablist"] select {
+  height: 25px;
+  min-height: 25px;
+  max-width: 170px;
+  padding: 2px 6px;
+  margin: 0 0 0 auto;
+  font-size: 11px;
+}
+.daw-dock [role="tabpanel"] {
+  min-height: 0;
+  overflow: auto;
+  flex: 1;
+}
+.fx-rack {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px;
+  min-height: 100%;
+  width: max-content;
+}
+.fx-add {
+  width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px;
+  font-size: 12px;
+}
+.fx-add label {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+}
+.fx-add select {
+  width: 145px;
+  font-size: 11px;
+}
+.fx-add small {
+  color: #abb3ce;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.fx-card {
+  width: 292px;
+  border: 1px solid #394462;
+  border-radius: 8px;
+  background: #1a2136;
+  padding: 8px;
+  flex: none;
+}
+.fx-card header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.fx-card header b {
+  flex: 1;
+}
+.fx-card header button {
+  padding: 1px 4px;
+}
+.fx-card canvas {
+  width: 270px;
+  height: 90px;
+  display: block;
+  touch-action: none;
+  margin: 6px 0;
+  background: #0f1220;
+  border-radius: 4px;
+}
+.fx-card select {
+  font-size: 10px;
+  padding: 2px;
+  height: 22px;
+  min-height: 22px;
+  margin: 0;
+  width: 100%;
+}
+.fx-gr {
+  font-size: 10px;
+  color: #fbbf24;
+}
+.fx-knobs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+}
+.fx-knob-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 9px;
+  width: 38px;
+  margin: 0;
+  color: #abb3ce;
+}
+.fx-knob-label output {
+  font-size: 9px;
+  min-width: 0;
+  color: #c7d2fe;
+}
+.fx-knob {
+  display: block;
+  width: 25px;
+  height: 25px;
+  border: 2px solid #596787;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #394462, #0f1220);
+  position: relative;
+  touch-action: none;
+  cursor: ns-resize;
+}
+.fx-knob i {
+  position: absolute;
+  left: 10px;
+  top: 2px;
+  width: 2px;
+  height: 8px;
+  background: #fbbf24;
+  transform-origin: 1px 9px;
+  transform: rotate(var(--angle));
+}
+.fx-mixer {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  min-width: max-content;
+}
+.fx-channel {
+  width: 110px;
+  border: 1px solid #394462;
+  border-top: 3px solid;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  background: #1a2136;
+  border-radius: 6px;
+}
+.fx-channel b {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-channel label {
+  font-size: 10px;
+}
+.fx-channel input[type="range"] {
+  width: 85px;
+  margin: 0;
+}
+.fx-channel meter {
+  width: 85px;
+  height: 12px;
+}
+.fx-channel output {
+  font-size: 10px;
+  min-width: 0;
+}
+.fx-channel button[aria-pressed="true"] {
+  background: #6366f1;
+}
+.daw-sections {
+  height: 28px;
+  flex: none;
+  position: relative;
+  overflow: hidden;
+  background: #161b2e;
+  border-bottom: 1px solid #303952;
+}
+.daw-sections > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  padding: 5px 12px;
+  background: #161b2e;
+  font-size: 11px;
+  z-index: 2;
+}
+.daw-sections button {
+  position: absolute;
+  top: 3px;
+  height: 21px;
+  min-height: 0;
+  padding: 1px 6px;
+  font-size: 10px;
+  border: 1px solid #818cf8;
+  border-radius: 4px;
+  color: #fff;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.daw-sections > .section-add {
+  right: 6px;
+  left: auto !important;
+  z-index: 3;
+  background: #222a42;
+}
+@media (max-width: 1279px) {
+  .editor-mobile {
+    display: block;
+    padding: 4px 12px;
+    font-size: 11px;
+    background: #222a42;
+  }
+  .editor-studio {
+    min-width: 0;
+  }
+  .editor-top #editor-transport {
+    min-width: 380px;
+  }
+  .editor-top > div {
+    flex-basis: 120px;
+  }
+  .editor-top input[aria-label="Project name"] {
+    width: 110px;
+  }
+  .editor-top .btn {
+    padding: 3px;
+  }
+}
+.daw-track-knobs {
+  display: flex;
+  gap: 9px;
+  height: 43px;
+  align-items: flex-start;
+  padding-top: 1px;
+}
+.daw-fullpage .pro-header .daw-track-knobs label {
+  height: 40px;
+  display: grid;
+  grid-template-columns: 23px 45px;
+  grid-template-rows: 17px 17px;
+  width: 82px;
+  gap: 0 4px;
+}
+.daw-track-knobs .fx-knob {
+  grid-row: span 2;
+  width: 22px;
+  height: 22px;
+  margin-top: 4px;
+}
+.daw-track-knobs .fx-knob i {
+  left: 8px;
+  transform-origin: 1px 8px;
+  height: 7px;
+}
+.daw-track-knobs .fx-knob-label > span:not(.fx-knob) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 8px;
+  align-self: end;
+}
+.daw-track-knobs .fx-knob-label output {
+  align-self: start;
+  font-size: 9px;
+}

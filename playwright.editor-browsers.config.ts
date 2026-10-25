@@ -3,7 +3,7 @@ import desk from "./playwright.desk.config";
 const launch = desk.use?.launchOptions;
 export default defineConfig({
   ...desk,
-  testMatch: ["editor.spec.ts"],
+  testMatch: ["editor.spec.ts", "editor-daw.spec.ts"],
   projects: [
     {
       name: "chromium",

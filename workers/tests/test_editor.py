@@ -37,3 +37,17 @@ class EditorExport(unittest.TestCase):
     reference[start:start+count]+=samples*env[:,None]*np.asarray(pan_gains(.3))*gain
    rms=float(np.sqrt(np.mean((out-reference)**2)));self.assertLess(20*math.log10(max(rms,1e-20)),-60)
    self.assertEqual(sr,48000);self.assertEqual(len(out),96000)
+
+ def test_editor_export_applies_ordered_effects_and_reverse(self):
+  from workers.editor_dsp import InsertChain,SPECS
+  a=fixture();a['regions']=a['regions'][:1];r=a['regions'][0];r.update(gain_db=0,fade_in=0,fade_out=0,reverse=True,inserts=[])
+  a['lanes'][0].update(gain_db=0,pan=0);a['master'].update(gain_db=0,inserts=[])
+  slots=[dict(id='eq',type='eq',enabled=True,parameters={k:v[0] for k,v in SPECS['eq'].items()}),dict(id='drive',type='saturation',enabled=True,parameters=dict(drive=4,mix=.5))]
+  slots[0]['parameters']['g2']=6;a['lanes'][0]['inserts']=slots
+  rate=48000;t=np.arange(rate*2)/rate;signal=np.column_stack([np.sin(t*440*2*np.pi)*.15,np.sin(t*660*2*np.pi)*.1]).astype('float32')
+  settings=dict(revision=1,range=[0,2],options=dict(format='wav',rate=rate,depth=24,bitrate=320,normalize=False),subtitles=[])
+  with tempfile.TemporaryDirectory() as tmp:
+   folder=Path(tmp);source=folder/'input.wav';sf.write(source,signal,rate,subtype='FLOAT')
+   outputs=render_editor({ASSET:source},a,folder,settings);out,_=sf.read(outputs[0],dtype='float32',always_2d=True)
+   reference=InsertChain(slots,rate,120).process(signal[::-1]*np.asarray(pan_gains(0)))
+   np.testing.assert_allclose(out,reference,atol=2e-6)

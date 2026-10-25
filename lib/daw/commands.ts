@@ -62,18 +62,20 @@ export function splitRegions(
         time >= end(r) - 0.001
       )
         return [r];
-      const at = r.src_start + time - r.start;
+      const at = r.reverse
+        ? r.src_end - (time - r.start)
+        : r.src_start + time - r.start;
       return [
         {
           ...r,
-          src_end: at,
+          ...(r.reverse ? { src_start: at } : { src_end: at }),
           fade_out: 0,
           fade_in: Math.min(r.fade_in, time - r.start),
         },
         {
           ...r,
           id: uid(),
-          src_start: at,
+          ...(r.reverse ? { src_end: at } : { src_start: at }),
           start: time,
           fade_in: 0,
           fade_out: Math.min(r.fade_out, end(r) - time),

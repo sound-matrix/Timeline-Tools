@@ -29,6 +29,12 @@ import {
   TimelineRenderer,
   IntervalIndex,
 } from "../../public/daw/render-core.js";
+import { createPortal } from "react-dom";
+import ContextMenu, { type MenuAction } from "./context-menu";
+import EffectsRack, { Mixer, Knob } from "./effects-rack";
+import { importPlacement, COLORS } from "@/lib/editor/model";
+import { moveSection } from "@/lib/daw/sections";
+import { newEffect } from "@/lib/daw/effects";
 import ToolIcon from "./icons/tool-icon";
 import { shortcutTool, type ShortcutPreset } from "@/lib/daw/shortcuts";
 import type { Placement } from "@/lib/editor/model";
@@ -55,6 +61,10 @@ export type DawTransport = {
   stop: () => void;
 };
 type Props = {
+  fullPage?: boolean;
+  viewOpen?: boolean;
+  onViewClose?: () => void;
+  onProjectSettings?: () => void;
   onImport?: (files: File[], placement: Placement) => void;
   onRangeChange?: (span: [number, number] | null) => void;
   shortcutPreset?: ShortcutPreset;
@@ -84,6 +94,10 @@ const EMPTY = {};
 const EMPTY_OVERLAYS: DawOverlay[] = [];
 const EMPTY_VIDEOS: DawVideo[] = [];
 export default function DawTimeline({
+  fullPage = false,
+  viewOpen = false,
+  onViewClose,
+  onProjectSettings,
   onImport,
   onRangeChange,
   shortcutPreset = "timeline",
@@ -115,6 +129,31 @@ export default function DawTimeline({
     time: number;
     lane: string;
   } | null>(null);
+  const [dock, setDock] = useState<
+      "Effects" | "Mixer" | "Markers" | "Regions" | null
+    >(null),
+    [fxTrack, setFxTrack] = useState(""),
+    [fxClip, setFxClip] = useState<string | undefined>(),
+    [dockHeight, setDockHeight] = useState(320),
+    [headerWidth, setHeaderWidth] = useState(fullPage ? 200 : 180),
+    [inspector, setInspector] = useState(false),
+    [transportMount, setTransportMount] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (fullPage)
+      setTransportMount(document.getElementById("editor-transport"));
+  }, [fullPage]);
+  const [sectionMenu, setSectionMenu] = useState<{
+    x: number;
+    y: number;
+    id: string;
+  } | null>(null);
+  const closeSectionMenu = useCallback(() => setSectionMenu(null), []);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  function openFX(id: string, clip?: string) {
+    setFxTrack(id);
+    setFxClip(clip);
+    setDock("Effects");
+  }
   const [ripple, setRipple] = useState(false);
   const [tool, setTool] = useState<Tool>("pointer"),
     [selection, setSelection] = useState<string[]>([]),
@@ -231,7 +270,7 @@ export default function DawTimeline({
   }, [a.lanes, videos.length]);
   useEffect(() => onRangeChange?.(range), [range, onRangeChange]);
   const totalHeight = (rows.at(-1)?.y ?? 36) + (rows.at(-1)?.height ?? 120);
-  const totalWidth = Math.max(view.w, 180 + a.duration * zoom + 100);
+  const totalWidth = Math.max(view.w, headerWidth + a.duration * zoom + 100);
   function stop() {
     engine.current?.stop();
     setPlaying(false);
@@ -257,18 +296,19 @@ export default function DawTimeline({
   function commit(label: string, next: Arrangement, before = state.current) {
     if (readOnly) {
       setMessage("This timeline is read-only.");
-      return;
+      return false;
     }
     const result = arrangementSchema.safeParse(duration(next));
     if (!result.success) {
       (onPreview ?? onChange)(before);
       setMessage(result.error.issues[0]?.message ?? "Invalid edit");
-      return;
+      return false;
     }
     if (engine.current?.running) engine.current.update(result.data, audioUrls);
     onChange(history.current.execute(label, before, result.data), before);
     setHistoryTick((n) => n + 1);
     setMessage("");
+    return true;
   }
   function undo() {
     stop();
@@ -361,7 +401,18 @@ export default function DawTimeline({
     const el = scroller.current;
     if (!el) return;
     const wheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
+        e.preventDefault();
+        commit("Track zoom", {
+          ...state.current,
+          lanes: state.current.lanes.map((l) => ({
+            ...l,
+            height: Math.round(
+              Math.max(60, Math.min(400, l.height - e.deltaY)),
+            ),
+          })),
+        });
+      } else if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         setZoom((z) =>
           Math.max(0.1, Math.min(2000, z * Math.exp(-e.deltaY * 0.005))),
@@ -395,11 +446,14 @@ export default function DawTimeline({
   useEffect(() => {
     if (!isPlaying || autoscroll === "off" || !scroller.current) return;
     const el = scroller.current,
-      x = 180 + position * zoom;
+      x = headerWidth + position * zoom;
     if (autoscroll === "smooth")
       el.scrollLeft = Math.max(0, x - el.clientWidth * 0.4);
-    else if (x < el.scrollLeft + 180 || x > el.scrollLeft + el.clientWidth - 30)
-      el.scrollLeft = Math.max(0, x - 180);
+    else if (
+      x < el.scrollLeft + headerWidth ||
+      x > el.scrollLeft + el.clientWidth - 30
+    )
+      el.scrollLeft = Math.max(0, x - headerWidth);
   }, [position, isPlaying, autoscroll, zoom]);
   useEffect(() => {
     if (painter.current) {
@@ -412,6 +466,8 @@ export default function DawTimeline({
           ruler,
           rows,
           videos,
+          headerWidth,
+          dualRuler: fullPage,
           dpr: Math.min(devicePixelRatio || 1, 2),
         };
       if (cache.a !== a) {
@@ -426,6 +482,7 @@ export default function DawTimeline({
         packet.overlays = overlays.map(({ onSelect, ...data }) => data);
         cache.overlays = overlays;
       }
+      Object.assign(packet, { headerWidth, dualRuler: fullPage });
       painter.current.postMessage(packet);
       return;
     }
@@ -443,6 +500,8 @@ export default function DawTimeline({
         rows,
         overlays,
         videos,
+        headerWidth,
+        dualRuler: fullPage,
         dpr: Math.min(devicePixelRatio || 1, 2),
       });
     };
@@ -451,6 +510,8 @@ export default function DawTimeline({
     return () => cancelAnimationFrame(drawFrame.current);
   }, [
     canvasEpoch,
+    headerWidth,
+    fullPage,
     a,
     peaks,
     view,
@@ -476,8 +537,8 @@ export default function DawTimeline({
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, view.w, view.h);
-    const px = 180 + time * zoom - view.x;
-    if (px >= 180 && px <= view.w) {
+    const px = headerWidth + time * zoom - view.x;
+    if (px >= headerWidth && px <= view.w) {
       ctx.fillStyle = "#F472B6";
       ctx.fillRect(px, 0, 2, view.h);
     }
@@ -525,7 +586,7 @@ export default function DawTimeline({
     return {
       x,
       y,
-      time: Math.max(0, (x + view.x - 180) / zoom),
+      time: Math.max(0, (x + view.x - headerWidth) / zoom),
       lane:
         rows.find((l) => y + view.y >= l.y && y + view.y < l.y + l.height)
           ?.id ?? "",
@@ -653,7 +714,7 @@ export default function DawTimeline({
     const rect = scroller.current!.getBoundingClientRect();
     geometry.current = { left: rect.left, top: rect.top };
     const p = coordinates(e);
-    if (p.x < 180) return;
+    if (p.x < headerWidth) return;
     const r = hit(p.time, p.lane),
       overlay = overlays.find(
         (o) =>
@@ -712,6 +773,12 @@ export default function DawTimeline({
             : [r.id];
       setSelection(ids);
       let mode = "move";
+      const row = rows.find((l) => l.id === r.lane),
+        gainY =
+          (row?.y ?? 0) +
+          25 +
+          ((24 - r.gain_db) / 84) * ((row?.height ?? 96) - 40);
+      const nearGain = fullPage && Math.abs(p.y + view.y - gainY) < 4;
       const edge = 6 / zoom;
       if (tool === "fade")
         mode =
@@ -730,6 +797,7 @@ export default function DawTimeline({
         end(r) - p.time < Math.max(edge, 15 / zoom)
       )
         mode = "fade_out";
+      else if (nearGain && tool === "pointer") mode = "gain";
       else if (Math.abs(p.time - r.start) < edge) mode = "trim_start";
       else if (Math.abs(p.time - end(r)) < edge) mode = "trim_end";
       drag.current = {
@@ -812,6 +880,41 @@ export default function DawTimeline({
       rows.findIndex((l) => l.id === d.lane);
     const altered = d.before.regions.map((r) => {
       if (!d.ids.includes(r.id)) return r;
+      if (d.mode === "gain") {
+        const row = rows.find((l) => l.id === r.lane);
+        return {
+          ...r,
+          gain_db: Math.max(
+            -60,
+            Math.min(
+              24,
+              r.gain_db + ((d.y - p.y) * 84) / ((row?.height ?? 96) - 40),
+            ),
+          ),
+        };
+      }
+      if (r.reverse && d.mode === "trim_start") {
+        const limit = [...a.clips, ...a.derived_clips].find(
+          (c) => c.id === r.clip,
+        )!.duration;
+        const value = Math.max(
+          r.src_start + 0.001,
+          Math.min(limit, r.src_end - delta),
+        );
+        return {
+          ...r,
+          src_end: value,
+          start: Math.max(0, r.start + r.src_end - value),
+        };
+      }
+      if (r.reverse && d.mode === "trim_end")
+        return {
+          ...r,
+          src_start: Math.max(
+            0,
+            Math.min(r.src_end - 0.001, r.src_start - delta),
+          ),
+        };
       if (d.mode === "trim_start") {
         const v = Math.min(r.src_end - 0.001, Math.max(0, r.src_start + delta));
         return {
@@ -990,6 +1093,8 @@ export default function DawTimeline({
           gain_db: r.gain_db,
           fade_in: r.fade_in,
           fade_out: r.fade_out,
+          reverse: r.reverse,
+          inserts: r.inserts,
           fade_curve: r.fade_curve,
         };
         derived.push(clip);
@@ -1007,6 +1112,8 @@ export default function DawTimeline({
           src_start: 0,
           src_end: clip.duration,
           gain_db: 0,
+          reverse: false,
+          inserts: [],
           fade_in: 0,
           fade_out: 0,
           lines: r.lines
@@ -1018,8 +1125,10 @@ export default function DawTimeline({
             .filter((l) => l.src_end > l.src_start),
         };
       }
-      commit("Bounce in place", { ...a, derived_clips: derived, regions });
-      setMessage("Bounced in place. No export job or processing minutes used.");
+      if (commit("Bounce in place", { ...a, derived_clips: derived, regions }))
+        setMessage(
+          "Bounced in place. No export job or processing minutes used.",
+        );
     } catch {
       setMessage(
         "Bounce could not read the source. Your regions are unchanged.",
@@ -1032,12 +1141,19 @@ export default function DawTimeline({
       r = hit(p.time, p.lane);
     if (r && !selection.includes(r.id)) setSelection([r.id]);
     setMenu({
-      x: p.x,
-      y: p.y,
+      x: e.clientX,
+      y: e.clientY,
       time: p.time,
       lane: p.lane,
       region: r?.id,
-      kind: p.x < 180 ? "track" : p.y < 36 ? "ruler" : r ? "region" : "lane",
+      kind:
+        p.x < headerWidth
+          ? "track"
+          : p.y < 36
+            ? "ruler"
+            : r
+              ? "region"
+              : "lane",
     });
   }
   const active = a.regions.find((r) => selection.includes(r.id));
@@ -1056,6 +1172,33 @@ export default function DawTimeline({
       )
     )
       return;
+    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+      e.preventDefault();
+      const box = scroller.current!.getBoundingClientRect(),
+        r = a.regions.find((r) => selection.includes(r.id)),
+        lane = (e.target as HTMLElement).closest<HTMLElement>("[data-track]")
+          ?.dataset.track;
+      setMenu({
+        x: box.left + headerWidth + 20,
+        y: box.top + 60,
+        time: r?.start ?? position,
+        lane: lane ?? r?.lane ?? a.lanes[0]?.id ?? "",
+        region: r?.id,
+        kind:
+          (e.target as HTMLElement).getAttribute("aria-label") === "Playhead"
+            ? "ruler"
+            : lane
+              ? "track"
+              : r
+                ? "region"
+                : "lane",
+      });
+      return;
+    }
+    if (e.key === "Escape") {
+      setMenu(null);
+      return;
+    }
     const k = e.key.toLowerCase(),
       mod = e.ctrlKey || e.metaKey;
     if (mod && k === "z") {
@@ -1154,226 +1297,842 @@ export default function DawTimeline({
       e.preventDefault();
       setTool(mapped as Tool);
     }
-    if (k === "x" && !mod) setMessage("Mixer · Coming soon");
+    if (k === "x" && !mod) {
+      setDock((d) => (d ? null : "Mixer"));
+      setFxTrack((t) => t || a.lanes[0]?.id || "master");
+    }
+  }
+  function addTrack() {
+    commit("Add track", {
+      ...a,
+      lanes: [
+        ...a.lanes,
+        {
+          id: uid(),
+          name: `Track ${a.lanes.length + 1}`,
+          color: COLORS[a.lanes.length % COLORS.length],
+          gain_db: 0,
+          pan: 0,
+          mute: false,
+          solo: false,
+          height: 96,
+          inserts: [],
+        },
+      ],
+    });
+  }
+  function menuItems(): MenuAction[] {
+    if (!menu) return [];
+    const l = a.lanes.find((l) => l.id === menu.lane),
+      r = a.regions.find((r) => r.id === menu.region);
+    const action = (label: string, action: () => void, disabled = false) => ({
+      label,
+      action,
+      disabled,
+    });
+    const colour = (track = false) => {
+      const value = prompt(
+        "Hex colour",
+        track ? l?.color : (r?.color ?? l?.color),
+      );
+      if (value && /^#[0-9a-fA-F]{6}$/.test(value))
+        track
+          ? updateLane(menu.lane, { color: value })
+          : patch(selection, { color: value });
+    };
+    if (menu.kind === "region" && r)
+      return [
+        action("Cut", () => copy(true)),
+        action("Copy", () => copy()),
+        action(
+          "Paste",
+          () => paste(menu.time, menu.lane),
+          !clipboard.current.length,
+        ),
+        action("Duplicate", duplicate),
+        action("Split at playhead", () => split()),
+        action("Split at cursor", () => split(menu.time, [r.id])),
+        action("Delete", () => remove()),
+        action("Ripple delete", () => remove(true)),
+        action("Mute clip", () => patch(selection, { mute: !r.mute })),
+        action("Rename", () => {
+          const name = prompt("Clip name", r.name ?? "");
+          if (name !== null) patch(selection, { name: name.slice(0, 255) });
+        }),
+        action("Colour", () => colour()),
+        action("Clip gain +1 dB", () =>
+          patch(selection, { gain_db: Math.min(24, r.gain_db + 1) }),
+        ),
+        action("Clip gain −1 dB", () =>
+          patch(selection, { gain_db: Math.max(-60, r.gain_db - 1) }),
+        ),
+        action("Normalize clip", () => void normalize()),
+        action("Fade in / out", () => {
+          const n = Number(prompt("Fade seconds", "0.1"));
+          if (Number.isFinite(n) && n >= 0)
+            patch(selection, {
+              fade_in: Math.min(n, end(r) - r.start),
+              fade_out: Math.min(n, end(r) - r.start),
+            });
+        }),
+        action("Crossfade", () => {
+          patch(selection, {
+            fade_in: Math.min(0.05, end(r) - r.start),
+            fade_out: Math.min(0.05, end(r) - r.start),
+            fade_curve: "equal_power",
+          });
+        }),
+        action("Reverse", () => patch(selection, { reverse: !r.reverse })),
+        action("Bounce / consolidate", () => void bounce()),
+        action("Add effect to clip", () => openFX(r.lane, r.id)),
+      ];
+    if (menu.kind === "track" && l)
+      return [
+        action("Rename track", () => {
+          const name = prompt("Track name", l.name);
+          if (name) updateLane(l.id, { name: name.slice(0, 60) });
+        }),
+        action("Colour", () => colour(true)),
+        action("Duplicate track", () => {
+          const id = uid();
+          commit("Duplicate track", {
+            ...a,
+            lanes: [
+              ...a.lanes,
+              { ...l, id, name: `${l.name} copy`.slice(0, 60) },
+            ],
+            regions: [
+              ...a.regions,
+              ...a.regions
+                .filter((r) => r.lane === l.id)
+                .map((r) => ({ ...r, id: uid(), lane: id })),
+            ],
+          });
+        }),
+        action(
+          "Delete track",
+          () =>
+            commit("Delete track", {
+              ...a,
+              lanes: a.lanes.filter((x) => x.id !== l.id),
+              regions: a.regions.filter((r) => r.lane !== l.id),
+              missing: a.missing.filter((m) => m.lane !== l.id),
+            }),
+          !a.editor_project && a.lanes.length === 1,
+        ),
+        action("Add effect", () => openFX(l.id)),
+        action("Freeze (later)", () => {}, true),
+        ...[-1, 1].map((d) =>
+          action(
+            d < 0 ? "Move up" : "Move down",
+            () => {
+              const lanes = [...a.lanes],
+                i = lanes.findIndex((x) => x.id === l.id);
+              if (lanes[i + d]) {
+                [lanes[i], lanes[i + d]] = [lanes[i + d], lanes[i]];
+                commit("Move track", { ...a, lanes });
+              }
+            },
+            d < 0 ? a.lanes[0].id === l.id : a.lanes.at(-1)?.id === l.id,
+          ),
+        ),
+        ...([72, 96, 180] as const).map((height, i) =>
+          action(`Height ${["S", "M", "L"][i]}`, () =>
+            updateLane(l.id, { height }),
+          ),
+        ),
+      ];
+    if (menu.kind === "ruler")
+      return [
+        action("Add marker", () => marker(menu.time)),
+        action("Set loop start", () =>
+          commit("Loop start", {
+            ...a,
+            loop: { ...a.loop, start: Math.min(menu.time, a.loop.end - 0.001) },
+          }),
+        ),
+        action("Set loop end", () =>
+          commit("Loop end", {
+            ...a,
+            loop: {
+              ...a.loop,
+              end: Math.max(
+                a.loop.start + 0.001,
+                Math.min(a.duration, menu.time),
+              ),
+            },
+          }),
+        ),
+        action("Zoom to fit", () => fit()),
+      ];
+    return [
+      action(
+        "Paste",
+        () => paste(menu.time, menu.lane || undefined),
+        !clipboard.current.length,
+      ),
+      action("Add track", addTrack),
+      action("Add marker", () => marker(menu.time)),
+      action("Set loop here", () =>
+        commit("Loop here", {
+          ...a,
+          loop: {
+            enabled: true,
+            start: menu.time,
+            end: Math.min(a.duration, menu.time + (60 / a.tempo) * 4),
+          },
+        }),
+      ),
+      action("Import audio here", () => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.accept = "audio/*";
+        input.onchange = () =>
+          onImport?.(Array.from(input.files ?? []), {
+            time: menu.time,
+            lane: menu.lane || undefined,
+          });
+        input.click();
+      }),
+    ];
   }
   return (
     <section
-      className="pro-daw"
+      className={`pro-daw ${fullPage ? "daw-fullpage" : ""}`}
+      style={{ "--header-width": `${headerWidth}px` } as React.CSSProperties}
       aria-label="DAW timeline"
       tabIndex={0}
       ref={root}
       onKeyDown={shortcut}
       data-history={historyTick}
     >
-      <div className="pro-toolbar">
-        <button type="button" className="btn" onClick={() => void toggle()}>
-          {isPlaying ? "Pause" : "Play"}
-        </button>
-        <button
-          type="button"
-          className="btn ghost"
-          onClick={() => {
-            stop();
-            setHead(0);
-            onSeek?.(0);
-          }}
+      {fullPage &&
+        transportMount &&
+        createPortal(
+          <div className="daw-transport">
+            <button
+              aria-label={isPlaying ? "Pause" : "Play"}
+              title="Play / pause · Space"
+              onClick={() => void toggle()}
+            >
+              {isPlaying ? "Ⅱ" : "▶"}
+            </button>
+            <button
+              aria-label="Stop / return"
+              title="Stop · Enter"
+              onClick={() => {
+                stop();
+                seek(0);
+              }}
+            >
+              ■
+            </button>
+            <button
+              disabled
+              aria-label="Record disabled"
+              title="Recording is not available"
+            >
+              ●
+            </button>
+            <button
+              aria-label="Loop"
+              aria-pressed={a.loop.enabled}
+              onClick={() =>
+                commit("Loop", {
+                  ...a,
+                  loop: { ...a.loop, enabled: !a.loop.enabled },
+                })
+              }
+            >
+              ↻
+            </button>
+            <output aria-label="Current time">
+              {rulerStamp(position, "minsec", a)}
+            </output>
+            <label>
+              BPM
+              <input
+                aria-label="Tempo"
+                type="number"
+                min={20}
+                max={300}
+                value={a.tempo}
+                onChange={(e) => {
+                  if (e.target.value)
+                    commit("Tempo", { ...a, tempo: +e.target.value });
+                }}
+              />
+            </label>
+            <span>{a.time_signature.join("/")}</span>
+            <button
+              aria-pressed={a.snap}
+              onClick={() => commit("Snap", { ...a, snap: !a.snap })}
+            >
+              Snap
+            </button>
+          </div>,
+          transportMount,
+        )}
+      {fullPage && (
+        <div
+          className="daw-toolstrip"
+          role="toolbar"
+          aria-label="Timeline tools"
         >
-          Stop / return
-        </button>
-        <output aria-label="Current time">
-          {rulerStamp(position, ruler, a)}
-        </output>
-        <button type="button" className="btn ghost" onClick={undo}>
-          Undo
-        </button>
-        <button type="button" className="btn ghost" onClick={redo}>
-          Redo
-        </button>
-        <button
-          type="button"
-          className="btn ghost"
-          onClick={() => setHelp((h) => !h)}
-        >
-          Shortcuts (?)
-        </button>
-        <button
-          type="button"
-          className="btn ghost"
-          disabled
-          title="Recording coming soon"
-        >
-          Record arm · Coming soon
-        </button>
-        <button
-          type="button"
-          className="btn ghost"
-          onClick={() => setMessage("Mixer · Coming soon")}
-        >
-          Mixer (X)
-        </button>
-        <label>
-          Edit movement
-          <select
-            value={ripple ? "ripple" : "free"}
-            onChange={(e) => setRipple(e.target.value === "ripple")}
-          >
-            <option value="free">Free Place (default)</option>
-            <option value="ripple">Ripple Follow</option>
-          </select>
-        </label>
-        <label>
-          Autoscroll
-          <select
-            value={autoscroll}
-            onChange={(e) => setAutoscroll(e.target.value)}
-          >
-            <option value="page">Page (default)</option>
-            <option value="smooth">Smooth</option>
-            <option value="off">Off</option>
-          </select>
-        </label>
-      </div>
-      <div className="pro-toolbar" role="toolbar" aria-label="Timeline tools">
-        {(
-          [
-            ["pointer", "Shape V"],
-            ["razor", "Blade C"],
-            ["trim", "Trim T"],
-            ["fade", "Fade F"],
-            ["range", "Span R"],
-            ["zoom", "Lens Z"],
-            ["hand", "Pan Hand H"],
-          ] as const
-        ).map(([id, name]) => (
-          <button
-            type="button"
-            key={id}
-            className={`btn ${tool === id ? "" : "ghost"}`}
-            aria-pressed={tool === id}
-            onClick={() => setTool(id)}
-          >
-            <ToolIcon tool={id} />
-            {name}
+          {(
+            [
+              ["pointer", "Shape V"],
+              ["razor", "Blade C"],
+              ["trim", "Trim T"],
+              ["fade", "Fade F"],
+              ["range", "Span R"],
+              ["zoom", "Lens Z"],
+              ["hand", "Pan Hand H"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              title={label}
+              aria-label={label}
+              aria-pressed={tool === id}
+              onClick={() => setTool(id)}
+            >
+              <ToolIcon tool={id} />
+            </button>
+          ))}
+          <span className="daw-tool-divider" />
+          <button title="Undo · Cmd/Ctrl+Z" aria-label="Undo" onClick={undo}>
+            ↶
           </button>
-        ))}
-        <button type="button" className="btn ghost" onClick={() => split()}>
-          Split at playhead (S)
-        </button>
-        <button type="button" className="btn ghost" onClick={() => remove()}>
-          Delete region
-        </button>
-      </div>
-      <div className="pro-toolbar">
-        <label>
-          <input
-            type="checkbox"
-            checked={a.snap}
-            onChange={(e) => commit("Snap", { ...a, snap: e.target.checked })}
-          />
-          Snap (default on)
-        </label>
-        <label>
-          Grid
-          <select
-            value={snap}
-            onChange={(e) => setSnap(e.target.value as SnapMode)}
+          <button
+            title="Redo · Cmd/Ctrl+Shift+Z"
+            aria-label="Redo"
+            onClick={redo}
           >
-            {[
-              "edges",
-              "off",
-              "frames24",
-              "frames25",
-              "frames30",
-              "seconds",
-              "milliseconds",
-              "beats",
-              "bars",
-              "markers",
-            ].map((s) => (
-              <option key={s}>{s}</option>
+            ↷
+          </button>
+          <button
+            onClick={() => setInspector((i) => !i)}
+            aria-pressed={inspector}
+          >
+            Track Panel
+          </button>
+          <button
+            onClick={() => setDock((d) => (d ? null : "Mixer"))}
+            aria-pressed={!!dock}
+          >
+            Dock · X
+          </button>
+          <button onClick={() => fit()}>Fit</button>
+          <span className="daw-tool-fill" />
+          <span>
+            {a.lanes.length} tracks · {a.regions.length} clips
+          </span>
+          <button aria-label="Shortcuts" onClick={() => setHelp((h) => !h)}>
+            ?
+          </button>
+        </div>
+      )}
+      {(!fullPage || viewOpen) && (
+        <div
+          className={fullPage ? "daw-view-popover" : ""}
+          aria-label="View settings"
+        >
+          {" "}
+          <div className="pro-toolbar daw-view-controls">
+            <button type="button" className="btn" onClick={() => void toggle()}>
+              {isPlaying ? "Pause" : "Play"}
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => {
+                stop();
+                setHead(0);
+                onSeek?.(0);
+              }}
+            >
+              Stop / return
+            </button>
+            <output aria-label="Current time">
+              {rulerStamp(position, ruler, a)}
+            </output>
+            <button type="button" className="btn ghost" onClick={undo}>
+              Undo
+            </button>
+            <button type="button" className="btn ghost" onClick={redo}>
+              Redo
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => setHelp((h) => !h)}
+            >
+              Shortcuts (?)
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              disabled
+              title="Recording coming soon"
+            >
+              Record arm · Coming soon
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => setMessage("Mixer · Coming soon")}
+            >
+              Mixer (X)
+            </button>
+            <label>
+              Edit movement
+              <select
+                value={ripple ? "ripple" : "free"}
+                onChange={(e) => setRipple(e.target.value === "ripple")}
+              >
+                <option value="free">Free Place</option>
+                <option value="ripple">Ripple Follow</option>
+              </select>
+            </label>
+            <label>
+              Autoscroll
+              <select
+                value={autoscroll}
+                onChange={(e) => setAutoscroll(e.target.value)}
+              >
+                <option value="page">Page</option>
+                <option value="smooth">Smooth</option>
+                <option value="off">Off</option>
+              </select>
+            </label>
+          </div>
+          <div
+            className="pro-toolbar"
+            role="toolbar"
+            aria-label="Timeline tools"
+          >
+            {(
+              [
+                ["pointer", "Shape V"],
+                ["razor", "Blade C"],
+                ["trim", "Trim T"],
+                ["fade", "Fade F"],
+                ["range", "Span R"],
+                ["zoom", "Lens Z"],
+                ["hand", "Pan Hand H"],
+              ] as const
+            ).map(([id, name]) => (
+              <button
+                type="button"
+                key={id}
+                className={`btn ${tool === id ? "" : "ghost"}`}
+                aria-pressed={tool === id}
+                onClick={() => setTool(id)}
+              >
+                <ToolIcon tool={id} />
+                {name}
+              </button>
+            ))}
+            <button type="button" className="btn ghost" onClick={() => split()}>
+              Split at playhead (S)
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => remove()}
+            >
+              Delete region
+            </button>
+          </div>
+          <div className="pro-toolbar">
+            <label>
+              <input
+                type="checkbox"
+                checked={a.snap}
+                onChange={(e) =>
+                  commit("Snap", { ...a, snap: e.target.checked })
+                }
+              />
+              Snap
+            </label>
+            <label>
+              Grid
+              <select
+                value={snap}
+                onChange={(e) => setSnap(e.target.value as SnapMode)}
+              >
+                {[
+                  "edges",
+                  "off",
+                  "frames24",
+                  "frames25",
+                  "frames30",
+                  "seconds",
+                  "milliseconds",
+                  "beats",
+                  "bars",
+                  "markers",
+                ].map((s) => (
+                  <option key={s}>{s}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Ruler
+              <select value={ruler} onChange={(e) => setRuler(e.target.value)}>
+                {[
+                  "minsec",
+                  "timecode24",
+                  "timecode25",
+                  "timecode30",
+                  "bars",
+                ].map((s) => (
+                  <option key={s}>{s}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Tempo
+              <input
+                type="number"
+                min={20}
+                max={300}
+                value={a.tempo}
+                onChange={(e) =>
+                  e.target.value &&
+                  commit("Tempo", { ...a, tempo: Number(e.target.value) })
+                }
+              />
+            </label>
+            <label>
+              Time signature
+              <input
+                aria-label="Beats per bar"
+                type="number"
+                min={1}
+                max={16}
+                value={a.time_signature[0]}
+                onChange={(e) =>
+                  e.target.value &&
+                  commit("Signature", {
+                    ...a,
+                    time_signature: [
+                      Number(e.target.value),
+                      a.time_signature[1],
+                    ],
+                  })
+                }
+              />
+              <select
+                aria-label="Beat unit"
+                value={a.time_signature[1]}
+                onChange={(e) =>
+                  commit("Signature", {
+                    ...a,
+                    time_signature: [
+                      a.time_signature[0],
+                      Number(e.target.value) as 2 | 4 | 8 | 16,
+                    ],
+                  })
+                }
+              >
+                {[2, 4, 8, 16].map((n) => (
+                  <option key={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn ghost"
+              aria-label="Zoom in"
+              onClick={() => setZoom((z) => Math.min(2000, z * 1.25))}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              aria-label="Zoom out"
+              onClick={() => setZoom((z) => Math.max(0.1, z / 1.25))}
+            >
+              −
+            </button>
+            <button type="button" className="btn ghost" onClick={() => fit()}>
+              Fit (Shift+Z)
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => fit(true)}
+            >
+              Zoom to selection
+            </button>
+          </div>
+          {fullPage && (
+            <>
+              <button onClick={onProjectSettings}>
+                Project settings / shortcuts
+              </button>
+              <button onClick={onViewClose}>Close view settings</button>
+            </>
+          )}
+        </div>
+      )}
+      {fullPage && active && (
+        <div className="daw-info" aria-label="Selected clip info">
+          <input
+            aria-label="Selected clip name"
+            value={active.name ?? ""}
+            onChange={(e) =>
+              patch(selection, { name: e.target.value.slice(0, 255) })
+            }
+          />
+          {(
+            [
+              ["Start", active.start],
+              ["End", end(active)],
+              ["Length", end(active) - active.start],
+            ] as const
+          ).map(([label, value]) => (
+            <label key={label}>
+              {label}
+              <input
+                aria-label={`Clip ${label.toLowerCase()}`}
+                type="number"
+                step={0.01}
+                value={value}
+                onChange={(e) => {
+                  const n = +e.target.value;
+                  if (!Number.isFinite(n)) return;
+                  if (label === "Start") patch(selection, { start: n });
+                  else
+                    patch(selection, {
+                      src_end:
+                        active.src_start +
+                        (label === "End" ? n - active.start : n),
+                    });
+                }}
+              />
+            </label>
+          ))}
+        </div>
+      )}
+      {fullPage && inspector && (
+        <aside className="daw-inspector">
+          <b>Track Panel</b>
+          <select
+            aria-label="Inspect track"
+            value={fxTrack}
+            onChange={(e) => setFxTrack(e.target.value)}
+          >
+            <option value="">Choose track…</option>
+            {a.lanes.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
             ))}
           </select>
-        </label>
-        <label>
-          Ruler
-          <select value={ruler} onChange={(e) => setRuler(e.target.value)}>
-            {["minsec", "timecode24", "timecode25", "timecode30", "bars"].map(
-              (s) => (
-                <option key={s}>{s}</option>
-              ),
-            )}
-          </select>
-        </label>
-        <label>
-          Tempo (default 120)
-          <input
-            type="number"
-            min={20}
-            max={300}
-            value={a.tempo}
-            onChange={(e) =>
-              e.target.value &&
-              commit("Tempo", { ...a, tempo: Number(e.target.value) })
-            }
-          />
-        </label>
-        <label>
-          Time signature
-          <input
-            aria-label="Beats per bar"
-            type="number"
-            min={1}
-            max={16}
-            value={a.time_signature[0]}
-            onChange={(e) =>
-              e.target.value &&
-              commit("Signature", {
+          {a.lanes
+            .filter((l) => l.id === fxTrack)
+            .map((l) => (
+              <div key={l.id}>
+                <b>{l.name}</b>
+                <p>
+                  Input: imported audio
+                  <br />
+                  Output: Master
+                </p>
+                <Knob
+                  label="Track volume"
+                  value={l.gain_db}
+                  spec={[0, -60, 24, 0.1]}
+                  onChange={(gain_db) => updateLane(l.id, { gain_db })}
+                />
+                <Knob
+                  label="Track pan"
+                  value={l.pan}
+                  spec={[0, -1, 1, 0.01]}
+                  onChange={(pan) => updateLane(l.id, { pan })}
+                />
+                <button onClick={() => openFX(l.id)}>
+                  Inserts ({l.inserts.length})
+                </button>
+                <p>Sends: not routed</p>
+              </div>
+            ))}
+          <b>Sections</b>
+          {a.sections.map((section) => (
+            <button key={section.id} onClick={() => seek(section.start)}>
+              {section.name}
+            </button>
+          ))}
+        </aside>
+      )}
+      {fullPage && (
+        <div className="daw-sections" aria-label="Sections lane">
+          <span style={{ width: headerWidth }}>Sections</span>
+          {a.sections.map((s, i) => (
+            <button
+              key={s.id}
+              draggable
+              title="Drag to reorder · Alt+D duplicate · Enter loop · Shift+F10 menu"
+              aria-label={`Section ${s.name}`}
+              style={{
+                left: headerWidth + s.start * zoom - view.x,
+                width: Math.max(35, (s.end - s.start) * zoom),
+                background: s.color + "66",
+                borderColor: s.color,
+              }}
+              onDragStart={(e) =>
+                e.dataTransfer.setData("application/x-section", s.id)
+              }
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                commit(
+                  "Move section",
+                  moveSection(
+                    a,
+                    e.dataTransfer.getData("application/x-section"),
+                    i,
+                  ),
+                );
+              }}
+              onDoubleClick={() => {
+                const name = prompt("Section name", s.name);
+                if (name)
+                  commit("Rename section", {
+                    ...a,
+                    sections: a.sections.map((x) =>
+                      x.id === s.id ? { ...x, name: name.slice(0, 60) } : x,
+                    ),
+                  });
+              }}
+              onClick={() => seek(s.start)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setSectionMenu({ x: e.clientX, y: e.clientY, id: s.id });
+              }}
+              onKeyDown={(e) => {
+                if (
+                  e.key === "ContextMenu" ||
+                  (e.shiftKey && e.key === "F10")
+                ) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const b = e.currentTarget.getBoundingClientRect();
+                  setSectionMenu({ x: b.left, y: b.bottom, id: s.id });
+                }
+                if (e.altKey && e.key.toLowerCase() === "d") {
+                  e.preventDefault();
+                  commit(
+                    "Duplicate section",
+                    moveSection(a, s.id, i + 1, true),
+                  );
+                }
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  commit("Loop section", {
+                    ...a,
+                    loop: { enabled: true, start: s.start, end: s.end },
+                  });
+                }
+                if (e.altKey && ["ArrowLeft", "ArrowRight"].includes(e.key)) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  commit(
+                    "Reorder section",
+                    moveSection(a, s.id, i + (e.key === "ArrowLeft" ? -1 : 1)),
+                  );
+                }
+              }}
+            >
+              {s.name}
+            </button>
+          ))}
+          <button
+            className="section-add"
+            onClick={() => {
+              const start = a.sections.at(-1)?.end ?? 0,
+                finish = start + (60 / a.tempo) * a.time_signature[0] * 4;
+              commit("Add section", {
                 ...a,
-                time_signature: [Number(e.target.value), a.time_signature[1]],
-              })
-            }
-          />
-          <select
-            aria-label="Beat unit"
-            value={a.time_signature[1]}
-            onChange={(e) =>
-              commit("Signature", {
-                ...a,
-                time_signature: [
-                  a.time_signature[0],
-                  Number(e.target.value) as 2 | 4 | 8 | 16,
+                duration: Math.max(a.duration, finish),
+                sections: [
+                  ...a.sections,
+                  {
+                    id: uid(),
+                    name: `Section ${a.sections.length + 1}`,
+                    start,
+                    end: finish,
+                    color: COLORS[a.sections.length % COLORS.length],
+                  },
                 ],
-              })
-            }
+              });
+            }}
           >
-            {[2, 4, 8, 16].map((n) => (
-              <option key={n}>{n}</option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          className="btn ghost"
-          aria-label="Zoom in"
-          onClick={() => setZoom((z) => Math.min(2000, z * 1.25))}
-        >
-          +
-        </button>
-        <button
-          type="button"
-          className="btn ghost"
-          aria-label="Zoom out"
-          onClick={() => setZoom((z) => Math.max(0.1, z / 1.25))}
-        >
-          −
-        </button>
-        <button type="button" className="btn ghost" onClick={() => fit()}>
-          Fit (Shift+Z)
-        </button>
-        <button type="button" className="btn ghost" onClick={() => fit(true)}>
-          Zoom to selection
-        </button>
-      </div>
+            + Section
+          </button>
+        </div>
+      )}
+      {sectionMenu && (
+        <ContextMenu
+          x={sectionMenu.x}
+          y={sectionMenu.y}
+          onClose={closeSectionMenu}
+          items={[
+            {
+              label: "Loop section",
+              action: () => {
+                const s = a.sections.find((s) => s.id === sectionMenu.id)!;
+                commit("Loop section", {
+                  ...a,
+                  loop: { enabled: true, start: s.start, end: s.end },
+                });
+              },
+            },
+            {
+              label: "Duplicate section",
+              action: () =>
+                commit(
+                  "Duplicate section",
+                  moveSection(
+                    a,
+                    sectionMenu.id,
+                    a.sections.findIndex((s) => s.id === sectionMenu.id) + 1,
+                    true,
+                  ),
+                ),
+            },
+            {
+              label: "Rename section",
+              action: () => {
+                const name = prompt("Section name");
+                if (name)
+                  commit("Rename section", {
+                    ...a,
+                    sections: a.sections.map((s) =>
+                      s.id === sectionMenu.id
+                        ? { ...s, name: name.slice(0, 60) }
+                        : s,
+                    ),
+                  });
+              },
+            },
+            {
+              label: "Delete section",
+              action: () =>
+                commit("Delete section", {
+                  ...a,
+                  sections: a.sections.filter((s) => s.id !== sectionMenu.id),
+                }),
+            },
+          ]}
+        />
+      )}
       {message && <p role="alert">{message}</p>}
       <div
         className="pro-scroll"
@@ -1407,6 +2166,24 @@ export default function DawTimeline({
             else setMessage("Open in Editor Studio to import audio files.");
             return;
           }
+          const libraryId = e.dataTransfer.getData("application/x-editor-clip");
+          if (libraryId) {
+            const clip = a.clips.find((c) => c.id === libraryId);
+            if (clip) {
+              const p = coordinates(e);
+              commit(
+                "Place library clip",
+                importPlacement(
+                  a,
+                  clip,
+                  { time: p.time, lane: p.lane || undefined },
+                  snap,
+                  zoom,
+                ),
+              );
+            }
+            return;
+          }
           if (!e.dataTransfer.getData("text/plain")) return;
           const u = a.unplaced[Number(e.dataTransfer.getData("text/plain"))];
           if (!u) return;
@@ -1426,6 +2203,8 @@ export default function DawTimeline({
                 gain_db: 0,
                 line: 0,
                 confidence: 0,
+                reverse: false,
+                inserts: [],
                 mute: false,
                 fade_in: 0,
                 fade_out: 0,
@@ -1459,7 +2238,7 @@ export default function DawTimeline({
               <div
                 className="pro-drop-ghost"
                 style={{
-                  left: Math.max(180, dropHint.x),
+                  left: Math.max(headerWidth, dropHint.x),
                   top: Math.max(36, dropHint.y),
                 }}
               >
@@ -1475,6 +2254,7 @@ export default function DawTimeline({
             {videos.length > 0 && (
               <VideoStrip
                 videos={videos}
+                headerWidth={headerWidth}
                 zoom={zoom}
                 x={view.x}
                 y={view.y}
@@ -1489,7 +2269,7 @@ export default function DawTimeline({
               aria-valuemin={0}
               aria-valuemax={a.duration}
               aria-valuenow={position}
-              style={{ left: 180 + position * zoom - view.x }}
+              style={{ left: headerWidth + position * zoom - view.x }}
               onPointerDown={(e) => {
                 e.currentTarget.setPointerCapture(e.pointerId);
                 seek(position);
@@ -1514,6 +2294,9 @@ export default function DawTimeline({
                   <div
                     key={l.id}
                     className="pro-header"
+                    tabIndex={0}
+                    data-track={l.id}
+                    onClick={() => setFxTrack(l.id)}
                     style={{
                       top: l.y - view.y,
                       height: l.height,
@@ -1522,8 +2305,8 @@ export default function DawTimeline({
                     onContextMenu={(e) => {
                       e.preventDefault();
                       setMenu({
-                        x: 10,
-                        y: l.y - view.y,
+                        x: e.clientX,
+                        y: e.clientY,
                         time: position,
                         lane: l.id,
                         kind: "track",
@@ -1538,6 +2321,23 @@ export default function DawTimeline({
                       }
                     />
                     <div className="pro-track-row">
+                      {fullPage && (
+                        <>
+                          <button
+                            disabled
+                            aria-label={`Arm ${l.name}`}
+                            title="Recording is not available"
+                          >
+                            ●
+                          </button>
+                          <button
+                            aria-label={`FX ${l.name}`}
+                            onClick={() => openFX(l.id)}
+                          >
+                            FX
+                          </button>
+                        </>
+                      )}
                       <button
                         type="button"
                         aria-label={`Mute ${l.name}`}
@@ -1563,36 +2363,60 @@ export default function DawTimeline({
                         }
                       />
                     </div>
-                    <label>
-                      Volume dB
-                      <input
-                        aria-label={`Gain ${l.name}`}
-                        type="range"
-                        min={-60}
-                        max={24}
-                        step={0.1}
-                        value={l.gain_db}
-                        onChange={(e) =>
-                          updateLane(l.id, { gain_db: Number(e.target.value) })
-                        }
-                      />
-                      <small>{l.gain_db.toFixed(1)}</small>
-                    </label>
-                    {l.height >= 110 && (
-                      <label>
-                        Pan
-                        <input
-                          aria-label={`Pan ${l.name}`}
-                          type="range"
-                          min={-1}
-                          max={1}
-                          step={0.01}
-                          value={l.pan}
-                          onChange={(e) =>
-                            updateLane(l.id, { pan: Number(e.target.value) })
-                          }
+                    {fullPage ? (
+                      <div className="daw-track-knobs">
+                        <Knob
+                          label={`Gain ${l.name}`}
+                          value={l.gain_db}
+                          spec={[0, -60, 24, 0.1]}
+                          onChange={(gain_db) => updateLane(l.id, { gain_db })}
                         />
-                      </label>
+                        <Knob
+                          label={`Pan ${l.name}`}
+                          value={l.pan}
+                          spec={[0, -1, 1, 0.01]}
+                          onChange={(pan) => updateLane(l.id, { pan })}
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        {" "}
+                        <label>
+                          Volume dB
+                          <input
+                            aria-label={`Gain ${l.name}`}
+                            type="range"
+                            min={-60}
+                            max={24}
+                            step={0.1}
+                            value={l.gain_db}
+                            onChange={(e) =>
+                              updateLane(l.id, {
+                                gain_db: Number(e.target.value),
+                              })
+                            }
+                          />
+                          <small>{l.gain_db.toFixed(1)}</small>
+                        </label>
+                        {(fullPage || l.height >= 110) && (
+                          <label>
+                            Pan
+                            <input
+                              aria-label={`Pan ${l.name}`}
+                              type="range"
+                              min={-1}
+                              max={1}
+                              step={0.01}
+                              value={l.pan}
+                              onChange={(e) =>
+                                updateLane(l.id, {
+                                  pan: Number(e.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                        )}
+                      </>
                     )}
                     <div
                       role="separator"
@@ -1640,424 +2464,644 @@ export default function DawTimeline({
                 ))}
             </div>
             {menu && (
+              <ContextMenu
+                x={menu.x}
+                y={menu.y}
+                items={menuItems()}
+                onClose={closeMenu}
+              />
+            )}
+            {fullPage && (
               <div
-                className="pro-context"
-                role="menu"
-                style={{
-                  left: Math.min(view.w - 225, Math.max(0, menu.x)),
-                  top: Math.min(view.h - 230, Math.max(36, menu.y)),
-                }}
+                className="daw-header-width"
+                role="separator"
+                aria-label="Track header width"
+                aria-orientation="vertical"
+                tabIndex={0}
+                style={{ left: headerWidth - 3 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Escape") setMenu(null);
+                  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                    e.preventDefault();
+                    setHeaderWidth((w) =>
+                      Math.max(
+                        160,
+                        Math.min(340, w + (e.key === "ArrowLeft" ? -10 : 10)),
+                      ),
+                    );
+                  }
                 }}
-              >
-                {(menu.kind === "region"
-                  ? [
-                      [
-                        "Split at click",
-                        () =>
-                          split(
-                            menu.time,
-                            menu.region ? [menu.region] : selection,
+                onPointerDown={(e) =>
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                }
+                onPointerMove={(e) => {
+                  if (e.currentTarget.hasPointerCapture(e.pointerId))
+                    setHeaderWidth(
+                      Math.round(
+                        Math.max(
+                          160,
+                          Math.min(
+                            340,
+                            e.clientX -
+                              scroller.current!.getBoundingClientRect().left,
                           ),
-                      ],
-                      ["Cut", () => copy(true)],
-                      ["Copy", () => copy()],
-                      ["Paste", () => paste(menu.time, menu.lane)],
-                      ["Duplicate", duplicate],
-                      ["Delete", () => remove()],
-                      ["Ripple delete", () => remove(true)],
-                      [
-                        "Mute region",
-                        () => patch(selection, { mute: !active?.mute }),
-                      ],
-                      [
-                        "Rename",
-                        () => {
-                          const name = prompt(
-                            "Region name",
-                            active?.name ?? "",
-                          );
-                          if (name !== null)
-                            patch(selection, { name: name.slice(0, 255) });
-                        },
-                      ],
-                      [
-                        "Color",
-                        () => {
-                          const color = prompt(
-                            "Hex color",
-                            active?.color ?? "#818CF8",
-                          );
-                          if (color) patch(selection, { color });
-                        },
-                      ],
-                      [
-                        "Fade in/out",
-                        () => {
-                          const n = prompt(
-                            "Fade in / out seconds (default 0)",
-                            "0",
-                          );
-                          if (n !== null)
-                            patch(selection, {
-                              fade_in: Number(n),
-                              fade_out: Number(n),
-                            });
-                        },
-                      ],
-                      ["Normalize region", () => void normalize()],
-                      [
-                        "Region gain…",
-                        () => {
-                          const n = prompt(
-                            "Region gain dB (default 0)",
-                            String(active?.gain_db ?? 0),
-                          );
-                          if (n !== null)
-                            patch(selection, { gain_db: Number(n) });
-                        },
-                      ],
-                      ["Bounce in place", () => void bounce()],
-                    ]
-                  : menu.kind === "track"
-                    ? [
-                        [
-                          "Select all on track",
-                          () =>
-                            setSelection(
-                              a.regions
-                                .filter((r) => r.lane === menu.lane)
-                                .map((r) => r.id),
-                            ),
-                        ],
-                        [
-                          "Rename track",
-                          () => {
-                            const name = prompt(
-                              "Track name",
-                              a.lanes.find((l) => l.id === menu.lane)?.name,
-                            );
-                            if (name)
-                              updateLane(menu.lane, {
-                                name: name.slice(0, 60),
-                              });
-                          },
-                        ],
-                        [
-                          "Move track up",
-                          () => {
-                            const lanes = [...a.lanes],
-                              i = lanes.findIndex((l) => l.id === menu.lane);
-                            if (i > 0) {
-                              [lanes[i - 1], lanes[i]] = [
-                                lanes[i],
-                                lanes[i - 1],
-                              ];
-                              commit("Reorder tracks", { ...a, lanes });
-                            }
-                          },
-                        ],
-                        [
-                          "Move track down",
-                          () => {
-                            const lanes = [...a.lanes],
-                              i = lanes.findIndex((l) => l.id === menu.lane);
-                            if (i < lanes.length - 1) {
-                              [lanes[i + 1], lanes[i]] = [
-                                lanes[i],
-                                lanes[i + 1],
-                              ];
-                              commit("Reorder tracks", { ...a, lanes });
-                            }
-                          },
-                        ],
-                        [
-                          "Remove track",
-                          () => {
-                            if (a.editor_project || a.lanes.length > 1)
-                              commit("Remove track", {
-                                ...a,
-                                lanes: a.lanes.filter(
-                                  (l) => l.id !== menu.lane,
-                                ),
-                                regions: a.regions.filter(
-                                  (r) => r.lane !== menu.lane,
-                                ),
-                                missing: a.missing.filter(
-                                  (m) => m.lane !== menu.lane,
-                                ),
-                              });
-                          },
-                        ],
-                      ]
-                    : [
-                        ["Paste", () => paste(menu.time, menu.lane)],
-                        ["Add marker here", () => marker(menu.time)],
-                        ["Set loop to selection", loopSelection],
-                        [
-                          "Select all on track",
-                          () =>
-                            setSelection(
-                              a.regions
-                                .filter((r) => r.lane === menu.lane)
-                                .map((r) => r.id),
-                            ),
-                        ],
-                      ]
-                ).map(([label, action]) => (
-                  <button
-                    role="menuitem"
-                    type="button"
-                    key={String(label)}
-                    onClick={() => {
-                      (action as () => void)();
-                      setMenu(null);
-                    }}
-                  >
-                    {String(label)}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => setMenu(null)}
-                >
-                  Close
-                </button>
-              </div>
+                        ),
+                      ),
+                    );
+                }}
+                onPointerUp={(e) =>
+                  e.currentTarget.releasePointerCapture(e.pointerId)
+                }
+              />
             )}
           </div>
         </div>
       </div>
-      <div className="pro-toolbar">
-        <button
-          type="button"
-          className="btn ghost"
-          onClick={() =>
-            commit("Add track", {
-              ...a,
-              lanes: [
-                ...a.lanes,
-                {
-                  id: uid(),
-                  name: `Track ${a.lanes.length + 1}`,
-                  color: "#818CF8",
-                  gain_db: 0,
-                  pan: 0,
-                  mute: false,
-                  solo: false,
-                  height: 120,
-                  inserts: [],
-                },
-              ],
-            })
-          }
-        >
-          Add track
-        </button>
-        <button type="button" className="btn ghost" onClick={() => marker()}>
-          Add marker (M)
-        </button>
-        <button
-          type="button"
-          className="btn ghost"
-          onClick={() => {
-            const previous = a.markers
-              .filter((m) => m.time < position - 0.01)
-              .sort((x, y) => y.time - x.time)[0];
-            if (previous) seek(previous.time);
-          }}
-        >
-          Previous marker
-        </button>
-        <button
-          type="button"
-          className="btn ghost"
-          onClick={() => {
-            const next = a.markers
-              .filter((m) => m.time > position + 0.01)
-              .sort((x, y) => x.time - y.time)[0];
-            if (next) seek(next.time);
-          }}
-        >
-          Next marker
-        </button>
-        <button
-          type="button"
-          className="btn ghost"
-          aria-pressed={a.loop.enabled}
-          onClick={() =>
-            commit("Loop Window", {
-              ...a,
-              loop: { ...a.loop, enabled: !a.loop.enabled },
-            })
-          }
-        >
-          Loop Window (L)
-        </button>
-        <button type="button" className="btn ghost" onClick={loopSelection}>
-          Set loop to selection
-        </button>
-        <label>
-          Master (default 0 dB)
-          <input
-            type="range"
-            min={-60}
-            max={24}
-            step={0.1}
-            value={a.master.gain_db}
-            onChange={(e) =>
-              commit("Master", {
-                ...a,
-                master: { ...a.master, gain_db: Number(e.target.value) },
-              })
-            }
-          />
-          {a.master.gain_db} dB
-        </label>
-        <canvas
-          className="pro-meter"
-          width={120}
-          height={20}
-          ref={meter}
-          aria-label="Master peak and RMS meter"
-          onClick={() => {
-            clipIndicator.current = false;
-          }}
-          title="Click to clear clipping indicator"
-        />
-      </div>
-      {active && (
-        <div className="pro-toolbar">
-          <b>
-            {active.name ?? a.clips.find((c) => c.id === active.clip)?.name}
-          </b>
-          <label>
-            Region gain (dB)
-            <input
-              type="number"
-              min={-60}
-              max={24}
-              value={active.gain_db}
-              onChange={(e) =>
-                e.target.value &&
-                patch(selection, { gain_db: Number(e.target.value) })
-              }
-            />
-          </label>
-          <label>
-            Fade in (default 0 s)
-            <input
-              type="number"
-              min={0}
-              step={0.01}
-              value={active.fade_in}
-              onChange={(e) =>
-                e.target.value &&
-                patch(selection, { fade_in: Number(e.target.value) })
-              }
-            />
-          </label>
-          <label>
-            Fade out (default 0 s)
-            <input
-              type="number"
-              min={0}
-              step={0.01}
-              value={active.fade_out}
-              onChange={(e) =>
-                e.target.value &&
-                patch(selection, { fade_out: Number(e.target.value) })
-              }
-            />
-          </label>
-          <label>
-            Fade curve
-            <select
-              value={active.fade_curve}
-              onChange={(e) =>
-                patch(selection, {
-                  fade_curve: e.target.value as Region["fade_curve"],
+      {!fullPage && (
+        <>
+          {" "}
+          <div className="pro-toolbar">
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() =>
+                commit("Add track", {
+                  ...a,
+                  lanes: [
+                    ...a.lanes,
+                    {
+                      id: uid(),
+                      name: `Track ${a.lanes.length + 1}`,
+                      color: "#818CF8",
+                      gain_db: 0,
+                      pan: 0,
+                      mute: false,
+                      solo: false,
+                      height: 120,
+                      inserts: [],
+                    },
+                  ],
                 })
               }
             >
-              <option value="linear">Linear (default)</option>
-              <option value="equal_power">Equal power</option>
-            </select>
-          </label>
-        </div>
-      )}
-      <details>
-        <summary>Regions ({a.regions.length}) · select with keyboard</summary>
-        <div className="pro-region-list">
-          {a.regions.map((r) => (
+              Add track
+            </button>
             <button
-              key={r.id}
               type="button"
-              aria-label={`Region ${a.lines[r.line]?.text ?? r.name ?? r.id}`}
-              aria-pressed={selection.includes(r.id)}
-              onClick={(e) => {
-                setSelection(e.shiftKey ? [...selection, r.id] : [r.id]);
-                seek(r.start);
+              className="btn ghost"
+              onClick={() => marker()}
+            >
+              Add marker (M)
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => {
+                const previous = a.markers
+                  .filter((m) => m.time < position - 0.01)
+                  .sort((x, y) => y.time - x.time)[0];
+                if (previous) seek(previous.time);
               }}
             >
-              {r.name ??
-                [...a.clips, ...a.derived_clips].find((c) => c.id === r.clip)
-                  ?.name}{" "}
-              · {rulerStamp(r.start, ruler, a)}
+              Previous marker
             </button>
-          ))}
-        </div>
-      </details>
-      <details>
-        <summary>Markers ({a.markers.length})</summary>
-        {a.markers.map((m) => (
-          <div className="pro-toolbar" key={m.id}>
-            <button type="button" onClick={() => seek(m.time)}>
-              Jump
-            </button>
-            <input
-              aria-label={`Marker name ${m.id}`}
-              value={m.name}
-              onChange={(e) =>
-                commit("Rename marker", {
-                  ...a,
-                  markers: a.markers.map((x) =>
-                    x.id === m.id
-                      ? { ...x, name: e.target.value.slice(0, 80) }
-                      : x,
-                  ),
-                })
-              }
-            />
-            <input
-              aria-label={`Marker color ${m.id}`}
-              type="color"
-              value={m.color}
-              onChange={(e) =>
-                commit("Marker color", {
-                  ...a,
-                  markers: a.markers.map((x) =>
-                    x.id === m.id ? { ...x, color: e.target.value } : x,
-                  ),
-                })
-              }
-            />
             <button
               type="button"
+              className="btn ghost"
+              onClick={() => {
+                const next = a.markers
+                  .filter((m) => m.time > position + 0.01)
+                  .sort((x, y) => x.time - y.time)[0];
+                if (next) seek(next.time);
+              }}
+            >
+              Next marker
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              aria-pressed={a.loop.enabled}
               onClick={() =>
-                commit("Delete marker", {
+                commit("Loop Window", {
                   ...a,
-                  markers: a.markers.filter((x) => x.id !== m.id),
+                  loop: { ...a.loop, enabled: !a.loop.enabled },
                 })
               }
             >
-              Delete
+              Loop Window (L)
             </button>
+            <button type="button" className="btn ghost" onClick={loopSelection}>
+              Set loop to selection
+            </button>
+            <label>
+              Master
+              <input
+                type="range"
+                min={-60}
+                max={24}
+                step={0.1}
+                value={a.master.gain_db}
+                onChange={(e) =>
+                  commit("Master", {
+                    ...a,
+                    master: { ...a.master, gain_db: Number(e.target.value) },
+                  })
+                }
+              />
+              {a.master.gain_db} dB
+            </label>
+            <canvas
+              className="pro-meter"
+              width={120}
+              height={20}
+              ref={meter}
+              aria-label="Master peak and RMS meter"
+              onClick={() => {
+                clipIndicator.current = false;
+              }}
+              title="Click to clear clipping indicator"
+            />
           </div>
-        ))}
-      </details>
+          {active && (
+            <div className="pro-toolbar">
+              <b>
+                {active.name ?? a.clips.find((c) => c.id === active.clip)?.name}
+              </b>
+              <label>
+                Region gain (dB)
+                <input
+                  type="number"
+                  min={-60}
+                  max={24}
+                  value={active.gain_db}
+                  onChange={(e) =>
+                    e.target.value &&
+                    patch(selection, { gain_db: Number(e.target.value) })
+                  }
+                />
+              </label>
+              <label>
+                Fade in
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={active.fade_in}
+                  onChange={(e) =>
+                    e.target.value &&
+                    patch(selection, { fade_in: Number(e.target.value) })
+                  }
+                />
+              </label>
+              <label>
+                Fade out
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={active.fade_out}
+                  onChange={(e) =>
+                    e.target.value &&
+                    patch(selection, { fade_out: Number(e.target.value) })
+                  }
+                />
+              </label>
+              <label>
+                Fade curve
+                <select
+                  value={active.fade_curve}
+                  onChange={(e) =>
+                    patch(selection, {
+                      fade_curve: e.target.value as Region["fade_curve"],
+                    })
+                  }
+                >
+                  <option value="linear">Linear</option>
+                  <option value="equal_power">Equal power</option>
+                </select>
+              </label>
+            </div>
+          )}
+          <details>
+            <summary>
+              Regions ({a.regions.length}) · select with keyboard
+            </summary>
+            <div className="pro-region-list">
+              {a.regions.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  aria-label={`Region ${a.lines[r.line]?.text ?? r.name ?? r.id}`}
+                  aria-pressed={selection.includes(r.id)}
+                  onClick={(e) => {
+                    setSelection(e.shiftKey ? [...selection, r.id] : [r.id]);
+                    seek(r.start);
+                  }}
+                >
+                  {r.name ??
+                    [...a.clips, ...a.derived_clips].find(
+                      (c) => c.id === r.clip,
+                    )?.name}{" "}
+                  · {rulerStamp(r.start, ruler, a)}
+                </button>
+              ))}
+            </div>
+          </details>
+          <details>
+            <summary>Markers ({a.markers.length})</summary>
+            {a.markers.map((m) => (
+              <div className="pro-toolbar" key={m.id}>
+                <button type="button" onClick={() => seek(m.time)}>
+                  Jump
+                </button>
+                <input
+                  aria-label={`Marker name ${m.id}`}
+                  value={m.name}
+                  onChange={(e) =>
+                    commit("Rename marker", {
+                      ...a,
+                      markers: a.markers.map((x) =>
+                        x.id === m.id
+                          ? { ...x, name: e.target.value.slice(0, 80) }
+                          : x,
+                      ),
+                    })
+                  }
+                />
+                <input
+                  aria-label={`Marker color ${m.id}`}
+                  type="color"
+                  value={m.color}
+                  onChange={(e) =>
+                    commit("Marker color", {
+                      ...a,
+                      markers: a.markers.map((x) =>
+                        x.id === m.id ? { ...x, color: e.target.value } : x,
+                      ),
+                    })
+                  }
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    commit("Delete marker", {
+                      ...a,
+                      markers: a.markers.filter((x) => x.id !== m.id),
+                    })
+                  }
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </details>
+        </>
+      )}
+      {fullPage && (
+        <>
+          <div className="daw-statusbar">
+            <button onClick={addTrack}>+ Add new track</button>
+            <button onClick={() => setDock((d) => (d ? null : "Effects"))}>
+              {dock ? "Hide dock" : "Effects / Mixer"}
+            </button>
+            <span>
+              {a.sample_rate / 1000} kHz · {a.time_signature.join("/")} ·{" "}
+              {isPlaying ? "Playing" : "Ready"}
+            </span>
+            <button onClick={() => openFX("master")}>Master FX</button>
+            <output aria-label="Master level">
+              {a.master.gain_db.toFixed(1)} dB
+            </output>
+            <canvas
+              className="pro-meter"
+              width={120}
+              height={20}
+              ref={meter}
+              aria-label="Master peak and RMS meter"
+            />
+          </div>
+          {dock && (
+            <section
+              className="daw-dock"
+              aria-label="Bottom dock"
+              style={{ height: dockHeight }}
+            >
+              <div
+                role="separator"
+                aria-label="Resize dock"
+                aria-orientation="horizontal"
+                tabIndex={0}
+                className="daw-dock-resize"
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setDockHeight((h) =>
+                      Math.max(
+                        160,
+                        Math.min(
+                          innerHeight * 0.6,
+                          h + (e.key === "ArrowUp" ? 20 : -20),
+                        ),
+                      ),
+                    );
+                  }
+                }}
+                onPointerDown={(e) =>
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                }
+                onPointerMove={(e) => {
+                  if (e.currentTarget.hasPointerCapture(e.pointerId))
+                    setDockHeight(
+                      Math.max(
+                        160,
+                        Math.min(innerHeight * 0.6, innerHeight - e.clientY),
+                      ),
+                    );
+                }}
+                onPointerUp={(e) =>
+                  e.currentTarget.releasePointerCapture(e.pointerId)
+                }
+              />
+              <div
+                role="tablist"
+                aria-label="Dock tabs"
+                onKeyDown={(e) => {
+                  if ((e.target as HTMLElement).getAttribute("role") !== "tab")
+                    return;
+                  const tabs = [
+                      ...e.currentTarget.querySelectorAll<HTMLButtonElement>(
+                        '[role="tab"]',
+                      ),
+                    ],
+                    index = tabs.indexOf(e.target as HTMLButtonElement);
+                  if (
+                    ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)
+                  ) {
+                    e.preventDefault();
+                    const next =
+                      e.key === "Home"
+                        ? 0
+                        : e.key === "End"
+                          ? tabs.length - 1
+                          : (index +
+                              (e.key === "ArrowLeft" ? -1 : 1) +
+                              tabs.length) %
+                            tabs.length;
+                    tabs[next].click();
+                    tabs[next].focus();
+                  }
+                }}
+              >
+                {(["Effects", "Mixer", "Markers", "Regions"] as const).map(
+                  (tab) => (
+                    <button
+                      key={tab}
+                      role="tab"
+                      aria-selected={dock === tab}
+                      tabIndex={dock === tab ? 0 : -1}
+                      onClick={() => setDock(tab)}
+                    >
+                      {tab}
+                    </button>
+                  ),
+                )}
+                <select
+                  aria-label="Effects target"
+                  value={fxTrack}
+                  onChange={(e) => {
+                    setFxTrack(e.target.value);
+                    setFxClip(undefined);
+                  }}
+                >
+                  <option value="">Select track…</option>
+                  {a.lanes.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                  <option value="master">Master</option>
+                </select>
+                <button aria-label="Close dock" onClick={() => setDock(null)}>
+                  ×
+                </button>
+              </div>
+              <div role="tabpanel" aria-label={dock}>
+                {dock === "Effects" ? (
+                  <EffectsRack
+                    a={a}
+                    target={fxTrack}
+                    clip={fxClip}
+                    onChange={(next) => commit("Effect chain", next)}
+                    getGraph={(id) => engine.current?.effects.get(id)?.graph}
+                  />
+                ) : dock === "Mixer" ? (
+                  <Mixer
+                    a={a}
+                    onChange={(next) => commit("Mixer", next)}
+                    getGraph={(id) => engine.current?.effects.get(id)?.graph}
+                    onFX={openFX}
+                  />
+                ) : (
+                  <>
+                    {dock === "Regions" && (
+                      <>
+                        {active && (
+                          <div className="pro-toolbar">
+                            <b>
+                              {active.name ??
+                                a.clips.find((c) => c.id === active.clip)?.name}
+                            </b>
+                            <label>
+                              Region gain (dB)
+                              <input
+                                type="number"
+                                min={-60}
+                                max={24}
+                                value={active.gain_db}
+                                onChange={(e) =>
+                                  e.target.value &&
+                                  patch(selection, {
+                                    gain_db: Number(e.target.value),
+                                  })
+                                }
+                              />
+                            </label>
+                            <label>
+                              Fade in
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={active.fade_in}
+                                onChange={(e) =>
+                                  e.target.value &&
+                                  patch(selection, {
+                                    fade_in: Number(e.target.value),
+                                  })
+                                }
+                              />
+                            </label>
+                            <label>
+                              Fade out
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={active.fade_out}
+                                onChange={(e) =>
+                                  e.target.value &&
+                                  patch(selection, {
+                                    fade_out: Number(e.target.value),
+                                  })
+                                }
+                              />
+                            </label>
+                            <label>
+                              Fade curve
+                              <select
+                                value={active.fade_curve}
+                                onChange={(e) =>
+                                  patch(selection, {
+                                    fade_curve: e.target
+                                      .value as Region["fade_curve"],
+                                  })
+                                }
+                              >
+                                <option value="linear">Linear</option>
+                                <option value="equal_power">Equal power</option>
+                              </select>
+                            </label>
+                          </div>
+                        )}
+                        <details open>
+                          <summary>
+                            Regions ({a.regions.length}) · select with keyboard
+                          </summary>
+                          <div className="pro-region-list">
+                            {a.regions.map((r) => (
+                              <button
+                                key={r.id}
+                                type="button"
+                                aria-label={`Region ${a.lines[r.line]?.text ?? r.name ?? r.id}`}
+                                aria-pressed={selection.includes(r.id)}
+                                onClick={(e) => {
+                                  setSelection(
+                                    e.shiftKey ? [...selection, r.id] : [r.id],
+                                  );
+                                  seek(r.start);
+                                }}
+                              >
+                                {r.name ??
+                                  [...a.clips, ...a.derived_clips].find(
+                                    (c) => c.id === r.clip,
+                                  )?.name}{" "}
+                                · {rulerStamp(r.start, ruler, a)}
+                              </button>
+                            ))}
+                          </div>
+                        </details>
+                      </>
+                    )}
+                    {dock === "Markers" && (
+                      <>
+                        <div className="pro-toolbar">
+                          <button onClick={() => marker()}>
+                            Add marker (M)
+                          </button>
+                          <button onClick={loopSelection}>
+                            Set loop to selection
+                          </button>
+                          <button
+                            onClick={() =>
+                              seek(
+                                a.markers
+                                  .filter((m) => m.time > position)
+                                  .sort((x, y) => x.time - y.time)[0]?.time ??
+                                  position,
+                              )
+                            }
+                          >
+                            Next marker
+                          </button>
+                          <button
+                            onClick={() =>
+                              seek(
+                                a.markers
+                                  .filter((m) => m.time < position)
+                                  .sort((x, y) => y.time - x.time)[0]?.time ??
+                                  position,
+                              )
+                            }
+                          >
+                            Previous marker
+                          </button>
+                        </div>
+                        <details open>
+                          <summary>Markers ({a.markers.length})</summary>
+                          {a.markers.map((m) => (
+                            <div className="pro-toolbar" key={m.id}>
+                              <button
+                                type="button"
+                                onClick={() => seek(m.time)}
+                              >
+                                Jump
+                              </button>
+                              <input
+                                aria-label={`Marker name ${m.id}`}
+                                value={m.name}
+                                onChange={(e) =>
+                                  commit("Rename marker", {
+                                    ...a,
+                                    markers: a.markers.map((x) =>
+                                      x.id === m.id
+                                        ? {
+                                            ...x,
+                                            name: e.target.value.slice(0, 80),
+                                          }
+                                        : x,
+                                    ),
+                                  })
+                                }
+                              />
+                              <input
+                                aria-label={`Marker color ${m.id}`}
+                                type="color"
+                                value={m.color}
+                                onChange={(e) =>
+                                  commit("Marker color", {
+                                    ...a,
+                                    markers: a.markers.map((x) =>
+                                      x.id === m.id
+                                        ? { ...x, color: e.target.value }
+                                        : x,
+                                    ),
+                                  })
+                                }
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  commit("Delete marker", {
+                                    ...a,
+                                    markers: a.markers.filter(
+                                      (x) => x.id !== m.id,
+                                    ),
+                                  })
+                                }
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          ))}
+                        </details>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </section>
+          )}
+        </>
+      )}
       {help && (
         <div className="card" role="dialog" aria-label="Timeline shortcuts">
           <h3>Timeline shortcuts</h3>
@@ -2068,8 +3112,8 @@ export default function DawTimeline({
             · Del Delete · Shift+Del Ripple delete · Cmd/Ctrl+C/X/V/D
             Copy/Cut/Paste/Duplicate · Cmd/Ctrl+Z Undo · Cmd/Ctrl+Shift+Z or
             Ctrl+Y Redo · Cmd/Ctrl +/− Zoom · Ctrl-wheel / pinch Zoom ·
-            Alt-wheel Track height · Alt-drag Duplicate · Shift/Cmd-click
-            Multi-select · ? Help.
+            Alt-wheel Track height · Ctrl/Cmd+Shift+wheel All track heights ·
+            Alt-drag Duplicate · Shift/Cmd-click Multi-select · ? Help.
           </p>
           <button type="button" className="btn" onClick={() => setHelp(false)}>
             Close shortcuts

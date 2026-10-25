@@ -177,16 +177,34 @@ export default function StudioDaw({
     };
   }, [exportLive?.status, jobId]);
   async function flushEditor() {
-    const deadline=Date.now()+15000;
-    while(saving.current && Date.now()<deadline) await new Promise(r=>setTimeout(r,25));
-    if(saving.current || conflict.current) throw Error("Resolve the save conflict before opening Editor Studio.");
-    saving.current=true;
+    const deadline = Date.now() + 15000;
+    while (saving.current && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 25));
+    if (saving.current || conflict.current)
+      throw Error("Resolve the save conflict before opening Editor Studio.");
+    saving.current = true;
     try {
-      const snapshot=JSON.stringify(current.current);
-      const r=await fetch(`/api/studio/${jobId}/arrangement`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision:revisionRef.current,arrangement:current.current})});
-      if(!r.ok)throw Error("Could not save the latest arrangement. Retry opening Editor Studio.");
-      const data=await r.json();revisionRef.current=data.revision;lastSaved.current=snapshot;setRevision(data.revision);setSaved("Saved");
-    } finally {saving.current=false;}
+      const snapshot = JSON.stringify(current.current);
+      const r = await fetch(`/api/studio/${jobId}/arrangement`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          revision: revisionRef.current,
+          arrangement: current.current,
+        }),
+      });
+      if (!r.ok)
+        throw Error(
+          "Could not save the latest arrangement. Retry opening Editor Studio.",
+        );
+      const data = await r.json();
+      revisionRef.current = data.revision;
+      lastSaved.current = snapshot;
+      setRevision(data.revision);
+      setSaved("Saved");
+    } finally {
+      saving.current = false;
+    }
   }
   function commit(next: Arrangement) {
     if (conflict.current) {
@@ -381,6 +399,8 @@ export default function StudioDaw({
                           fade_in: 0,
                           fade_out: 0,
                           fade_curve: "linear",
+                          reverse: false,
+                          inserts: [],
                           mute: false,
                         },
                       ],
@@ -563,7 +583,7 @@ export default function StudioDaw({
           </div>
         </div>
       )}
-      <OpenEditor source="studio" jobId={jobId} flush={flushEditor}/>
+      <OpenEditor source="studio" jobId={jobId} flush={flushEditor} />
       {exportLive && (
         <ProcessingStatus
           state={exportLive}

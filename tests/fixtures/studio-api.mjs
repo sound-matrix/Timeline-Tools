@@ -225,7 +225,7 @@ createServer(async (req, res) => {
     editors[id]={id,user_id:owner,name:body.p_name,revision:1,arrangement:a,source_kind:source,source_job_id:job,source_arrangement:source==='blank'?null:original,source_overlay:source==='podcast'?{edits:podcasts[job].edits,transcript:podcasts[job].transcript,duration:podcasts[job].duration,media:podcasts[job].media.map(m=>({index:m.media_index,name:m.name,offset:m.offset_sec,duration:m.duration,has_proxy:!!m.proxy_path}))}:null,exports_count:0,updated_at:new Date().toISOString()};editorAssets[id]=[];editorVersions[id]=[{revision:1,saved_at:new Date().toISOString(),arrangement:a}];return send(id);
   }
   if(url.pathname==='/rest/v1/editor_projects'){
-    const id=url.searchParams.get('id')?.slice(3);return send(id?editors[id]??null:Object.values(editors));
+    const id=url.searchParams.get('id')?.slice(3);if(req.method==='PATCH'&&editors[id])editors[id].name=body.name;return send(id?editors[id]??null:Object.values(editors));
   }
   if(url.pathname==='/rest/v1/editor_assets')return send(editorAssets[url.searchParams.get('project_id')?.slice(3)]??[]);
   if(url.pathname==='/rest/v1/editor_arrangement_versions'){

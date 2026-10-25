@@ -4,7 +4,7 @@ import math
 import re
 import uuid
 from pathlib import Path
-from workers.studio_export import apply_inserts
+from workers.effect_contract import validate_slots
 
 def asset_path(path, user, project, asset, peaks=False):
     user=str(uuid.UUID(user));project=str(uuid.UUID(project));asset=str(uuid.UUID(asset))
@@ -51,8 +51,8 @@ def render_editor(stems,arrangement,folder,settings,overlay=None,source_ids=None
         a['regions']=[dict(r,src_start=remap(r['src_start'],local.get(r['clip'],edits)),src_end=remap(r['src_end'],local.get(r['clip'],edits),False),start=remap(r['start'],edits)) for r in a['regions'] if remap(r['src_end'],local.get(r['clip'],edits),False)>remap(r['src_start'],local.get(r['clip'],edits))]
         a['duration']=remap(a['duration'],edits);a['loop']=dict(a['loop'],start=min(a['duration']-.001,remap(a['loop']['start'],edits)),end=remap(a['loop']['end'],edits));a['markers']=[dict(m,time=remap(m['time'],edits)) for m in a['markers']]
     a['legacy_mastering']=False
-    for track in a['lanes']:apply_inserts(None,track['inserts'])
-    apply_inserts(None,a['master']['inserts'])
+    for track in a['lanes']:validate_slots(track['inserts'])
+    validate_slots(a['master']['inserts'])
     export={'formats':['wav'],'wav':{'bit_depth':'32f','sample_rate':48000},'subtitles':[],'missing_lines':'exclude','revision':settings['revision']}
     render({'stems':stems},a,folder,{'room_tone':{'enabled':False},'has_bed':False,'master_lufs':-16},export)
     first,last=settings['range'];seconds=last-first

@@ -197,10 +197,12 @@ test("v2 ZIP, blank settings, real peak lanes, playback and server export choice
   );
   await dialog.getByRole("button", { name: "Confirm export" }).click();
   expect((await exported).status()).toBe(201);
-  await page.getByRole("link",{name:"Open in Editor Studio",exact:true}).click();
+  await page
+    .getByRole("link", { name: "Open in Editor Studio", exact: true })
+    .click();
   await expect(page).toHaveURL(/editor\/[0-9a-f-]{36}/);
-  await expect(page.getByRole("main",{name:"Editor Studio"})).toBeVisible();
-  await expect(page.getByText("Regions (2) · select with keyboard")).toBeVisible();
+  await expect(page.getByRole("main", { name: "Editor Studio" })).toBeVisible();
+  await expect(page.locator(".daw-toolstrip")).toContainText("2 clips");
 });
 test("move lane/time, trim, undo/redo, split, missing bin placement and autosave", async ({
   page,
@@ -270,14 +272,23 @@ test("context menu bounce, fades, markers and undo remain non-destructive", asyn
   await canvas.scrollIntoViewIfNeeded();
   let box = (await canvas.boundingBox())!;
   await page.mouse.click(box.x + 220, box.y + 80);
-  await daw.getByLabel("Fade in (default 0 s)", { exact: true }).fill("0.2");
+  await daw.getByLabel("Fade in", { exact: true }).fill("0.2");
   await daw.getByLabel("Region gain (dB)", { exact: true }).fill("-3");
   await canvas.scrollIntoViewIfNeeded();
   box = (await canvas.boundingBox())!;
   await page.mouse.click(box.x + 220, box.y + 80, { button: "right" });
+  // Match the bounce snapshot, not an earlier gain/fade save still in flight.
+  const bounceSaved = page.waitForResponse(
+    (r) =>
+      r.url().endsWith(`/api/studio/${id}/arrangement`) &&
+      r.request().method() === "PUT" &&
+      r.request().postDataJSON()?.arrangement?.derived_clips?.length === 1,
+    { timeout: 15000 },
+  );
   await page
-    .getByRole("menuitem", { name: "Bounce in place", exact: true })
+    .getByRole("menuitem", { name: "Bounce / consolidate", exact: true })
     .click();
+  expect((await bounceSaved).status()).toBe(200);
   await expect(daw.getByRole("alert")).toContainText("Bounced in place", {
     timeout: 15000,
   });

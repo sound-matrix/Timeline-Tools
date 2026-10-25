@@ -77,8 +77,11 @@ function makeSurface(w, h) {
 }
 function snapshot(surface) {
   // Bitmap export can fail on a software/context-lost renderer. Retain the canvas.
-  try { return surface.transferToImageBitmap?.() ?? surface; }
-  catch { return surface; }
+  try {
+    return surface.transferToImageBitmap?.() ?? surface;
+  } catch {
+    return surface;
+  }
 }
 function fadeValue(r, position) {
   const ramp = (x, n) => (n > 0 ? Math.min(1, Math.max(0, x / n)) : 1);
@@ -133,6 +136,8 @@ export class TimelineRenderer {
       rows,
       overlays,
       videos,
+      headerWidth = 180,
+      dualRuler = false,
     } = state;
     if (!surface || !a || !view) return;
 
@@ -149,9 +154,9 @@ export class TimelineRenderer {
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const x = (t) => 180 + t * zoom - sx,
-      visibleStart = Math.max(0, (sx - 180) / zoom),
-      visibleEnd = (sx + w - 180) / zoom;
+    const x = (t) => headerWidth + t * zoom - sx,
+      visibleStart = Math.max(0, (sx - headerWidth) / zoom),
+      visibleEnd = (sx + w - headerWidth) / zoom;
     const gridKey = JSON.stringify([
       sx,
       sy,
@@ -160,6 +165,8 @@ export class TimelineRenderer {
       dpr,
       zoom,
       ruler,
+      headerWidth,
+      dualRuler,
       a.tempo,
       a.time_signature,
     ]);
@@ -180,14 +187,22 @@ export class TimelineRenderer {
         t += step
       ) {
         const px = x(t);
-        if (px < 180) continue;
+        if (px < headerWidth) continue;
         gridCtx.strokeStyle = "#303952";
         gridCtx.beginPath();
         gridCtx.moveTo(px, 0);
         gridCtx.lineTo(px, h);
         gridCtx.stroke();
         gridCtx.fillStyle = "#ABB3CE";
-        gridCtx.fillText(rulerStamp(t, ruler, a), px + 3, 16);
+        gridCtx.fillText(rulerStamp(t, ruler, a), px + 3, 13);
+        if (dualRuler) {
+          gridCtx.fillStyle = "#6f7e9f";
+          gridCtx.fillText(
+            rulerStamp(t, ruler === "bars" ? "minsec" : "bars", a),
+            px + 3,
+            28,
+          );
+        }
       }
 
       this.grid?.close?.();
@@ -198,11 +213,11 @@ export class TimelineRenderer {
     ctx.font = "11px ui-monospace";
     ctx.save();
     ctx.beginPath();
-    ctx.rect(180, 36, w - 180, h - 36);
+    ctx.rect(headerWidth, 36, w - headerWidth, h - 36);
     ctx.clip();
     if (videos.length) {
       ctx.fillStyle = "#1A2136";
-      ctx.fillRect(180, 36 - sy, w, 72);
+      ctx.fillRect(headerWidth, 36 - sy, w, 72);
       ctx.fillStyle = "#E0E7FF";
       for (const video of videos) {
         ctx.fillRect(
@@ -217,7 +232,7 @@ export class TimelineRenderer {
       const y = lane.y - sy;
       if (y + lane.height < 36 || y > h) continue;
       ctx.fillStyle = "#161B2E";
-      ctx.fillRect(180, y, w, lane.height - 1);
+      ctx.fillRect(headerWidth, y, w, lane.height - 1);
       for (const r of this.index.query(lane.id, visibleStart, visibleEnd)) {
         if (r.lane !== lane.id || end(r) < visibleStart || r.start > visibleEnd)
           continue;
@@ -226,16 +241,20 @@ export class TimelineRenderer {
           top = y + 6,
           rh = lane.height - 12,
           color = r.color ?? lane.color;
-        ctx.fillStyle = selection.includes(r.id) ? "#303E68" : "#222A42";
-        ctx.fillRect(left, top, right - left, rh);
+        ctx.fillStyle = color + (selection.includes(r.id) ? "70" : "38");
+        ctx.beginPath();
+        ctx.roundRect(left, top, right - left, rh, 5);
+        ctx.fill();
+        ctx.fillStyle = color + "55";
+        ctx.fillRect(left, top, right - left, 19);
         ctx.strokeStyle = selection.includes(r.id) ? "#E0E7FF" : color;
         ctx.strokeRect(left + 0.5, top + 0.5, right - left - 1, rh - 1);
         ctx.save();
         ctx.beginPath();
         ctx.rect(
-          Math.max(180, left + 1),
+          Math.max(headerWidth, left + 1),
           top + 1,
-          Math.max(0, right - Math.max(180, left + 1) - 1),
+          Math.max(0, right - Math.max(headerWidth, left + 1) - 1),
           rh - 2,
         );
         ctx.clip();
@@ -250,7 +269,7 @@ export class TimelineRenderer {
         ctx.strokeStyle = color;
         ctx.globalAlpha = r.mute ? 0.25 : 1;
         for (
-          let tileStart = Math.floor(Math.max(180, left) / 256) * 256;
+          let tileStart = Math.floor(Math.max(headerWidth, left) / 256) * 256;
           tileStart < Math.min(w, right);
           tileStart += 256
         ) {
@@ -261,6 +280,7 @@ export class TimelineRenderer {
             derived?.src_start,
             r.src_start,
             r.src_end,
+            r.reverse,
             r.fade_in,
             r.fade_out,
             r.fade_curve,
@@ -279,7 +299,9 @@ export class TimelineRenderer {
             // Continuous per-pixel min/max: sample all bins represented by the pixel.
             tileCtx.beginPath();
             for (let px = tileStart; px < tileEnd; px++) {
-              const source = r.src_start + (px - left) / zoom;
+              const source = r.reverse
+                ? r.src_end - (px - left + 1) / zoom
+                : r.src_start + (px - left) / zoom;
               let lo = 0,
                 hi = 0;
               if (level) {
@@ -306,7 +328,7 @@ export class TimelineRenderer {
                   hi = Math.max(hi, level.values[2 * k + 1] ?? 0);
                 }
               }
-              const env = fadeValue(r, source - r.src_start);
+              const env = fadeValue(r, (px - left) / zoom);
               tileCtx.moveTo(px - tileStart, center + (lo / 128) * amp * env);
               tileCtx.lineTo(
                 px - tileStart,
@@ -327,6 +349,14 @@ export class TimelineRenderer {
           left + 6,
           top + 14,
         );
+        if (dualRuler) {
+          const gainY = y + 25 + ((24 - r.gain_db) / 84) * (lane.height - 40);
+          ctx.strokeStyle = "#e0e7ff88";
+          ctx.beginPath();
+          ctx.moveTo(left, gainY);
+          ctx.lineTo(right, gainY);
+          ctx.stroke();
+        }
         ctx.strokeStyle = "#FCD34D";
         for (const [seconds, inward] of [
           [r.fade_in, 1],
@@ -393,12 +423,12 @@ export class TimelineRenderer {
     }
     ctx.restore();
     ctx.fillStyle = "#161B2E";
-    ctx.fillRect(0, 0, 180, h);
+    ctx.fillRect(0, 0, headerWidth, h);
     ctx.fillStyle = "#ABB3CE";
     ctx.fillText(videos.length ? "VIDEO / TRACKS" : "TRACKS", 10, 20);
     for (const m of a.markers) {
       const px = x(m.time);
-      if (px < 180 || px > w) continue;
+      if (px < headerWidth || px > w) continue;
       ctx.fillStyle = m.color;
       ctx.fillRect(px, 20, 2, h);
       ctx.fillText(`◆ ${m.name}`, px + 4, 30);

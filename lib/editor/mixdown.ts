@@ -1,3 +1,4 @@
+import { createEffectChain } from "../daw/effects.ts";
 import type { Arrangement } from "../arrangement.ts";
 import { fadeValue, panGains, end } from "../daw/commands.ts";
 import { DawPlayback } from "../daw/playback.ts";
@@ -22,7 +23,8 @@ export async function offlineBlock(
     analyser = ctx.createAnalyser();
   master.gain.value =
     10 ** ((a.master.gain_db + (a.master.reference_gain_db ?? 0)) / 20) * scale;
-  master.connect(analyser).connect(ctx.destination);
+  const masterFx = createEffectChain(ctx, a.master.inserts, a.tempo);
+  masterFx.output.connect(master).connect(analyser).connect(ctx.destination);
   const solo = a.lanes.some((l) => l.solo),
     tracks = new Map<string, GainNode>();
   for (const l of a.lanes) {
@@ -43,7 +45,9 @@ export async function offlineBlock(
     split.connect(right, 1);
     left.connect(merge, 0, 0);
     right.connect(merge, 0, 1);
-    merge.connect(insertChain).connect(master);
+    const fx = createEffectChain(ctx, l.inserts, a.tempo);
+    merge.connect(insertChain).connect(fx.input);
+    fx.output.connect(masterFx.input);
     tracks.set(l.id, gain);
   }
   for (const r of a.regions) {
@@ -53,12 +57,29 @@ export async function offlineBlock(
       offset = start - r.start;
     const buffer = await reader(
         urls[r.clip] ?? r.clip,
-        r.src_start + offset,
+        r.reverse
+          ? r.src_end - offset - (finish - start)
+          : r.src_start + offset,
         finish - start,
       ),
       source = ctx.createBufferSource(),
       gain = ctx.createGain();
-    source.buffer = buffer;
+    if (r.reverse)
+      for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+        // Do not mutate cached source buffers.
+        const copy = ctx.createBuffer(
+          buffer.numberOfChannels,
+          buffer.length,
+          buffer.sampleRate,
+        );
+        for (let c = 0; c < buffer.numberOfChannels; c++)
+          copy
+            .getChannelData(c)
+            .set(buffer.getChannelData(c).slice().reverse());
+        source.buffer = copy;
+        break;
+      }
+    else source.buffer = buffer;
     const points = [
       ...new Set(
         [
@@ -86,7 +107,9 @@ export async function offlineBlock(
         duration,
       );
     }
-    source.connect(gain).connect(tracks.get(r.lane)!);
+    const fx = createEffectChain(ctx, r.inserts ?? [], a.tempo);
+    source.connect(gain).connect(fx.input);
+    fx.output.connect(tracks.get(r.lane)!);
     source.start(start - from, 0, finish - start);
   }
   return ctx.startRendering();
@@ -102,9 +125,13 @@ export async function clientMixdown(
   if (span[1] <= span[0]) throw Error("Choose a non-empty export range.");
   if (options.format === "mp3" && options.rate === 96000)
     throw Error("MP3 supports 44.1 or 48 kHz.");
-  if (a.lanes.some((l) => l.inserts.length) || a.master.inserts.length)
-    throw Error("Insert processing is coming in PR D.");
+
+  const hasFx =
+    a.lanes.some((l) => l.inserts.some((s) => s.enabled)) ||
+    a.master.inserts.some((s) => s.enabled) ||
+    a.regions.some((r) => r.inserts?.some((s) => s.enabled));
   const player = new DawPlayback();
+  player.tempo = a.tempo;
   player.derived = a.derived_clips;
   player.sourceUrls = urls;
   player.reader = readWindow;
@@ -140,14 +167,18 @@ export async function clientMixdown(
       for (let at = span[0]; at < span[1]; at += 5) {
         const b = await offlineBlock(
           a,
-          at,
-          Math.min(5, span[1] - at),
+          hasFx ? Math.max(0, at - 60) : at,
+          Math.min(5, span[1] - at) + (hasFx ? Math.min(at, 60) : 0),
           options.rate,
           (...args) => player.window(...args),
           urls,
         );
         for (let ch = 0; ch < 2; ch++) {
-          const data = b.getChannelData(ch);
+          const data = b
+            .getChannelData(ch)
+            .subarray(
+              Math.round((hasFx ? Math.min(at, 60) : 0) * options.rate),
+            );
           for (let i = 0; i < data.length; i += 65536) {
             const block = data.subarray(i, i + 65536);
             for (const v of block) peak = Math.max(peak, Math.abs(v));
@@ -161,14 +192,18 @@ export async function clientMixdown(
     for (let at = span[0]; at < span[1]; at += 5) {
       const b = await offlineBlock(
         a,
-        at,
-        Math.min(5, span[1] - at),
+        hasFx ? Math.max(0, at - 60) : at,
+        Math.min(5, span[1] - at) + (hasFx ? Math.min(at, 60) : 0),
         options.rate,
         (...args) => player.window(...args),
         urls,
         scale,
       );
-      const channels = [b.getChannelData(0), b.getChannelData(1)];
+      const skip = Math.round((hasFx ? Math.min(at, 60) : 0) * options.rate);
+      const channels = [
+        b.getChannelData(0).slice(skip),
+        b.getChannelData(1).slice(skip),
+      ];
       await request(
         { op: "chunk", channels },
         channels.map((c) => c.buffer),
