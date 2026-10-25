@@ -7,6 +7,7 @@ export default defineConfig({
   ...base,
   testMatch: [
     "desk.spec.ts",
+    "subtitles.spec.ts",
     "audio-studio.spec.ts",
     "atelier.spec.ts",
     "podcast.spec.ts",
