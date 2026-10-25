@@ -91,6 +91,8 @@ test.beforeEach(async ({ page, request }) => {
   await request.post(fixture + "/__reset");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/signin");
+  // The auth form is outside this feature; let its client bundle hydrate on a cold server.
+  await page.waitForLoadState("networkidle");
   await page.getByLabel("Email", { exact: true }).fill("desk@example.test");
   await page.getByLabel("Password", { exact: true }).fill("desk-test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -125,18 +127,31 @@ test("Submit stays enabled, multiple upload/drop, selection preview, durations a
   await expect
     .poll(() => preview.evaluate((a: HTMLAudioElement) => a.readyState))
     .toBeGreaterThan(0);
+  const previousSource = await preview.getAttribute("src");
   await page
     .getByRole("button", { name: "Preview narrator.wav, clip 2", exact: true })
     .click();
   await expect(
     page.getByRole("region", { name: "Preview audio", exact: true }),
   ).toContainText("narrator.wav");
+  await expect(preview).not.toHaveAttribute("src", previousSource!);
+  await expect
+    .poll(() => preview.evaluate((a: HTMLAudioElement) => a.readyState))
+    .toBeGreaterThan(0);
   await preview.focus();
   await expect(preview).toBeFocused();
-  await preview.evaluate((a: HTMLAudioElement) => a.play());
-  await expect
-    .poll(() => preview.evaluate((a: HTMLAudioElement) => a.paused))
-    .toBe(false);
+  // Latch actual playback. A one-second clip can finish before a later poll,
+  // especially while the selected clip's object URL is being replaced.
+  const played = await preview.evaluate(async (a: HTMLAudioElement) => {
+    const started = new Promise<boolean>((resolve) =>
+      a.addEventListener("playing", () => resolve(!a.paused), { once: true }),
+    );
+    await a.play();
+    const playing = await started;
+    a.pause();
+    return playing;
+  });
+  expect(played).toBe(true);
   await page
     .getByRole("button", { name: "Remove clip 2: narrator.wav", exact: true })
     .click();
