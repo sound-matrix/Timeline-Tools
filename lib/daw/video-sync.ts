@@ -25,7 +25,8 @@ export function syncVideo(
   const driftBeforeSeek = Math.abs(video.currentTime - target);
   if (
     !video.seeking &&
-    driftBeforeSeek > (playing ? 2 / 15 : 0.001) &&
+    // Leave half a proxy frame for seek completion before two-frame drift.
+    driftBeforeSeek > (playing ? 1.5 / 15 : 0.001) &&
     (!playing ||
       driftBeforeSeek > 0.25 ||
       now - (seeks.get(video) ?? -Infinity) >= 1000 / 15)

@@ -237,3 +237,24 @@ test("a pause during a pending native play allows the next seek to resume decodi
   syncVideo(video, 0.5, true, 32);
   assert.equal(calls, 2, "the interrupted promise cannot block a later resume");
 });
+
+test("continuous drift is corrected before decoder latency can consume the two-frame sync budget", () => {
+  const video = {
+    readyState: 4,
+    duration: 8,
+    currentTime: 2,
+    paused: false,
+    seeking: false,
+    playbackRate: 1,
+    pause() {},
+    async play() {},
+  };
+  syncVideo(video, 2.12, true, 0);
+  assert.equal(video.currentTime, 2.12);
+  syncVideo(video, 2.24, true, 16);
+  assert.equal(
+    video.currentTime,
+    2.12,
+    "small corrections still respect the decoder cadence",
+  );
+});
