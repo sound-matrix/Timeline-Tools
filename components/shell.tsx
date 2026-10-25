@@ -8,6 +8,7 @@ const userLinks = [
   ["/subs", "Subs"],
   ["/studio", "Audio Studio"],
   ["/podcast", "Podcast"],
+  ["/editor", "Editor Studio"],
   ["/plans", "Plans & billing"],
 ];
 const adminLinks = [

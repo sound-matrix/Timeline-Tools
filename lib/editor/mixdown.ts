@@ -25,7 +25,8 @@ export async function offlineBlock(
   master.gain.value =
     10 ** ((a.master.gain_db + (a.master.reference_gain_db ?? 0)) / 20) * scale;
   const masterFx = createEffectChain(ctx, a.master.inserts, a.tempo);
-  masterFx.output.connect(master).connect(analyser).connect(ctx.destination);
+  master.connect(masterFx.input);
+  masterFx.output.connect(analyser).connect(ctx.destination);
   const solo = a.lanes.some((l) => l.solo),
     tracks = new Map<string, GainNode>();
   for (const l of a.lanes) {
@@ -47,9 +48,10 @@ export async function offlineBlock(
     left.connect(merge, 0, 0);
     right.connect(merge, 0, 1);
     const fx = createEffectChain(ctx, l.inserts, a.tempo);
-    merge.connect(insertChain).connect(fx.input);
-    fx.output.connect(masterFx.input);
-    tracks.set(l.id, gain);
+    insertChain.connect(fx.input);
+    fx.output.connect(gain);
+    merge.connect(master);
+    tracks.set(l.id, insertChain);
   }
   for (const r of a.regions) {
     if (r.mute || end(r) <= from || r.start >= from + length) continue;

@@ -81,7 +81,8 @@ test("blank Editor: OS drop three clips, split/move/fade/history, save/reload, f
 }, info) => {
   await page.setViewportSize({ width: 1600, height: 1100 });
   await signin(page, request);
-  await page.getByRole("link", { name: "New Editor project" }).click();
+  await page.getByRole("link", { name: "Editor Studio", exact: true }).click();
+  await page.getByRole("link", { name: "New project", exact: true }).click();
   await expect(page).toHaveURL(/editor\/[0-9a-f-]{36}/);
   await expect(page.getByRole("main", { name: "Editor Studio" })).toBeVisible();
   await expect(page.locator(".side")).toHaveCount(0);
@@ -303,7 +304,8 @@ test("reload during peak generation resumes the original file and saves exactly 
   request,
 }, info) => {
   await signin(page, request);
-  await page.getByRole("link", { name: "New Editor project" }).click();
+  await page.getByRole("link", { name: "Editor Studio", exact: true }).click();
+  await page.getByRole("link", { name: "New project", exact: true }).click();
   await expect(page).toHaveURL(/editor\/[0-9a-f-]{36}/);
   const { readFileSync } = await import("node:fs");
   const source = readFileSync("public/daw/import-worker.js", "utf8");
@@ -353,7 +355,8 @@ test("an interrupted local storage write leaves Editor usable and import can be 
   request,
 }) => {
   await signin(page, request);
-  await page.getByRole("link", { name: "New Editor project" }).click();
+  await page.getByRole("link", { name: "Editor Studio", exact: true }).click();
+  await page.getByRole("link", { name: "New project", exact: true }).click();
   await expect(page.getByRole("main", { name: "Editor Studio" })).toBeVisible();
   await page.evaluate(() => {
     const original = IDBObjectStore.prototype.put;

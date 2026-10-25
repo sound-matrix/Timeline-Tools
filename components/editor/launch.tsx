@@ -45,7 +45,7 @@ export default function EditorLaunch({
           Retry opening
         </button>
       )}
-      <a href="/dashboard">Back to dashboard</a>
+      <a href="/editor">Back to projects</a>
     </main>
   );
 }

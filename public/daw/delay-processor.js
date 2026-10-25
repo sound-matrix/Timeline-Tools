@@ -17,6 +17,20 @@ class TimelineEcho extends AudioWorkletProcessor {
     this.disposed = false;
     this.port.onmessage = ({ data }) => {
       if (data === "dispose") this.disposed = true;
+      else if (data && Number.isFinite(data.feedback)) {
+        this.feedback = data.feedback;
+        if (data.delayFrames !== this.direct[0].length) {
+          this.direct = [
+            new Float32Array(data.delayFrames),
+            new Float32Array(data.delayFrames),
+          ];
+          this.repeat = [
+            new Float32Array(data.delayFrames + 128),
+            new Float32Array(data.delayFrames + 128),
+          ];
+          this.cursor = this.back = 0;
+        }
+      }
     };
   }
   process(inputs, outputs) {

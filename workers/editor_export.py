@@ -66,7 +66,9 @@ def render_editor(stems,arrangement,folder,settings,overlay=None,source_ids=None
                 block=f.read(min(24000,remaining),dtype='float32',always_2d=True)
                 if not len(block):break
                 peak=max(peak,float(np.max(np.abs(block))));remaining-=len(block)
-        if peak:gain=1/peak
+        if peak:
+            ceilings=[10**(s['parameters']['threshold']/20) for s in a['master']['inserts'] if s['enabled'] and s['type']=='limiter']
+            gain=(min(ceilings) if ceilings else 1)/peak
     options=settings['options'];fmt=options['format'];target=folder/f'editor-mix.{fmt}'
     codec=['-c:a','libmp3lame','-b:a',str(options['bitrate'])+'k'] if fmt=='mp3' else ['-c:a','pcm_s24le' if options['depth']==24 else 'pcm_s16le']
     run(['ffmpeg','-v','error','-y','-ss',str(first),'-i',str(source),'-t',str(seconds),'-af',f'volume={gain}','-ar',str(options['rate'])]+codec+[str(target)])

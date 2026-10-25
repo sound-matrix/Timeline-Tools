@@ -11,7 +11,12 @@ export function syncVideo(
 ) {
   if (!video.muted) video.muted = true;
   if (!video.defaultMuted) video.defaultMuted = true;
-  if (!playing) video.pause();
+  if (!playing) {
+    video.pause();
+    // WebKit can leave play() pending when a seek/lead-in pause interrupts it.
+    // A later resume must be allowed to start decoding again.
+    starts.delete(video);
+  }
   if (video.readyState < 1) return;
   const target = Math.max(
     0,
@@ -20,7 +25,8 @@ export function syncVideo(
   const driftBeforeSeek = Math.abs(video.currentTime - target);
   if (
     !video.seeking &&
-    driftBeforeSeek > (playing ? 2 / 15 : 0.001) &&
+    // Leave half a proxy frame for seek completion before two-frame drift.
+    driftBeforeSeek > (playing ? 1.5 / 15 : 0.001) &&
     (!playing ||
       driftBeforeSeek > 0.25 ||
       now - (seeks.get(video) ?? -Infinity) >= 1000 / 15)

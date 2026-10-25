@@ -208,9 +208,13 @@ export class DawPlayback {
     input: AudioNode,
     output: AudioNode,
   ) {
-    const key = JSON.stringify([slots, tempo]),
+    const key = JSON.stringify([
+        slots.map(({ id, type, enabled }) => [id, type, enabled]),
+        tempo,
+      ]),
       old = this.effects.get(id);
     if (old?.key === key) {
+      old.graph.update(slots);
       if (old.output !== output) {
         old.graph.output.disconnect();
         old.graph.output.connect(output);
@@ -267,7 +271,7 @@ export class DawPlayback {
         split.connect(right, 1);
         left.connect(merge, 0, 0);
         right.connect(merge, 0, 1);
-        merge.connect(insert);
+        merge.connect(this.masterInput!);
         track = { gain, left, right, insert };
         this.tracks.set(lane.id, track);
         this.nodes.push(gain, split, merge, left, right, insert);
@@ -277,7 +281,7 @@ export class DawPlayback {
         lane.inserts,
         a.tempo,
         track.insert,
-        this.masterInput!,
+        track.gain,
       );
       track.gain.gain.setTargetAtTime(
         lane.mute || (solo && !lane.solo) ? 0 : 10 ** (lane.gain_db / 20),
@@ -299,8 +303,7 @@ export class DawPlayback {
       this.master!,
     );
     for (const r of a.regions) {
-      if (!this.tracks.has(r.lane) || !r.inserts?.some((s) => s.enabled))
-        continue;
+      if (!this.tracks.has(r.lane)) continue;
       let input = this.regionInputs.get(r.id);
       if (!input) {
         input = ctx.createGain();
@@ -312,15 +315,13 @@ export class DawPlayback {
         r.inserts ?? [],
         a.tempo,
         input,
-        this.tracks.get(r.lane)!.gain,
+        this.tracks.get(r.lane)!.insert,
       );
     }
     for (const [key, value] of this.effects) {
       if (
         key.startsWith("region/") &&
-        !a.regions.some(
-          (r) => `region/${r.id}` === key && r.inserts?.some((s) => s.enabled),
-        )
+        !a.regions.some((r) => `region/${r.id}` === key)
       ) {
         value.graph.dispose();
         this.effects.delete(key);
@@ -329,7 +330,7 @@ export class DawPlayback {
         this.regionInputs.delete(key.slice(7));
       }
     }
-    this.master!.gain.setTargetAtTime(
+    this.masterInput!.gain.setTargetAtTime(
       10 ** ((a.master.gain_db + (a.master.reference_gain_db ?? 0)) / 20),
       ctx.currentTime,
       0.005,
@@ -449,7 +450,8 @@ export class DawPlayback {
                 .connect(gain)
                 .connect(release)
                 .connect(
-                  this.regionInputs.get(r.id) ?? this.tracks.get(r.lane)!.gain,
+                  this.regionInputs.get(r.id) ??
+                    this.tracks.get(r.lane)!.insert,
                 );
               const points = [
                 ...new Set(

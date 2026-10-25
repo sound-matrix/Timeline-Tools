@@ -214,3 +214,47 @@ test("a stalled audio clock holds the preview and resumes when audio advances", 
   c.currentTime = 2.1;
   assert.deepEqual(clock.sample(c, 60), { time: 2.1, advancing: true });
 });
+
+test("a pause during a pending native play allows the next seek to resume decoding", async () => {
+  let calls = 0;
+  const video = {
+    readyState: 4,
+    duration: 8,
+    currentTime: 2.4,
+    paused: true,
+    seeking: true,
+    playbackRate: 1,
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      calls++;
+      return new Promise(() => {});
+    },
+  };
+  syncVideo(video, 2.4, true, 0);
+  syncVideo(video, 0.5, false, 16);
+  syncVideo(video, 0.5, true, 32);
+  assert.equal(calls, 2, "the interrupted promise cannot block a later resume");
+});
+
+test("continuous drift is corrected before decoder latency can consume the two-frame sync budget", () => {
+  const video = {
+    readyState: 4,
+    duration: 8,
+    currentTime: 2,
+    paused: false,
+    seeking: false,
+    playbackRate: 1,
+    pause() {},
+    async play() {},
+  };
+  syncVideo(video, 2.12, true, 0);
+  assert.equal(video.currentTime, 2.12);
+  syncVideo(video, 2.24, true, 16);
+  assert.equal(
+    video.currentTime,
+    2.12,
+    "small corrections still respect the decoder cadence",
+  );
+});

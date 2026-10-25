@@ -33,7 +33,8 @@ async function open(page: Page, request: any, tracks = 3) {
   await page.getByLabel("Password", { exact: true }).fill("desk-test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/dashboard/);
-  await page.getByRole("link", { name: "New Editor project" }).click();
+  await page.getByRole("link", { name: "Editor Studio", exact: true }).click();
+  await page.getByRole("link", { name: "New project", exact: true }).click();
   await expect(page.getByRole("main", { name: "Editor Studio" })).toBeVisible();
   await page.getByLabel("Import audio files", { exact: true }).setInputFiles(
     Array.from({ length: tracks }, (_, i) => ({
@@ -389,4 +390,307 @@ test("section keyboard reorder/duplicate moves its audio and dock tabs remain se
   await expect(
     page.getByRole("tabpanel", { name: "Regions" }),
   ).not.toContainText("Markers (");
+});
+
+test("Space impulse tail is audible through the live insert graph and bypass removes it", async ({
+  page,
+  request,
+}) => {
+  await open(page, request, 1);
+  const bundled = await build({
+    entryPoints: ["lib/daw/effects.ts"],
+    bundle: true,
+    format: "iife",
+    globalName: "TestEffects",
+    write: false,
+  });
+  await page.addScriptTag({ content: bundled.outputFiles[0].text });
+  const result = await page.evaluate(async () => {
+    const lib = (window as any).TestEffects;
+    async function render(enabled: boolean) {
+      const ctx = new OfflineAudioContext(2, 48000 * 2, 48000),
+        source = ctx.createBufferSource();
+      const buffer = ctx.createBuffer(2, 48000, 48000);
+      buffer.getChannelData(0)[0] = buffer.getChannelData(1)[0] = 1;
+      source.buffer = buffer;
+      await lib.prepareEffectContext(ctx);
+      const graph = lib.createEffectChain(
+        ctx,
+        [
+          {
+            id: "room",
+            type: "reverb",
+            enabled,
+            parameters: { decay: 1.2, mix: 1 },
+          },
+        ],
+        120,
+      );
+      source.connect(graph.input);
+      graph.output.connect(ctx.destination);
+      source.start();
+      const out = await ctx.startRendering();
+      const energy = out
+        .getChannelData(0)
+        .slice(4800)
+        .reduce((sum, v) => sum + v * v, 0);
+      graph.dispose();
+      return energy;
+    }
+    return { wet: await render(true), bypass: await render(false) };
+  });
+  expect(result.wet).toBeGreaterThan(0.01);
+  expect(result.bypass).toBeLessThan(1e-10);
+});
+
+test("live playback rewires added and bypassed inserts, updates parameters without replacing sources, and limits the master", async ({
+  page,
+  request,
+}) => {
+  await open(page, request, 1);
+  const bundled = await build({
+    entryPoints: ["lib/daw/playback.ts"],
+    bundle: true,
+    format: "iife",
+    globalName: "TestPlayback",
+    write: false,
+  });
+  await page.addScriptTag({ content: bundled.outputFiles[0].text });
+  const data = await (
+    await page.request.get(page.url().replace("/editor/", "/api/editor/"))
+  ).json();
+  // A trusted interaction enables Web Audio under Firefox autoplay policy.
+  await page.getByRole("button", { name: "FX voice-0", exact: true }).click();
+  await page.evaluate(async (arrangement) => {
+    const w = window as any,
+      engine = new w.TestPlayback.DawPlayback();
+    engine.reader = async (
+      ctx: AudioContext,
+      _url: string,
+      _start: number,
+      length: number,
+    ) => {
+      const b = ctx.createBuffer(
+        2,
+        Math.round(length * ctx.sampleRate),
+        ctx.sampleRate,
+      );
+      for (let ch = 0; ch < 2; ch++)
+        for (let i = 0; i < b.length; i++)
+          b.getChannelData(ch)[i] =
+            0.08 * Math.sin((2 * Math.PI * 440 * i) / ctx.sampleRate);
+      return b;
+    };
+    const a = structuredClone(arrangement);
+    a.duration = 10;
+    a.loop = { enabled: true, start: 0, end: 2 };
+    await engine.play(
+      a,
+      0,
+      {},
+      () => {},
+      () => {},
+    );
+    w.liveFX = {
+      engine,
+      a,
+      rms: () => {
+        const samples = new Float32Array(1024);
+        engine.analyser.getFloatTimeDomainData(samples);
+        return Math.sqrt(
+          samples.reduce((s: number, v: number) => s + v * v, 0) /
+            samples.length,
+        );
+      },
+    };
+  }, data.arrangement);
+  await page.waitForFunction(() => (window as any).liveFX.rms() > 0.02);
+  const dry = await page.evaluate(() => (window as any).liveFX.rms());
+  await page.evaluate(() => {
+    const t = (window as any).liveFX;
+    t.a.lanes[0].inserts = [
+      {
+        id: "warm",
+        type: "saturation",
+        enabled: true,
+        parameters: { drive: 8, mix: 1 },
+      },
+    ];
+    t.engine.update((t.a = structuredClone(t.a)));
+    t.graph = t.engine.effects.get(t.a.lanes[0].id).graph;
+    t.sources = [...t.engine.sources];
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).liveFX.rms()))
+    .toBeGreaterThan(dry * 3);
+  const wet = await page.evaluate(() => (window as any).liveFX.rms());
+  await page.evaluate(() => {
+    const t = (window as any).liveFX;
+    t.a = structuredClone(t.a);
+    t.a.lanes[0].inserts[0].parameters.mix = 0;
+    t.engine.update(t.a);
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).liveFX.rms()))
+    .toBeLessThan(wet / 3);
+  expect(
+    await page.evaluate(() => {
+      const t = (window as any).liveFX;
+      return (
+        t.graph === t.engine.effects.get(t.a.lanes[0].id).graph &&
+        t.sources.every((s: any) => t.engine.sources.has(s))
+      );
+    }),
+  ).toBe(true);
+  await page.evaluate(() => {
+    const t = (window as any).liveFX;
+    t.a = structuredClone(t.a);
+    t.a.lanes[0].inserts[0].enabled = false;
+    t.a.master.gain_db = 24;
+    t.a.master.inserts = [
+      {
+        id: "limit",
+        type: "limiter",
+        enabled: true,
+        parameters: { threshold: -3, release: 0.08 },
+      },
+    ];
+    t.engine.update(t.a);
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).liveFX.rms()))
+    .toBeGreaterThan(dry * 2);
+  const peak = await page.evaluate(() => {
+    const t = (window as any).liveFX,
+      samples = new Float32Array(1024);
+    t.engine.analyser.getFloatTimeDomainData(samples);
+    return Math.max(...samples.map(Math.abs));
+  });
+  expect(20 * Math.log10(peak)).toBeLessThanOrEqual(-3 + 0.1);
+  await page.evaluate(async () => {
+    await (window as any).liveFX.engine.close();
+  });
+});
+
+test("Mixer adds a visible master limiter with ceiling, release and GR, persists it and clamps +12 dB local output", async ({
+  page,
+  request,
+}) => {
+  await open(page, request, 1);
+  await page
+    .getByRole("button", { name: "Effects / Mixer", exact: true })
+    .click();
+  await page.getByRole("tab", { name: "Mixer", exact: true }).click();
+  await page.getByRole("button", { name: "Add limiter", exact: true }).click();
+  const master = page.getByRole("region", {
+    name: "Master inserts",
+    exact: true,
+  });
+  await expect(
+    master.getByRole("article", { name: "Ceiling insert 1" }),
+  ).toBeVisible();
+  await expect(
+    master.getByRole("slider", { name: "Ceiling dBFS", exact: true }),
+  ).toHaveAttribute("aria-valuenow", "-1");
+  await expect(
+    master.getByRole("slider", { name: "Release s", exact: true }),
+  ).toBeVisible();
+  await expect(master.locator(".fx-gr")).toContainText("GR");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByRole("status", { name: "Editor save status" }),
+  ).toHaveText("Saved");
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Effects / Mixer", exact: true })
+    .click();
+  await page.getByRole("tab", { name: "Mixer", exact: true }).click();
+  await expect(
+    master.getByRole("article", { name: "Ceiling insert 1" }),
+  ).toBeVisible();
+  const data = await (
+    await page.request.get(page.url().replace("/editor/", "/api/editor/"))
+  ).json();
+  expect(data.arrangement.master.inserts[0].type).toBe("limiter");
+  const bundled = await build({
+    entryPoints: ["lib/editor/mixdown.ts"],
+    bundle: true,
+    format: "iife",
+    globalName: "TestMix",
+    write: false,
+  });
+  await page.addScriptTag({ content: bundled.outputFiles[0].text });
+  const peaks = await page.evaluate(async (a) => {
+    const w = window as any;
+    a.master.gain_db = 12;
+    const read = async (_url: string, _start: number, length: number) => {
+      const ctx = new OfflineAudioContext(2, 1, 48000),
+        b = ctx.createBuffer(2, Math.round(length * 48000), 48000);
+      for (let ch = 0; ch < 2; ch++)
+        for (let i = 0; i < b.length; i++)
+          b.getChannelData(ch)[i] = Math.sin((2 * Math.PI * 440 * i) / 48000);
+      return b;
+    };
+    const wet = await w.TestMix.offlineBlock(a, 0, 1, 48000, read, {});
+    const peak = (b: AudioBuffer) =>
+      Math.max(...Array.from(b.getChannelData(0)).map(Math.abs));
+    const limited = peak(wet);
+    a.master.inserts = [];
+    return {
+      limited,
+      dry: peak(await w.TestMix.offlineBlock(a, 0, 1, 48000, read, {})),
+    };
+  }, data.arrangement);
+  expect(20 * Math.log10(peaks.limited)).toBeLessThanOrEqual(-1 + 0.1);
+  expect(peaks.dry).toBeGreaterThan(1);
+});
+
+test("Editor Studio has its own desktop and mobile menu, project list, rename and delete", async ({
+  page,
+  request,
+}) => {
+  await open(page, request, 1);
+  await page.goto("/dashboard");
+  await expect(
+    page
+      .locator("main")
+      .getByRole("heading", { name: "Editor Studio", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.locator("main").getByRole("link", { name: /Editor/ }),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: "Editor Studio", exact: true }).click();
+  await expect(page).toHaveURL(/\/editor$/);
+  await expect(
+    page.getByRole("link", { name: "Editor Studio", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await page.getByRole("button", { name: "Rename", exact: true }).click();
+  await page.getByLabel("Project name", { exact: true }).fill("Master mix");
+  await page.getByRole("button", { name: "Save name", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "Master mix", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("link", { name: "Master mix", exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole("button", { name: "☰ Studio menu", exact: true })
+    .click();
+  await expect(
+    page.getByRole("link", { name: "Editor Studio", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Editor Studio", exact: true }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Confirm delete", exact: true })
+    .click();
+  await expect(
+    page.getByRole("link", { name: "Master mix", exact: true }),
+  ).toHaveCount(0);
+  await page.reload();
+  await expect(
+    page.getByText("No projects yet.", { exact: false }),
+  ).toBeVisible();
 });
