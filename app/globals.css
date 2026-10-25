@@ -2933,3 +2933,176 @@ small[role="alert"] { display: block; color: #fda4af; }
 .subtitle-toolbar [role="group"] { display: flex; gap: 6px; }
 .subtitle-toolbar button[aria-pressed="false"] { background: transparent; color: var(--muted); border-color: var(--border); }
 .subtitle-cue label { align-content: start; }
+
+/* Simple Audio Studio: detailed editing lives in Editor Studio. */
+.studio-simple-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+.studio-simple-left,
+.studio-simple-right {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.studio-simple .card {
+  margin: 0;
+  padding: 28px;
+  border-radius: 20px;
+}
+.studio-upload-drop {
+  padding: 30px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 16px;
+  text-align: center;
+  background: var(--canvas);
+}
+.studio-simple .studio-hidden-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.studio-preview {
+  padding: 28px 0 12px;
+}
+.studio-simple audio {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 54px;
+  border-radius: 999px;
+  color-scheme: dark;
+}
+.studio-preview p {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.studio-submit {
+  width: 100%;
+}
+.studio-simple .studio-optional {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+.studio-simple summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.studio-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: 12px;
+  margin-top: 24px;
+}
+.studio-result-actions .editor-entry {
+  margin: 0;
+}
+.studio-clip-count {
+  font-size: 13px;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.studio-uploaded-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.studio-uploaded-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.studio-uploaded-list details {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+.studio-select-clip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+}
+.studio-select-clip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+.studio-select-clip b {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.studio-select-clip small {
+  display: block;
+  margin-top: 6px;
+}
+.studio-transcript-text {
+  min-height: 280px;
+  max-height: 500px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+  margin-bottom: 24px;
+}
+.studio-simple .studio-transcription textarea {
+  width: 100%;
+  min-height: 300px;
+  resize: vertical;
+  line-height: 1.8;
+  margin-bottom: 16px;
+}
+.studio-simple
+  :is(button, a, summary, audio, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+@media (max-width: 900px) {
+  .studio-simple-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .studio-simple .card {
+    padding: 20px;
+  }
+}
+@media (max-width: 480px) {
+  .studio-result-actions {
+    display: grid;
+  }
+  .studio-result-actions .btn {
+    width: 100%;
+  }
+}
+.studio-simple {
+  margin-bottom: 24px;
+}
+.studio-simple button {
+  font-family: inherit;
+}
+.studio-select-clip {
+  font-size: 14px;
+}
+.studio-result-actions .btn {
+  margin: 0;
+  font-size: 14px;
+}

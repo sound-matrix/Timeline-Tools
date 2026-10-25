@@ -39,12 +39,22 @@ async function load(entry) {
           b.onResolve(
             {
               filter:
-                /^\.\/(studio-motion|input-preview|processing-status|processing-controls|visualizer|studio-daw|podcast-editor)$/,
+                /^\.\/(studio-motion|input-preview|processing-status|processing-controls|visualizer|studio-daw|podcast-editor|studio-clip-preview)$/,
             },
             (a) => ({ path: a.path, namespace: "child" }),
           );
-          b.onLoad({ filter: /.*/, namespace: "child" }, () => ({
-            contents: "export default function Child(){return null}",
+          b.onLoad({ filter: /.*/, namespace: "child" }, (a) => ({
+            contents: a.path.endsWith("studio-clip-preview")
+              ? "export function ClipPreview(){return null}; export function ClipDuration(){return null}"
+              : "export default function Child(){return null}",
+          }));
+          b.onResolve({ filter: /^\.\/studio-result$/ }, (a) => ({
+            path: a.path,
+            namespace: "layout",
+          }));
+          b.onLoad({ filter: /.*/, namespace: "layout" }, () => ({
+            contents:
+              "export default function Layout(p){return [p.controls,p.clipsPanel]}",
           }));
           b.onLoad({ filter: /.*/, namespace: "mock" }, (a) => ({
             contents:
@@ -97,7 +107,11 @@ for (const [label, path] of [
       const start = () =>
         view.root
           .findAllByType("button")
-          .find((b) => b.children.includes("Start Processing"));
+          .find((b) =>
+            b.children.includes(
+              label === "Studio" ? "Submit" : "Start Processing",
+            ),
+          );
       assert.equal(start().props.disabled, false);
       await act(async () => {
         await view.root

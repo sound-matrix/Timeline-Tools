@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { arrangementSchema } from "@/lib/arrangement";
+import { studioCues } from "@/lib/studio-result";
 import { jsonCues, validateCues } from "@/lib/subtitles";
 const headers = { "Cache-Control": "private, no-store" };
 type Context = { params: Promise<{ id: string }> };
@@ -14,7 +16,8 @@ async function owned(context: Context) {
     .eq("id", id)
     .eq("user_id", user.id)
     .maybeSingle();
-  return job?.type === "subtitles" && job.status === "done"
+  return (job?.type === "subtitles" || job?.type === "studio") &&
+    job.status === "done"
     ? { db, user, id, job }
     : null;
 }
@@ -39,6 +42,7 @@ export async function GET(_request: Request, context: Context) {
     );
   let audioUrl: string | null = null;
   if (
+    job.type === "subtitles" &&
     typeof job.input_path === "string" &&
     job.input_path.startsWith(user.id + "/")
   ) {
@@ -47,7 +51,23 @@ export async function GET(_request: Request, context: Context) {
       .createSignedUrl(job.input_path, 3600);
     audioUrl = media?.signedUrl ?? null;
   }
-  return NextResponse.json({ cues: data?.cues ?? null, audioUrl }, { headers });
+  let cues = data?.cues ?? null;
+  if (job.type === "studio" && cues === null) {
+    const { data: source, error: sourceError } = await db
+      .from("studio_arrangements")
+      .select("arrangement")
+      .eq("job_id", id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    const parsed = arrangementSchema.safeParse(source?.arrangement);
+    if (sourceError || !parsed.success)
+      return NextResponse.json(
+        { error: "Transcript unavailable. Please retry." },
+        { status: 503, headers },
+      );
+    cues = studioCues(parsed.data);
+  }
+  return NextResponse.json({ cues, audioUrl }, { headers });
 }
 export async function PUT(request: Request, context: Context) {
   if (request.headers.get("origin") !== new URL(request.url).origin)

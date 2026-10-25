@@ -13,9 +13,9 @@ import {
 import { uploadFile } from "@/lib/upload";
 import { browserClient } from "@/lib/supabase/client";
 import type { ProcessingState } from "@/lib/job-status";
-import Visualizer from "./visualizer";
+import StudioResult from "./studio-result";
+import { ClipPreview, ClipDuration } from "./studio-clip-preview";
 import ProcessingStatus from "./processing-status";
-import StudioDaw from "./studio-daw";
 const accept = extensions.map((e) => "." + e).join(",");
 export default function AudioStudio({
   userId,
@@ -29,6 +29,8 @@ export default function AudioStudio({
   const router = useRouter();
   const submitting = useRef(false);
   const scriptRead = useRef(0);
+  const clipsInput = useRef<HTMLInputElement>(null);
+  const [selected, setSelected] = useState<File | null>(null);
   const bedInput = useRef<HTMLInputElement>(null);
   const [clips, setClips] = useState<{ file: File; speaker: string }[]>([]),
     [bed, setBed] = useState<File | null>(null),
@@ -261,244 +263,326 @@ export default function AudioStudio({
       {errors[key] && <small role="alert">{errors[key]}</small>}
     </label>
   );
+  function addClips(files: File[]) {
+    if (locked) return;
+    if (files.length + clips.length > 200) {
+      setMessage("Use at most 200 clips.");
+      return;
+    }
+    changed();
+    const valid = files.map(media).filter((file): file is File => !!file);
+    setClips((current) => [
+      ...current,
+      ...valid.map((file) => ({ file, speaker: "" })),
+    ]);
+  }
+  const previewFile =
+    selected && clips.some((clip) => clip.file === selected)
+      ? selected
+      : (clips[0]?.file ?? null);
   return (
-    <div className="audio-studio">
-      {!live && (
-        <div className="card">
-          <Visualizer compact />
-          <p className="muted">
-            Arrange from a script or automatically transcribe your clips.
-          </p>
-        </div>
-      )}
-      <form onSubmit={submit} noValidate>
-        <fieldset disabled={locked}>
-          <section className="card" aria-label="Studio files">
-            <p className="eyebrow">01 · YOUR FILES</p>
-            <h3>Build your session</h3>
-            <p className="muted">
-              Optional script + 1–200 audio/video clips; speaker labels are
-              optional. Up to {Math.floor(maxBytes / 1048576)} MB total, 60
-              minutes per file / 120 minutes combined. Output timing comes from
-              speech and your chosen gaps.
-            </p>
-            <label>
-              Project title (optional)
-              <input
-                value={title}
-                maxLength={255}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Name your session"
-              />
-            </label>
-            <div className="studio-file-grid">
-              <div className="studio-file-slot">
-                <label>
-                  Audio clips
+    <div className="audio-studio studio-simple">
+      <StudioResult
+        key={live?.status === "done" ? live.id : "pending"}
+        job={live}
+        controls={
+          <>
+            <form
+              onSubmit={submit}
+              noValidate
+              className="card studio-upload-form"
+            >
+              <fieldset disabled={locked}>
+                <div
+                  className="studio-upload-drop"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    addClips(Array.from(e.dataTransfer.files));
+                  }}
+                >
+                  <p className="eyebrow">START WITH YOUR SOUND</p>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => clipsInput.current?.click()}
+                  >
+                    Upload audio clips
+                  </button>
                   <input
+                    ref={clipsInput}
+                    tabIndex={-1}
+                    className="studio-hidden-input"
                     type="file"
                     accept={accept}
                     multiple
+                    aria-label="Audio clips"
                     onChange={(e) => {
-                      changed();
-                      const all = Array.from(e.target.files ?? []);
-                      if (all.length + clips.length > 200) {
-                        setMessage("Use at most 200 clips.");
-                        return;
-                      }
-                      const valid = all
-                        .map(media)
-                        .filter((f): f is File => !!f);
-                      setClips((v) => [
-                        ...v,
-                        ...valid.map((file) => ({ file, speaker: "" })),
-                      ]);
+                      addClips(Array.from(e.target.files ?? []));
                       e.target.value = "";
                     }}
                   />
-                </label>
-                {clips.map((c, i) => (
-                  <div className="studio-voice" key={i}>
-                    <b>{c.file.name}</b>
+                  <p className="muted">
+                    Drop files here or choose multiple clips.
+                  </p>
+                  <small className="muted">
+                    Up to 200 clips · {Math.floor(maxBytes / 1048576)} MB total
+                  </small>
+                </div>
+              </fieldset>
+              <ClipPreview file={previewFile} />
+              {message && <p role="alert">{message}</p>}
+              {errors.settings && <p role="alert">{errors.settings}</p>}
+              <button className="btn studio-submit" disabled={locked}>
+                Submit
+              </button>
+              <p className="muted">
+                Leave settings blank to use the studio defaults. Your first
+                audio export is included.
+              </p>
+              <details className="studio-optional">
+                <summary>Optional script &amp; processing settings</summary>
+                <fieldset disabled={locked}>
+                  <label>
+                    Project title (optional)
+                    <input
+                      value={title}
+                      maxLength={255}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="Name your session"
+                    />
+                  </label>
+                  <div className="studio-file-slot">
                     <label>
-                      Speaker {i + 1} (optional)
+                      Music/SFX bed (optional)
                       <input
-                        value={c.speaker}
-                        maxLength={60}
+                        ref={bedInput}
+                        type="file"
+                        accept={accept}
                         onChange={(e) => {
                           changed();
-                          setClips((v) =>
-                            v.map((x, j) =>
-                              j === i ? { ...x, speaker: e.target.value } : x,
-                            ),
-                          );
+                          setBed(media(e.target.files?.[0]));
                         }}
                       />
                     </label>
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      onClick={() => {
-                        changed();
-                        setClips((v) => v.filter((_, j) => i !== j));
-                      }}
-                    >
-                      Remove clip {i + 1}
-                    </button>
+                    {bed && (
+                      <>
+                        <p>{bed.name}</p>
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={() => {
+                            changed();
+                            setBed(null);
+                            if (bedInput.current) bedInput.current.value = "";
+                          }}
+                        >
+                          Remove bed
+                        </button>
+                      </>
+                    )}
                   </div>
-                ))}
-              </div>
-              <div className="studio-file-slot">
-                <label>
-                  Music/SFX bed (optional)
-                  <input
-                    ref={bedInput}
-                    type="file"
-                    accept={accept}
-                    onChange={(e) => {
-                      changed();
-                      setBed(media(e.target.files?.[0]));
-                    }}
-                  />
-                </label>
-                {bed && (
-                  <>
-                    <p>{bed.name}</p>
+                  <label>
+                    Script file (TXT, SRT or VTT, optional)
+                    <input
+                      type="file"
+                      accept=".txt,.srt,.vtt"
+                      onChange={(e) => void readScript(e.target.files?.[0])}
+                    />
+                  </label>
+                  <label>
+                    Script text
+                    <textarea
+                      rows={8}
+                      value={script}
+                      onChange={(e) => {
+                        scriptRead.current++;
+                        changed();
+                        setScript(e.target.value);
+                      }}
+                      placeholder="NARRATOR: Every story starts with a voice."
+                    />
+                  </label>
+                  <p className="muted">
+                    {preview.lines.length
+                      ? `${preview.lines.length} script lines. Timestamps set order only.`
+                      : script.trim()
+                        ? `Script ignored: ${preview.error}. Clips will be auto-transcribed.`
+                        : preview.error}
+                  </p>
+                  {clips.length > 0 && (
+                    <section className="card" aria-label="Processing options">
+                      <p className="eyebrow">02 · YOUR ARRANGEMENT</p>
+                      <h3>Choose your settings</h3>
+                      <div className="studio-options-grid">
+                        <label>
+                          Clip placement
+                          <select
+                            value={String(choices.regionMode ?? "")}
+                            onChange={(e) =>
+                              update("regionMode", e.target.value)
+                            }
+                          >
+                            <option value="">Whole clips (default)</option>
+                            <option value="whole_clip">Whole clips</option>
+                            <option value="split_by_line">Split by line</option>
+                          </select>
+                        </label>
+                        {number("Line gap (ms)", "lineGap", 0, 5000)}
+                        {select("Match strictness", "matchStrictness", [
+                          "strict",
+                          "normal",
+                          "loose",
+                        ])}
+                        {number(
+                          "Dialogue target (LUFS)",
+                          "dialogueLufs",
+                          -70,
+                          -5,
+                          0.1,
+                        )}
+                        {number(
+                          "Master target (LUFS)",
+                          "masterLufs",
+                          -70,
+                          -5,
+                          0.1,
+                        )}
+                        {bed && (
+                          <>
+                            {number(
+                              "Bed ducking (dB)",
+                              "duckingDb",
+                              0,
+                              40,
+                              0.1,
+                            )}
+                            {select("Bed fit", "bedFit", [
+                              "trim",
+                              "loop",
+                              "extend",
+                            ])}
+                          </>
+                        )}
+                        {select("Room tone", "roomTone", ["off", "on"])}
+                        {choices.roomTone === "on" &&
+                          number("Room tone amount (%)", "roomAmount", 0, 100)}
+                        {select("Subtitles", "subtitles", ["off", "on"])}
+                        {choices.subtitles === "on" && (
+                          <div className="studio-format-choices">
+                            {["srt", "vtt"].map((f) => (
+                              <label key={f}>
+                                <input
+                                  type="checkbox"
+                                  checked={choices[f] === true}
+                                  onChange={(e) => update(f, e.target.checked)}
+                                />
+                                {f.toUpperCase()}
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <p className="muted">
+                        Language is checked before billing only when a script is
+                        present. Uncertain language results are flagged. The
+                        first export is included; later exports use processing
+                        minutes.
+                      </p>
+                    </section>
+                  )}
+
+                  {script.trim() && preview.error && (
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={ignoredScript}
+                        onChange={(e) => setIgnoredScript(e.target.checked)}
+                      />
+                      I confirm: ignore this script and auto-transcribe the
+                      clips.
+                    </label>
+                  )}
+                  <p className="muted">{DEFAULT_HELP.studio}</p>
+                </fieldset>
+              </details>
+            </form>
+            {live && live.status !== "done" && (
+              <ProcessingStatus state={live} setState={setLive} type="studio" />
+            )}
+          </>
+        }
+        clipsPanel={
+          <section
+            className="card studio-uploaded"
+            aria-label="Audio clips uploaded"
+          >
+            <p className="eyebrow">YOUR SESSION</p>
+            <h3>
+              Audio clips uploaded{" "}
+              <span className="studio-clip-count">{clips.length}</span>
+            </h3>
+            {clips.length ? (
+              <ol className="studio-uploaded-list">
+                {clips.map((clip, i) => (
+                  <li key={i}>
                     <button
                       type="button"
-                      className="btn ghost"
+                      className="studio-select-clip"
+                      aria-label={`Preview ${clip.file.name}, clip ${i + 1}`}
+                      aria-pressed={previewFile === clip.file}
+                      onClick={() => setSelected(clip.file)}
+                    >
+                      <span>{String(i + 1).padStart(2, "0")}</span>
+                      <span>
+                        <b>{clip.file.name}</b>
+                        <ClipDuration file={clip.file} />
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      disabled={locked}
+                      aria-label={`Remove clip ${i + 1}: ${clip.file.name}`}
                       onClick={() => {
                         changed();
-                        setBed(null);
-                        if (bedInput.current) bedInput.current.value = "";
+                        setClips((current) =>
+                          current.filter((_, j) => j !== i),
+                        );
                       }}
                     >
-                      Remove bed
+                      Remove
                     </button>
-                  </>
-                )}
-              </div>
-            </div>
-            <label>
-              Script file (TXT, SRT or VTT, optional)
-              <input
-                type="file"
-                accept=".txt,.srt,.vtt"
-                onChange={(e) => void readScript(e.target.files?.[0])}
-              />
-            </label>
-            <label>
-              Script text
-              <textarea
-                rows={8}
-                value={script}
-                onChange={(e) => {
-                  scriptRead.current++;
-                  changed();
-                  setScript(e.target.value);
-                }}
-                placeholder="NARRATOR: Every story starts with a voice."
-              />
-            </label>
-            <p className="muted">
-              {preview.lines.length
-                ? `${preview.lines.length} script lines. Timestamps set order only.`
-                : script.trim()
-                  ? `Script ignored: ${preview.error}. Clips will be auto-transcribed.`
-                  : preview.error}
-            </p>
-            {bytes > maxBytes && (
-              <p role="alert">
-                The complete project exceeds your upload limit.
+                    <details>
+                      <summary>Speaker label (optional)</summary>
+                      <label>
+                        Speaker {i + 1} (optional)
+                        <input
+                          value={clip.speaker}
+                          disabled={locked}
+                          maxLength={60}
+                          onChange={(e) => {
+                            changed();
+                            setClips((current) =>
+                              current.map((c, j) =>
+                                j === i ? { ...c, speaker: e.target.value } : c,
+                              ),
+                            );
+                          }}
+                        />
+                      </label>
+                    </details>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="muted">
+                Your clips will appear here. Select a clip to preview it.
               </p>
             )}
           </section>
-          {clips.length > 0 && (
-            <section className="card" aria-label="Processing options">
-              <p className="eyebrow">02 · YOUR ARRANGEMENT</p>
-              <h3>Choose your settings</h3>
-              <div className="studio-options-grid">
-                <label>
-                  Clip placement
-                  <select
-                    value={String(choices.regionMode ?? "")}
-                    onChange={(e) => update("regionMode", e.target.value)}
-                  >
-                    <option value="">Whole clips (default)</option>
-                    <option value="whole_clip">Whole clips</option>
-                    <option value="split_by_line">Split by line</option>
-                  </select>
-                </label>
-                {number("Line gap (ms)", "lineGap", 0, 5000)}
-                {select("Match strictness", "matchStrictness", [
-                  "strict",
-                  "normal",
-                  "loose",
-                ])}
-                {number("Dialogue target (LUFS)", "dialogueLufs", -70, -5, 0.1)}
-                {number("Master target (LUFS)", "masterLufs", -70, -5, 0.1)}
-                {bed && (
-                  <>
-                    {number("Bed ducking (dB)", "duckingDb", 0, 40, 0.1)}
-                    {select("Bed fit", "bedFit", ["trim", "loop", "extend"])}
-                  </>
-                )}
-                {select("Room tone", "roomTone", ["off", "on"])}
-                {choices.roomTone === "on" &&
-                  number("Room tone amount (%)", "roomAmount", 0, 100)}
-                {select("Subtitles", "subtitles", ["off", "on"])}
-                {choices.subtitles === "on" && (
-                  <div className="studio-format-choices">
-                    {["srt", "vtt"].map((f) => (
-                      <label key={f}>
-                        <input
-                          type="checkbox"
-                          checked={choices[f] === true}
-                          onChange={(e) => update(f, e.target.checked)}
-                        />
-                        {f.toUpperCase()}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <p className="muted">
-                Language is checked before billing only when a script is
-                present. Uncertain language results are flagged. The first
-                export is included; later exports use processing minutes.
-              </p>
-            </section>
-          )}
-          <div className="processing-start">
-            {message && <p role="alert">{message}</p>}
-            {errors.settings && <p role="alert">{errors.settings}</p>}
-            {script.trim() && preview.error && (
-              <label>
-                <input
-                  type="checkbox"
-                  checked={ignoredScript}
-                  onChange={(e) => setIgnoredScript(e.target.checked)}
-                />
-                I confirm: ignore this script and auto-transcribe the clips.
-              </label>
-            )}
-            <button className="btn" disabled={locked}>
-              Start Processing
-            </button>
-            <p className="muted">{DEFAULT_HELP.studio}</p>
-          </div>
-        </fieldset>
-      </form>
-      {live && (
-        <ProcessingStatus state={live} setState={setLive} type="studio" />
-      )}
-      {live?.status === "done" && live.id && (
-        <StudioDaw
-          key={live.id}
-          jobId={live.id}
-          lineGap={Number(choices.lineGap ?? 0) / 1000}
-        />
-      )}
+        }
+      />
     </div>
   );
 }
