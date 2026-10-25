@@ -11,7 +11,12 @@ export function syncVideo(
 ) {
   if (!video.muted) video.muted = true;
   if (!video.defaultMuted) video.defaultMuted = true;
-  if (!playing) video.pause();
+  if (!playing) {
+    video.pause();
+    // WebKit can leave play() pending when a seek/lead-in pause interrupts it.
+    // A later resume must be allowed to start decoding again.
+    starts.delete(video);
+  }
   if (video.readyState < 1) return;
   const target = Math.max(
     0,
