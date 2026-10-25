@@ -23,8 +23,18 @@ export function changedRegions(
   before: { regions: { id: string }[] },
   after: { regions: { id: string }[] },
 ) {
-  const old = new Map(before.regions.map((r) => [r.id, JSON.stringify(r)])),
-    next = new Map(after.regions.map((r) => [r.id, JSON.stringify(r)]));
+  const old = new Map(
+      before.regions.map((r) => [
+        r.id,
+        JSON.stringify({ ...r, inserts: undefined }),
+      ]),
+    ),
+    next = new Map(
+      after.regions.map((r) => [
+        r.id,
+        JSON.stringify({ ...r, inserts: undefined }),
+      ]),
+    );
   return new Set(
     [...old.keys(), ...next.keys()].filter(
       (id) => old.get(id) !== next.get(id),

@@ -530,8 +530,8 @@ def render(project,a,folder,settings,export):
                 if lane['mute'] or (solo and not lane['solo']):continue
                 pan=np.asarray(pan_gains(lane.get('pan',0)))
                 if a.get('pan_law')=='legacy':pan=np.minimum(1,pan*math.sqrt(2))
-                block+=track_chains[lane_id].process(samples*pan*10**(lane['gain_db']/20))
-            out.write(master_chain.process(block)*master_gain)
+                block+=track_chains[lane_id].process(samples)*pan*10**(lane['gain_db']/20)
+            out.write(master_chain.process(block*master_gain))
     parts.append(dialogue)
     activity='+'.join(f"between(t,{r['start']},{r['start']+r['src_end']-r['src_start']})" for r in a['regions'] if not lanes[r['lane']]['mute'] and (not solo or lanes[r['lane']]['solo'])) or '0'
     if project.get('bed'):

@@ -334,3 +334,47 @@ test("forked source exports share the included reservation and cannot create ano
     await db.close();
   }
 });
+
+test("project deletion archives only the active owner's project and preserves export references", async () => {
+  const db = await database();
+  try {
+    await seed(db);
+    const id = await call(db, "create_editor_project", ["Mix", "blank", null]);
+    await as(db, other);
+    assert.equal(
+      (
+        await db.query(
+          "update public.editor_projects set archived_at=now() where id=$1 returning id",
+          [id],
+        )
+      ).rows.length,
+      0,
+    );
+    await as(db, owner);
+    assert.equal(
+      (
+        await db.query(
+          "update public.editor_projects set archived_at=now() where id=$1 returning id",
+          [id],
+        )
+      ).rows.length,
+      1,
+    );
+    assert.equal(
+      (
+        await db.query(
+          "select id from public.editor_projects where archived_at is null",
+        )
+      ).rows.length,
+      0,
+    );
+    await assert.rejects(
+      db.exec(
+        "set role anon; update public.editor_projects set archived_at=null",
+      ),
+      /permission denied/,
+    );
+  } finally {
+    await db.close();
+  }
+});

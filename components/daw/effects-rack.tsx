@@ -9,6 +9,7 @@ import {
   type EffectGraph,
 } from "@/lib/daw/effects";
 function parameterLabel(type: EffectType, key: string) {
+  if (type === "limiter" && key === "threshold") return "Ceiling dBFS";
   if (type === "eq")
     return `Band ${Number(key.slice(1)) + 1} ${key[0] === "f" ? "Hz" : key[0] === "g" ? "dB" : "Q"}`;
   const labels: Record<string, string> = {
@@ -95,11 +96,11 @@ export function Knob({
 }
 function Graph({
   slot,
-  graph,
+  getGraph,
   onChange,
 }: {
   slot: PluginSlot;
-  graph?: EffectGraph;
+  getGraph: () => EffectGraph | undefined;
   onChange: (p: Record<string, number>) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null),
@@ -109,6 +110,7 @@ function Graph({
       data = new Uint8Array(128);
     let frame = 0;
     const draw = () => {
+      const graph = getGraph();
       ctx.clearRect(0, 0, 270, 90);
       ctx.strokeStyle = "#303952";
       ctx.lineWidth = 1;
@@ -123,9 +125,9 @@ function Graph({
         ctx.fillStyle = "#818cf840";
         for (let i = 0; i < 128; i++)
           ctx.fillRect((i * 270) / 128, 90 - data[i] / 3, 2, data[i] / 3);
-        if (meter.current)
-          meter.current.textContent = `GR ${(graph.reductions.get(slot.id)?.reduction ?? 0).toFixed(1)} dB`;
       }
+      if (meter.current)
+        meter.current.textContent = `GR ${(graph?.reductions.get(slot.id)?.reduction ?? 0).toFixed(1)} dB`;
       ctx.strokeStyle = slot.enabled ? "#a78bfa" : "#5f6b88";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -176,11 +178,11 @@ function Graph({
           );
           ctx.fill();
         }
-      if (graph) frame = requestAnimationFrame(draw);
+      frame = requestAnimationFrame(draw);
     };
     draw();
     return () => cancelAnimationFrame(frame);
-  }, [slot, graph]);
+  }, [slot, getGraph]);
   const drag = useRef(-1);
   return (
     <>
@@ -365,7 +367,7 @@ export default function EffectsRack({
           </header>
           <Graph
             slot={slot}
-            graph={getGraph(region ? `region/${region.id}` : target)}
+            getGraph={() => getGraph(region ? `region/${region.id}` : target)}
             onChange={(parameters) =>
               edit(
                 slots.map((s) => (s.id === slot.id ? { ...s, parameters } : s)),
@@ -431,125 +433,141 @@ export function Mixer({
   onFX: (id: string) => void;
 }) {
   return (
-    <div className="fx-mixer">
-      {[
-        ...a.lanes,
-        {
-          ...a.master,
-          id: "master",
-          name: "Master",
-          color: "#a78bfa",
-          pan: 0,
-          mute: false,
-          solo: false,
-        },
-      ].map((l) => (
-        <div
-          key={l.id}
-          className="fx-channel"
-          style={{ borderTopColor: l.color }}
-        >
-          <b>{l.name}</b>
-          <Meter graph={getGraph(l.id)} />
-          <label>
-            Level
-            <input
-              aria-label={`Mixer level ${l.name}`}
-              type="range"
-              min={-60}
-              max={24}
-              step={0.1}
-              value={l.gain_db}
-              onChange={(e) =>
-                onChange(
-                  l.id === "master"
-                    ? {
-                        ...a,
-                        master: { ...a.master, gain_db: +e.target.value },
-                      }
-                    : {
-                        ...a,
-                        lanes: a.lanes.map((x) =>
-                          x.id === l.id
-                            ? { ...x, gain_db: +e.target.value }
-                            : x,
-                        ),
-                      },
-                )
-              }
-            />
-          </label>
-          <output>{l.gain_db.toFixed(1)} dB</output>
-          {l.id !== "master" && (
-            <>
-              <Knob
-                label={`Pan ${l.name}`}
-                value={l.pan}
-                spec={[0, -1, 1, 0.01]}
-                onChange={(pan) =>
-                  onChange({
-                    ...a,
-                    lanes: a.lanes.map((x) =>
-                      x.id === l.id ? { ...x, pan } : x,
-                    ),
-                  })
+    <>
+      <div className="fx-mixer">
+        {[
+          ...a.lanes,
+          {
+            ...a.master,
+            id: "master",
+            name: "Master",
+            color: "#a78bfa",
+            pan: 0,
+            mute: false,
+            solo: false,
+          },
+        ].map((l) => (
+          <div
+            key={l.id}
+            className="fx-channel"
+            style={{ borderTopColor: l.color }}
+          >
+            <b>{l.name}</b>
+            <Meter getGraph={() => getGraph(l.id)} />
+            <label>
+              Level
+              <input
+                aria-label={`Mixer level ${l.name}`}
+                type="range"
+                min={-60}
+                max={24}
+                step={0.1}
+                value={l.gain_db}
+                onChange={(e) =>
+                  onChange(
+                    l.id === "master"
+                      ? {
+                          ...a,
+                          master: { ...a.master, gain_db: +e.target.value },
+                        }
+                      : {
+                          ...a,
+                          lanes: a.lanes.map((x) =>
+                            x.id === l.id
+                              ? { ...x, gain_db: +e.target.value }
+                              : x,
+                          ),
+                        },
+                  )
                 }
               />
-              <div>
-                {(["mute", "solo"] as const).map((k) => (
-                  <button
-                    key={k}
-                    aria-pressed={l[k]}
-                    onClick={() =>
-                      onChange({
-                        ...a,
-                        lanes: a.lanes.map((x) =>
-                          x.id === l.id ? { ...x, [k]: !x[k] } : x,
-                        ),
-                      })
-                    }
-                  >
-                    {k}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-          <button onClick={() => onFX(l.id)}>FX</button>
-          {l.id === "master" && (
-            <button
-              onClick={() => {
-                if (!a.master.inserts.some((s) => s.type === "limiter"))
-                  onChange({
-                    ...a,
-                    master: {
-                      ...a.master,
-                      inserts: [...a.master.inserts, newEffect("limiter")],
-                    },
-                  });
-              }}
-            >
-              Add limiter
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
+            </label>
+            <output>{l.gain_db.toFixed(1)} dB</output>
+            {l.id !== "master" && (
+              <>
+                <Knob
+                  label={`Pan ${l.name}`}
+                  value={l.pan}
+                  spec={[0, -1, 1, 0.01]}
+                  onChange={(pan) =>
+                    onChange({
+                      ...a,
+                      lanes: a.lanes.map((x) =>
+                        x.id === l.id ? { ...x, pan } : x,
+                      ),
+                    })
+                  }
+                />
+                <div>
+                  {(["mute", "solo"] as const).map((k) => (
+                    <button
+                      key={k}
+                      aria-pressed={l[k]}
+                      onClick={() =>
+                        onChange({
+                          ...a,
+                          lanes: a.lanes.map((x) =>
+                            x.id === l.id ? { ...x, [k]: !x[k] } : x,
+                          ),
+                        })
+                      }
+                    >
+                      {k}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            <button onClick={() => onFX(l.id)}>FX</button>
+            {l.id === "master" && (
+              <button
+                disabled={
+                  a.master.inserts.length >= 16 ||
+                  a.master.inserts.some((s) => s.type === "limiter")
+                }
+                onClick={() => {
+                  if (!a.master.inserts.some((s) => s.type === "limiter"))
+                    onChange({
+                      ...a,
+                      master: {
+                        ...a.master,
+                        inserts: [...a.master.inserts, newEffect("limiter")],
+                      },
+                    });
+                }}
+              >
+                Add limiter
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      <section aria-label="Master inserts">
+        <h3>Master inserts</h3>
+        <EffectsRack
+          a={a}
+          target="master"
+          onChange={onChange}
+          getGraph={getGraph}
+        />
+      </section>
+    </>
   );
 }
-function Meter({ graph }: { graph?: EffectGraph }) {
+function Meter({ getGraph }: { getGraph: () => EffectGraph | undefined }) {
   const ref = useRef<HTMLMeterElement>(null);
   useEffect(() => {
     let frame = 0;
     const data = new Float32Array(256);
     const draw = () => {
-      graph?.analyser.getFloatTimeDomainData(data);
+      data.fill(0);
+      getGraph()?.analyser.getFloatTimeDomainData(data);
       if (ref.current) ref.current.value = Math.max(...data.map(Math.abs));
       frame = requestAnimationFrame(draw);
     };
     draw();
     return () => cancelAnimationFrame(frame);
-  }, [graph]);
+  }, [getGraph]);
   return (
     <meter ref={ref} min={0} max={1} value={0} aria-label="Channel peak" />
   );

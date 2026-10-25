@@ -129,6 +129,7 @@ export type EffectGraph = {
   analyser: AnalyserNode;
   compressors: DynamicsCompressorNode[];
   reductions: Map<string, DynamicsCompressorNode>;
+  update: (slots: PluginSlot[]) => void;
   dispose: () => void;
 };
 const preparedContexts = new WeakMap<BaseAudioContext, Promise<void>>();
@@ -148,6 +149,14 @@ export function createEffectChain(
   slots: PluginSlot[],
   tempo: number,
 ): EffectGraph {
+  const values = new Map(
+    slots.map((s) => [s.id, JSON.stringify(s.parameters)]),
+  );
+  const updates = new Map<string, (p: Record<string, number>) => void>();
+  const smooth = (param: AudioParam, value: number) => {
+    param.cancelScheduledValues(ctx.currentTime);
+    param.setTargetAtTime(value, ctx.currentTime, 0.005);
+  };
   const reductions = new Map<string, DynamicsCompressorNode>();
   const nodes: AudioNode[] = [],
     compressors: DynamicsCompressorNode[] = [];
@@ -167,8 +176,10 @@ export function createEffectChain(
     last.connect(start);
     if (slot.type === "eq") {
       let at: AudioNode = start;
+      const bands: BiquadFilterNode[] = [];
       for (let i = 0; i < 5; i++) {
         const n = ctx.createBiquadFilter();
+        bands.push(n);
         n.type = "peaking";
         n.frequency.value = Math.min(p[`f${i}`], ctx.sampleRate * 0.49);
         n.Q.value = p[`q${i}`];
@@ -177,6 +188,13 @@ export function createEffectChain(
         at.connect(n);
         at = n;
       }
+      updates.set(slot.id, (p) =>
+        bands.forEach((n, i) => {
+          smooth(n.frequency, Math.min(p[`f${i}`], ctx.sampleRate * 0.49));
+          smooth(n.Q, p[`q${i}`]);
+          smooth(n.gain, p[`g${i}`]);
+        }),
+      );
       last = at;
     } else if (slot.type === "compressor" || slot.type === "limiter") {
       const n = ctx.createDynamicsCompressor(),
@@ -191,16 +209,29 @@ export function createEffectChain(
       compressors.push(n);
       reductions.set(slot.id, n);
       last = makeup;
-      if (slot.type === "limiter") {
-        const ceiling = ctx.createWaveShaper(),
-          curve = new Float32Array(65537),
-          limit = 10 ** (p.threshold / 20);
+      let ceiling: WaveShaperNode | undefined;
+      const setCeiling = (threshold: number) => {
+        const curve = new Float32Array(65537),
+          limit = 10 ** (threshold / 20);
         for (let i = 0; i < curve.length; i++)
           curve[i] = Math.max(
             -limit,
             Math.min(limit, (2 * i) / (curve.length - 1) - 1),
           );
-        ceiling.curve = curve;
+        ceiling!.curve = curve;
+      };
+      updates.set(slot.id, (p) => {
+        smooth(n.threshold, p.threshold);
+        smooth(n.ratio, p.ratio ?? 20);
+        smooth(n.attack, p.attack ?? 0.001);
+        smooth(n.release, p.release);
+        smooth(n.knee, p.knee ?? 0);
+        smooth(makeup.gain, 10 ** ((p.makeup ?? 0) / 20));
+        if (ceiling) setCeiling(p.threshold);
+      });
+      if (slot.type === "limiter") {
+        ceiling = ctx.createWaveShaper();
+        setCeiling(p.threshold);
         makeup.connect(ceiling);
         nodes.push(ceiling);
         last = ceiling;
@@ -210,24 +241,32 @@ export function createEffectChain(
       n.type = "highshelf";
       n.frequency.value = p.frequency;
       n.gain.value = -p.reduction;
+      updates.set(slot.id, (p) => {
+        smooth(n.frequency, p.frequency);
+        smooth(n.gain, -p.reduction);
+      });
       start.connect(n);
       nodes.push(n);
       last = n;
     } else if (slot.type === "gate" || slot.type === "saturation") {
-      const n = ctx.createWaveShaper(),
-        curve = new Float32Array(65537),
-        threshold = 10 ** (p.threshold / 20);
-      for (let i = 0; i < curve.length; i++) {
-        const x = (2 * i) / (curve.length - 1) - 1;
-        curve[i] =
-          slot.type === "gate"
-            ? Math.abs(x) < threshold
-              ? 0
-              : x
-            : x * (1 - p.mix) +
-              (p.mix * Math.tanh(x * p.drive)) / Math.tanh(p.drive);
-      }
-      n.curve = curve;
+      const n = ctx.createWaveShaper();
+      const setCurve = (p: Record<string, number>) => {
+        const curve = new Float32Array(65537),
+          threshold = 10 ** (p.threshold / 20);
+        for (let i = 0; i < curve.length; i++) {
+          const x = (2 * i) / (curve.length - 1) - 1;
+          curve[i] =
+            slot.type === "gate"
+              ? Math.abs(x) < threshold
+                ? 0
+                : x
+              : x * (1 - p.mix) +
+                (p.mix * Math.tanh(x * p.drive)) / Math.tanh(p.drive);
+        }
+        n.curve = curve;
+      };
+      setCurve(p);
+      updates.set(slot.id, setCurve);
       start.connect(n);
       nodes.push(n);
       last = n;
@@ -237,6 +276,12 @@ export function createEffectChain(
         sum = gain();
       start.connect(dry).connect(sum);
       wet.connect(sum);
+      let updateWet: (p: Record<string, number>) => void;
+      updates.set(slot.id, (p) => {
+        smooth(dry.gain, 1 - p.mix);
+        smooth(wet.gain, p.mix);
+        updateWet(p);
+      });
       if (slot.type === "delay") {
         // Native feedback cycles differ by a render quantum between engines.
         // Keep the same sample recurrence as the stateful Python export chain.
@@ -254,22 +299,34 @@ export function createEffectChain(
             feedback: p.feedback,
           },
         });
+        updateWet = (p) =>
+          n.port.postMessage({
+            delayFrames: Math.max(
+              1,
+              Math.round((60 / tempo) * p.beats * ctx.sampleRate),
+            ),
+            feedback: p.feedback,
+          });
         start.connect(n).connect(wet);
         nodes.push(n);
       } else {
-        const n = ctx.createConvolver(),
-          count = Math.ceil(ctx.sampleRate * p.decay),
-          b = ctx.createBuffer(2, count, ctx.sampleRate);
-        // Deterministic sparse room impulse; exactly reproducible in scipy.
-        for (let ch = 0; ch < 2; ch++) {
-          const d = b.getChannelData(ch);
-          for (let j = 1; j <= 32; j++) {
-            const at = Math.min(count - 1, Math.round((count * j) / 33));
-            d[at] = (Math.exp((-3 * j) / 33) * (j % 2 ? -1 : 1)) / 8;
+        const n = ctx.createConvolver();
+        let decay = -1;
+        updateWet = (p) => {
+          if (decay === p.decay) return;
+          decay = p.decay;
+          const count = Math.ceil(ctx.sampleRate * p.decay),
+            b = ctx.createBuffer(2, count, ctx.sampleRate);
+          for (let ch = 0; ch < 2; ch++) {
+            const d = b.getChannelData(ch);
+            for (let j = 1; j <= 32; j++)
+              d[Math.min(count - 1, Math.round((count * j) / 33))] =
+                (Math.exp((-3 * j) / 33) * (j % 2 ? -1 : 1)) / 8;
           }
-        }
-        n.normalize = false;
-        n.buffer = b;
+          n.normalize = false;
+          n.buffer = b;
+        };
+        updateWet(p);
         start.connect(n).connect(wet);
         nodes.push(n);
       }
@@ -287,6 +344,15 @@ export function createEffectChain(
     analyser,
     compressors,
     reductions,
+    update: (next) => {
+      for (const slot of next) {
+        const key = JSON.stringify(slot.parameters);
+        if (slot.enabled && values.get(slot.id) !== key) {
+          updates.get(slot.id)?.(slot.parameters);
+          values.set(slot.id, key);
+        }
+      }
+    },
     dispose: () =>
       nodes.forEach((n) => {
         if (

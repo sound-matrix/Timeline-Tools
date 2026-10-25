@@ -390,3 +390,27 @@ lanes, editable transcript/EDL, synchronized video preview, and audio + subtitle
 exports. The first successful export is included; re-exports charge edited output
 length. See [Podcast setup, defaults, migration and verification](docs/PODCAST.md).
 No SQL or Modal deployment is run by this change.
+
+### Editor inserts and projects menu
+
+Editor Studio is a top-level Workplace menu item at `/editor`. This page lists the
+signed-in owner's projects and supports new, open, rename and delete. Delete
+archives the project from this list rather than breaking export/billing foreign
+keys; export snapshots and existing asset retention remain intact. Studio and
+Podcast keep their existing **Open in Editor Studio** actions.
+
+Playback and local/cloud render now use this order: region inserts → track
+inserts → track gain/pan → master gain → master inserts → output. Moving the
+master gain before its inserts lets the Ceiling limiter contain a boosted mix.
+Parameter edits update the current graph; insert addition, removal, reorder,
+bypass and tempo changes rebuild it. Every region has a stable input so adding
+clip inserts while a source is playing does not need to restart that source.
+The Mixer displays the master rack, including Ceiling's ceiling/release controls
+and live compressor gain-reduction meter. The ceiling is a sample ceiling, not
+an independently certified broadcast true-peak measurement.
+
+Deployment: apply `20261025081235_editor_project_delete.sql` before deploying the
+web app (the list requires `archived_at`). Existing master/track insert JSON needs
+no migration. Redeploy the audio worker with
+`modal deploy -m workers.timeline_tools_worker` to pick up the corrected insert
+order and normalization ceiling in cloud exports.

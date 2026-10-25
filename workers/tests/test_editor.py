@@ -49,5 +49,27 @@ class EditorExport(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    folder=Path(tmp);source=folder/'input.wav';sf.write(source,signal,rate,subtype='FLOAT')
    outputs=render_editor({ASSET:source},a,folder,settings);out,_=sf.read(outputs[0],dtype='float32',always_2d=True)
-   reference=InsertChain(slots,rate,120).process(signal[::-1]*np.asarray(pan_gains(0)))
+   reference=InsertChain(slots,rate,120).process(signal[::-1])*np.asarray(pan_gains(0))
    np.testing.assert_allclose(out,reference,atol=2e-6)
+
+ def test_editor_export_master_ceiling_after_sum_and_master_gain_with_reverb_tail(self):
+  from workers.tests.test_editor_dsp import slot
+  rate=48000
+  a=fixture();a['regions']=a['regions'][:1]
+  a['regions'][0].update(src_end=.02,gain_db=0,fade_in=0,fade_out=0,reverse=False,inserts=[])
+  a['lanes'][0].update(gain_db=0,pan=0,inserts=[slot('reverb',mix=1,decay=1.2)])
+  a['master'].update(gain_db=12,inserts=[slot('limiter',threshold=-1)])
+  signal=np.zeros((rate*2,2),dtype='float32');signal[0]=1
+  settings=dict(revision=1,range=[0,2],options=dict(format='wav',rate=rate,depth=24,bitrate=320,normalize=False),subtitles=[])
+  with tempfile.TemporaryDirectory() as tmp:
+   folder=Path(tmp);source=folder/'input.wav';sf.write(source,signal,rate,subtype='FLOAT')
+   outputs=render_editor({ASSET:source},a,folder,settings);wet,_=sf.read(outputs[0],dtype='float32',always_2d=True)
+   self.assertGreater(float(np.sum(wet[4800:]**2)),.01)
+   a['lanes'][0]['inserts']=[]
+   # A sustained full-scale input exercises overshoot, rather than a silent tail.
+   signal[:rate]=np.sin(2*np.pi*440*np.arange(rate)/rate)[:,None]
+   sf.write(source,signal,rate,subtype='FLOAT')
+   second=folder/'limited';second.mkdir()
+   outputs=render_editor({ASSET:source},a,second,settings);limited,_=sf.read(outputs[0],dtype='float32',always_2d=True)
+   self.assertLessEqual(float(np.max(np.abs(limited))),10**(-1/20)+1e-7)
+   self.assertGreater(float(np.max(np.abs(limited))),.5)

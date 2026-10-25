@@ -21,6 +21,7 @@ export async function GET(
         .select("*")
         .eq("id", id)
         .eq("user_id", user.id)
+        .is("archived_at", null)
         .maybeSingle(),
       db
         .from("editor_assets")
@@ -162,10 +163,38 @@ export async function PATCH(
   const { data, error } = await db
     .from("editor_projects")
     .update({ name: body.name.trim() })
+    .is("archived_at", null)
     .eq("id", id)
     .eq("user_id", user.id)
     .select("id,name")
     .maybeSingle();
   if (error || !data) return unavailable();
   return NextResponse.json(data, { headers: privateHeaders });
+}
+
+export async function DELETE(
+  r: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { db, user } = await requireUser();
+  const { id } = await params;
+  try {
+    await requestBody(r, 4096);
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid delete request" },
+      { status: 400, headers: privateHeaders },
+    );
+  }
+  if (!projectId.safeParse(id).success) return unavailable();
+  const { data, error } = await db
+    .from("editor_projects")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .is("archived_at", null)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) return unavailable();
+  return NextResponse.json({ id: data.id }, { headers: privateHeaders });
 }
