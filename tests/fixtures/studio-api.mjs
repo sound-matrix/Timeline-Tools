@@ -274,7 +274,7 @@ createServer(async (req, res) => {
     });
   if (
     url.pathname.includes("/object/public/outputs/") &&
-    /(?:\/stems\/c\d+\.wav|\/podcast-preview\.mp3|\/podcast-source\.wav|\/podcast-clip-\d+\.wav)$/.test(url.pathname)
+    /(?:\/consolidated.wav|\/stems\/c\d+\.wav|\/podcast-preview\.mp3|\/podcast-source\.wav|\/podcast-clip-\d+\.wav)$/.test(url.pathname)
   ) {
     const sourceJob = /outputs\/[^/]+\/([^/]+)\/podcast-/.exec(url.pathname)?.[1];
     const seconds = sourceJob ? (podcasts[sourceJob]?.duration ?? 4) : 4;
@@ -291,11 +291,17 @@ createServer(async (req, res) => {
     wave.writeUInt16LE(16, 34);
     wave.write("data", 36);
     wave.writeUInt32LE(wave.length - 44, 40);
-    res.writeHead(200, {
+    const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+    const from = range ? Number(range[1]) : 0;
+    const to = range && range[2] ? Math.min(wave.length - 1, Number(range[2])) : wave.length - 1;
+    res.writeHead(range ? 206 : 200, {
       "Content-Type": "audio/wav",
       "Access-Control-Allow-Origin": "*",
+      "Accept-Ranges": "bytes",
+      "Content-Length": to - from + 1,
+      ...(range ? { "Content-Range": `bytes ${from}-${to}/${wave.length}` } : {}),
     });
-    res.end(wave);
+    res.end(wave.subarray(from, to + 1));
     return;
   }
   if (url.pathname.startsWith("/storage/v1/object/"))
@@ -321,13 +327,15 @@ createServer(async (req, res) => {
       });
       return send({ id }, 201);
     }
-    const found = jobs.filter((j) =>
-      ["id", "user_id", "type"].every(
+    let found = jobs.filter((j) =>
+      ["id", "user_id", "type", "parent_job_id", "status"].every(
         (key) =>
           !url.searchParams.has(key) ||
           url.searchParams.get(key) === `eq.${j[key]}`,
       ),
     );
+    if (url.searchParams.get("order")?.includes("created_at.desc")) found = [...found].reverse();
+    if (url.searchParams.has("limit")) found = found.slice(0, Number(url.searchParams.get("limit")));
     res.setHeader("Content-Range", `0-${found.length - 1}/${found.length}`);
     return send(
       req.headers.accept?.includes("vnd.pgrst.object") ? found[0] : found,
