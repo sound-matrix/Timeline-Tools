@@ -55,7 +55,7 @@
   border: 0;
   border-radius: 0;
 }
-.editor-desk .pro-scroll {
+.editor-desk .pro-scroll-shell {
   flex: 1;
   min-height: 160px;
   height: auto;

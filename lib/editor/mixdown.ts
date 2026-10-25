@@ -1,4 +1,4 @@
-import { createEffectChain } from "../daw/effects.ts";
+import { createEffectChain, prepareEffectContext } from "../daw/effects.ts";
 import type { Arrangement } from "../arrangement.ts";
 import { fadeValue, panGains, end } from "../daw/commands.ts";
 import { DawPlayback } from "../daw/playback.ts";
@@ -21,6 +21,7 @@ export async function offlineBlock(
   const ctx = new OfflineAudioContext(2, Math.round(length * rate), rate),
     master = ctx.createGain(),
     analyser = ctx.createAnalyser();
+  await prepareEffectContext(ctx);
   master.gain.value =
     10 ** ((a.master.gain_db + (a.master.reference_gain_db ?? 0)) / 20) * scale;
   const masterFx = createEffectChain(ctx, a.master.inserts, a.tempo);

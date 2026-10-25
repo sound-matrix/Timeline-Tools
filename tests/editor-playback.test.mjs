@@ -38,6 +38,7 @@ function context() {
     currentTime: 10,
     sampleRate: 48000,
     sources,
+    audioWorklet: { addModule: async () => {} },
     destination: node(),
     resume: async () => {},
     close: async () => {},

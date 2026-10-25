@@ -37,15 +37,29 @@
   padding: 7px 10px;
   min-height: 30px;
 }
-.pro-scroll {
+.pro-scroll-shell {
+  position: relative;
   height: 480px;
+  min-height: 0;
+}
+.pro-scroll-shell > .pro-scroll {
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+}
+.pro-scroll {
   overflow: auto;
   overscroll-behavior: contain;
   position: relative;
   scrollbar-color: #4a567a #161b2e;
 }
+.pro-scroll-space {
+  position: relative;
+  contain: strict;
+}
 .pro-viewport {
-  position: sticky;
+  position: absolute;
+  contain: layout paint;
   top: 0;
   left: 0;
   overflow: hidden;
@@ -246,4 +260,75 @@
   outline: 2px solid #f472b6;
 }
 
-.pro-viewport > canvas.pro-overlay {position:absolute;inset:0;pointer-events:none;}
+.pro-viewport > canvas.pro-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pro-header-positions {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+
+.pro-scene-clip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+}
+.pro-scene-clip > canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+.pro-viewport > canvas.pro-ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 36px;
+  pointer-events: none;
+}
+
+.pro-clip-scene {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+  background: #0f1220;
+}
+.pro-scene-row {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  background: #161b2e;
+}
+.pro-scene-tile {
+  transform-origin: 0 0;
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+.pro-scene-range {
+  z-index: 2147483646;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.pro-scene-marker {
+  z-index: 2147483647;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  pointer-events: none;
+}

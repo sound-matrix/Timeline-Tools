@@ -25,3 +25,15 @@ The unchanged Podcast video test measured decoded-frame p95 **72.912 ms** on `6e
 ## Operations
 
 Apply `20261025041003_editor_project_rename.sql`, deploy the web build and redeploy the existing Modal worker after review. No production migration, worker deployment or merge was performed during implementation. See README for effect approximations and local-export warm-up limits.
+
+## Firefox DSP and WebKit rendering follow-up
+
+Verified with Playwright 1.64.1, Firefox 157, WebKit 27.2 and Chromium headless shell 156.0.8078.4 in the local Linux container. Browser audio used a 48 kHz PulseAudio null sink. Firefox required its content/RDD/GMP sandbox environment overrides in this container; repository launch settings were not changed.
+
+- Production build and TypeScript checks passed; Node tests: 203 passed. Python worker suite: 56 passed, one existing skip.
+- Full desk suite: **26 passed**, including the existing 20-track/500-clip budget (p95 16.7 ms) and the 16-track/800-clip scroll/zoom budget (p95 16.7 ms).
+- Full Firefox + WebKit suite: **21 passed, two existing Chromium-only skips, one failure**. Both requested regressions passed in both engines. Firefox effect maximum difference was `1.4901161193847656e-7`; WebKit was `0.0009039109572768211`, against the unchanged `< 0.005` assertion.
+- WebKit raw rAF p95 was 24 ms in the full run; the existing refresh-normalized frame budget and missed-refresh assertions passed. Neither performance assertion, the DSP tolerance, nor browser coverage was relaxed.
+- Remaining failure: WebKit's existing `Podcast fork preview follows paused seeks, live jumps and inserted silence` timing test. It also failed against the unchanged branch tree (`0aa3a43`) in this environment (clock p95 0.1637 s against 0.1333 s). Firefox's video test passed once the local decoder sandbox configuration was corrected. This follow-up does not claim an entirely green native browser suite.
+
+Echo now uses an AudioWorklet with the Python export renderer's sample recurrence, rather than relying on engine-specific feedback-cycle scheduling. Audio-only Editor rendering retains shared clip bitmaps at eight zoom levels per octave, pools image elements, culls off-screen rows/clips, and applies exact scroll/zoom transforms through one rAF scheduler. Wheel zoom and ordinary scrolling do not rerender the React track controls. Regression tests cover the delay's stereo/block state, bitmap reuse, bounded visible image creation and clip-relative waveform cache keys.

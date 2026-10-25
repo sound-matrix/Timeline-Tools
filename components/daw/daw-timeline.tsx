@@ -29,6 +29,7 @@ import {
   TimelineRenderer,
   IntervalIndex,
 } from "../../public/daw/render-core.js";
+import { ClipScene } from "../../public/daw/clip-scene.js";
 import { createPortal } from "react-dom";
 import ContextMenu, { type MenuAction } from "./context-menu";
 import EffectsRack, { Mixer, Knob } from "./effects-rack";
@@ -159,7 +160,7 @@ export default function DawTimeline({
     [selection, setSelection] = useState<string[]>([]),
     [head, setHead] = useState(0),
     [playing, setPlaying] = useState(false),
-    [zoom, setZoom] = useState(50),
+    [, publishZoom] = useState(0),
     [snap, setSnap] = useState<SnapMode>("edges"),
     [ruler, setRuler] = useState("minsec"),
     [help, setHelp] = useState(false),
@@ -199,6 +200,47 @@ export default function DawTimeline({
     root = useRef<HTMLElement>(null),
     meter = useRef<HTMLCanvasElement>(null),
     clipIndicator = useRef(false);
+  // Scroll coordinates belong to the painter. React only updates the coarse
+  // row window (or video-strip props), never every audio-timeline scroll frame.
+  const liveZoom = useRef(50);
+  const zoom = liveZoom.current;
+  const liveView = useRef(view);
+  const clipSceneRoot = useRef<HTMLDivElement>(null);
+  const clipScene = useRef(new ClipScene());
+  const sceneCanvas = useRef<HTMLCanvasElement>(null);
+  const rulerCanvas = useRef<HTMLCanvasElement>(null);
+  const rulerRenderer = useRef(new TimelineRenderer());
+  const headerPositions = useRef<HTMLDivElement>(null);
+  const sectionStrip = useRef<HTMLDivElement>(null);
+  const playheadHandle = useRef<HTMLDivElement>(null);
+  const renderView = useRef<() => void>(() => {});
+  const scheduleDraw = useCallback(() => {
+    if (drawFrame.current) return;
+    drawFrame.current = requestAnimationFrame(() => {
+      drawFrame.current = 0;
+      renderView.current();
+    });
+  }, []);
+  function updateZoom(
+    value: number | ((current: number) => number),
+    publish = true,
+  ) {
+    liveZoom.current =
+      typeof value === "function" ? value(liveZoom.current) : value;
+    if (publish) publishZoom((revision) => revision + 1);
+    scheduleDraw();
+  }
+  const setZoom = (value: number | ((current: number) => number)) =>
+    updateZoom(value);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(drawFrame.current);
+      clipScene.current.close();
+      renderer.current.close();
+      rulerRenderer.current.close();
+    },
+    [],
+  );
   const geometry = useRef({ left: 0, top: 0 });
   const [canvasEpoch, setCanvasEpoch] = useState(0);
   const painter = useRef<Worker | null>(null),
@@ -208,7 +250,7 @@ export default function DawTimeline({
   const overlayCanvas = useRef<HTMLCanvasElement>(null);
   const peaks = usePeaks(assets);
   useEffect(() => {
-    const c = canvas.current;
+    const c = sceneCanvas.current;
     if (!c?.transferControlToOffscreen || typeof Worker === "undefined") return;
     try {
       const worker = new Worker("/daw/paint-worker.js", { type: "module" });
@@ -226,7 +268,8 @@ export default function DawTimeline({
         worker.terminate();
         painter.current = null;
       };
-    } catch {
+    } catch (error) {
+      c.dataset.rendererError = String(error);
       painter.current = null;
     }
   }, []);
@@ -385,12 +428,14 @@ export default function DawTimeline({
     const measure = () => {
       const rect = el.getBoundingClientRect();
       geometry.current = { left: rect.left, top: rect.top };
-      setView({
+      liveView.current = {
         x: el.scrollLeft,
         y: el.scrollTop,
         w: el.clientWidth,
         h: el.clientHeight,
-      });
+      };
+      setView(liveView.current);
+      scheduleDraw();
     };
     const observer = new ResizeObserver(measure);
     observer.observe(el);
@@ -414,8 +459,19 @@ export default function DawTimeline({
         });
       } else if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        setZoom((z) =>
-          Math.max(0.1, Math.min(2000, z * Math.exp(-e.deltaY * 0.005))),
+        updateZoom(
+          (z) =>
+            Math.max(
+              0.1,
+              Math.min(
+                2000,
+                Math.round(z * Math.exp(-e.deltaY * 0.005) * 1e6) / 1e6,
+              ),
+            ),
+          !fullPage ||
+            !!videos.length ||
+            !!overlays.length ||
+            !!state.current.missing.length,
         );
       } else if (e.altKey) {
         e.preventDefault();
@@ -438,10 +494,19 @@ export default function DawTimeline({
                 : l,
             ),
           });
+      } else if (!el.contains(e.target as Node)) {
+        // The fixed painting layer is a sibling of the native scrollbar. Let
+        // the scroller own offsets without a huge scrolling canvas layer.
+        e.preventDefault();
+        const unit =
+          e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
+        el.scrollLeft += (e.deltaX + (e.shiftKey ? e.deltaY : 0)) * unit;
+        if (!e.shiftKey) el.scrollTop += e.deltaY * unit;
       }
     };
-    el.addEventListener("wheel", wheel, { passive: false });
-    return () => el.removeEventListener("wheel", wheel);
+    const shell = el.parentElement!;
+    shell.addEventListener("wheel", wheel, { passive: false });
+    return () => shell.removeEventListener("wheel", wheel);
   });
   useEffect(() => {
     if (!isPlaying || autoscroll === "off" || !scroller.current) return;
@@ -455,11 +520,81 @@ export default function DawTimeline({
     )
       el.scrollLeft = Math.max(0, x - headerWidth);
   }, [position, isPlaying, autoscroll, zoom]);
-  useEffect(() => {
+  renderView.current = () => {
+    const zoom = liveZoom.current;
+    const currentView = liveView.current;
+    if (headerPositions.current)
+      headerPositions.current.style.transform = `translate3d(0, ${-currentView.y}px, 0)`;
+    const space = scroller.current?.firstElementChild as HTMLElement | null;
+    if (space)
+      space.style.width = `${Math.max(currentView.w, headerWidth + a.duration * zoom + 100)}px`;
+    if (playheadHandle.current) {
+      playheadHandle.current.style.left = `${headerWidth + headRef.current * zoom}px`;
+      playheadHandle.current.style.transform = `translateX(${-currentView.x}px)`;
+    }
+    sectionStrip.current
+      ?.querySelectorAll<HTMLElement>("[data-section-position]")
+      .forEach((el) => {
+        const section = a.sections.find(
+          (s) => s.id === el.dataset.sectionPosition,
+        );
+        if (section) {
+          el.style.left = `${headerWidth + section.start * zoom}px`;
+          el.style.width = `${Math.max(35, (section.end - section.start) * zoom)}px`;
+        }
+        el.style.transform = `translateX(${-currentView.x}px)`;
+      });
+    paintHead.current(headRef.current);
+    const common = {
+      a,
+      peaks,
+      zoom,
+      selection,
+      range,
+      ruler,
+      rows,
+      overlays,
+      videos,
+      headerWidth,
+      dualRuler: fullPage,
+      dpr: Math.min(devicePixelRatio || 1, 2),
+    };
+    if (rulerCanvas.current)
+      rulerRenderer.current.draw(rulerCanvas.current, {
+        ...common,
+        view: { ...currentView, y: 0, h: 36 },
+        rulerOnly: true,
+      });
+    if (
+      clipSceneRoot.current &&
+      fullPage &&
+      !videos.length &&
+      !overlays.length &&
+      !a.missing.length
+    ) {
+      clipSceneRoot.current.style.display = "block";
+      if (sceneCanvas.current)
+        sceneCanvas.current.parentElement!.style.display = "none";
+      clipScene.current.draw(clipSceneRoot.current, {
+        ...common,
+        view: currentView,
+      });
+      return;
+    }
+    if (clipSceneRoot.current) clipSceneRoot.current.style.display = "none";
+    if (sceneCanvas.current)
+      sceneCanvas.current.parentElement!.style.display = "block";
+    const sceneView = currentView;
+    const c = sceneCanvas.current;
+    if (!c) return;
+    c.style.width = `${sceneView.w}px`;
+    c.style.height = `${sceneView.h}px`;
+    c.style.transform = `translate(${-headerWidth}px, -36px)`;
     if (painter.current) {
       const cache = paintCache.current,
         packet: Record<string, unknown> = {
-          view,
+          view: sceneView,
+          contentOnly: true,
           zoom,
           selection,
           range,
@@ -487,12 +622,13 @@ export default function DawTimeline({
       return;
     }
     const draw = () => {
-      const c = canvas.current;
+      const c = sceneCanvas.current;
       if (!c) return;
       renderer.current.draw(c, {
         a,
         peaks,
-        view,
+        view: sceneView,
+        contentOnly: true,
         zoom,
         selection,
         range,
@@ -505,10 +641,9 @@ export default function DawTimeline({
         dpr: Math.min(devicePixelRatio || 1, 2),
       });
     };
-    cancelAnimationFrame(drawFrame.current);
-    drawFrame.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(drawFrame.current);
-  }, [
+    draw();
+  };
+  useEffect(scheduleDraw, [
     canvasEpoch,
     headerWidth,
     fullPage,
@@ -523,7 +658,14 @@ export default function DawTimeline({
     overlays,
     videos,
   ]);
+  const headPaint = useRef<{
+    width: number;
+    height: number;
+    dpr: number;
+    x: number | null;
+  } | null>(null);
   paintHead.current = (time: number) => {
+    const zoom = liveZoom.current;
     const c = overlayCanvas.current,
       ctx = c?.getContext("2d");
     if (!c || !ctx) return;
@@ -535,13 +677,23 @@ export default function DawTimeline({
       c.width = Math.round(view.w * dpr);
       c.height = Math.round(view.h * dpr);
     }
+    const px = headerWidth + time * zoom - liveView.current.x;
+    const x = px >= headerWidth && px <= view.w ? px : null;
+    const old = headPaint.current;
+    const resized =
+      !old ||
+      old.width !== c.width ||
+      old.height !== c.height ||
+      old.dpr !== dpr;
+    if (!resized && old.x === x) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, view.w, view.h);
-    const px = headerWidth + time * zoom - view.x;
-    if (px >= headerWidth && px <= view.w) {
+    if (resized) ctx.clearRect(0, 0, view.w, view.h);
+    else if (old.x !== null) ctx.clearRect(Math.floor(old.x) - 1, 0, 4, view.h);
+    if (x !== null) {
       ctx.fillStyle = "#F472B6";
-      ctx.fillRect(px, 0, 2, view.h);
+      ctx.fillRect(x, 0, 2, view.h);
     }
+    headPaint.current = { width: c.width, height: c.height, dpr, x };
   };
   useEffect(() => paintHead.current(position), [position, view, zoom]);
   useEffect(() => {
@@ -580,16 +732,20 @@ export default function DawTimeline({
   }, []);
 
   function coordinates(e: { clientX: number; clientY: number }) {
+    const zoom = liveZoom.current;
     const rect = geometry.current;
     const x = e.clientX - rect.left,
       y = e.clientY - rect.top;
     return {
       x,
       y,
-      time: Math.max(0, (x + view.x - headerWidth) / zoom),
+      time: Math.max(0, (x + liveView.current.x - headerWidth) / zoom),
       lane:
-        rows.find((l) => y + view.y >= l.y && y + view.y < l.y + l.height)
-          ?.id ?? "",
+        rows.find(
+          (l) =>
+            y + liveView.current.y >= l.y &&
+            y + liveView.current.y < l.y + l.height,
+        )?.id ?? "",
     };
   }
   function hit(time: number, lane: string) {
@@ -688,6 +844,7 @@ export default function DawTimeline({
     });
   }
   function fit(selectedOnly = false) {
+    const zoom = liveZoom.current;
     const selected = a.regions.filter((r) => selection.includes(r.id));
     const start =
       selectedOnly && selected.length
@@ -708,6 +865,7 @@ export default function DawTimeline({
     });
   }
   function down(e: React.PointerEvent<HTMLCanvasElement>) {
+    const zoom = liveZoom.current;
     if (e.button !== 0) return;
     setMenu(null);
     root.current?.focus({ preventScroll: true });
@@ -721,7 +879,7 @@ export default function DawTimeline({
           o.lane === p.lane &&
           p.time >= o.start &&
           p.time <= o.end &&
-          p.y + view.y >
+          p.y + liveView.current.y >
             rows.find((l) => l.id === p.lane)!.y +
               rows.find((l) => l.id === p.lane)!.height -
               30,
@@ -750,7 +908,7 @@ export default function DawTimeline({
         ids: [],
         x: p.x,
         y: p.y,
-        time: view.x,
+        time: liveView.current.x,
         lane: p.lane,
         mode: "hand",
         pointer: e.pointerId,
@@ -778,7 +936,8 @@ export default function DawTimeline({
           (row?.y ?? 0) +
           25 +
           ((24 - r.gain_db) / 84) * ((row?.height ?? 96) - 40);
-      const nearGain = fullPage && Math.abs(p.y + view.y - gainY) < 4;
+      const nearGain =
+        fullPage && Math.abs(p.y + liveView.current.y - gainY) < 4;
       const edge = 6 / zoom;
       if (tool === "fade")
         mode =
@@ -787,13 +946,15 @@ export default function DawTimeline({
             : "fade_out";
       else if (
         tool === "pointer" &&
-        p.y + view.y < (rows.find((l) => l.id === r.lane)?.y ?? 0) + 22 &&
+        p.y + liveView.current.y <
+          (rows.find((l) => l.id === r.lane)?.y ?? 0) + 22 &&
         p.time - r.start < Math.max(edge, 15 / zoom)
       )
         mode = "fade_in";
       else if (
         tool === "pointer" &&
-        p.y + view.y < (rows.find((l) => l.id === r.lane)?.y ?? 0) + 22 &&
+        p.y + liveView.current.y <
+          (rows.find((l) => l.id === r.lane)?.y ?? 0) + 22 &&
         end(r) - p.time < Math.max(edge, 15 / zoom)
       )
         mode = "fade_out";
@@ -829,6 +990,7 @@ export default function DawTimeline({
     e.currentTarget.setPointerCapture(e.pointerId);
   }
   function move(e: React.PointerEvent<HTMLCanvasElement>) {
+    const zoom = liveZoom.current;
     const d = drag.current;
     if (!d) return;
     const p = coordinates(e),
@@ -848,8 +1010,8 @@ export default function DawTimeline({
       setRange(span);
       if (d.mode === "ruler") seek(p.time);
       if (d.mode === "marquee") {
-        const minY = Math.min(d.y, p.y) + view.y,
-          maxY = Math.max(d.y, p.y) + view.y;
+        const minY = Math.min(d.y, p.y) + liveView.current.y,
+          maxY = Math.max(d.y, p.y) + liveView.current.y;
         setSelection(
           a.regions
             .filter(
@@ -1136,6 +1298,7 @@ export default function DawTimeline({
     }
   }
   function context(e: React.MouseEvent) {
+    const zoom = liveZoom.current;
     e.preventDefault();
     const p = coordinates(e),
       r = hit(p.time, p.lane);
@@ -1166,6 +1329,7 @@ export default function DawTimeline({
       lanes: a.lanes.map((l) => (l.id === id ? { ...l, ...patch } : l)),
     });
   function shortcut(e: React.KeyboardEvent) {
+    const zoom = liveZoom.current;
     if (
       (e.target as HTMLElement).closest(
         "input,textarea,select,[contenteditable]",
@@ -1971,16 +2135,22 @@ export default function DawTimeline({
         </aside>
       )}
       {fullPage && (
-        <div className="daw-sections" aria-label="Sections lane">
+        <div
+          className="daw-sections"
+          ref={sectionStrip}
+          aria-label="Sections lane"
+        >
           <span style={{ width: headerWidth }}>Sections</span>
           {a.sections.map((s, i) => (
             <button
               key={s.id}
               draggable
+              data-section-position={s.id}
               title="Drag to reorder · Alt+D duplicate · Enter loop · Shift+F10 menu"
               aria-label={`Section ${s.name}`}
               style={{
-                left: headerWidth + s.start * zoom - view.x,
+                left: headerWidth + s.start * zoom,
+                transform: `translateX(${-liveView.current.x}px)`,
                 width: Math.max(35, (s.end - s.start) * zoom),
                 background: s.color + "66",
                 borderColor: s.color,
@@ -2135,12 +2305,7 @@ export default function DawTimeline({
       )}
       {message && <p role="alert">{message}</p>}
       <div
-        className="pro-scroll"
-        ref={scroller}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          setView((v) => ({ ...v, x: el.scrollLeft, y: el.scrollTop }));
-        }}
+        className="pro-scroll-shell"
         onDragOver={(e) => {
           e.preventDefault();
           if (e.dataTransfer.types.includes("Files")) {
@@ -2154,6 +2319,7 @@ export default function DawTimeline({
             setDropHint(null);
         }}
         onDrop={(e) => {
+          const zoom = liveZoom.current;
           e.preventDefault();
           setDropHint(null);
           if (e.dataTransfer.files.length) {
@@ -2217,78 +2383,122 @@ export default function DawTimeline({
         }}
       >
         <div
-          style={{ width: totalWidth, height: Math.max(view.h, totalHeight) }}
+          className="pro-scroll"
+          ref={scroller}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            const x = el.scrollLeft,
+              y = el.scrollTop;
+            liveView.current = { ...liveView.current, x, y };
+            const band = Math.floor(y / Math.max(1, view.h)) * view.h;
+            if (videos.length || band !== view.y)
+              setView((v) => ({
+                ...v,
+                x: videos.length ? x : 0,
+                y: videos.length ? y : band,
+              }));
+            scheduleDraw();
+          }}
         >
           <div
-            className="pro-viewport"
-            style={{ width: view.w, height: view.h }}
+            className="pro-scroll-space"
+            style={{ width: totalWidth, height: Math.max(view.h, totalHeight) }}
+          />
+        </div>
+        <div className="pro-viewport" style={{ width: view.w, height: view.h }}>
+          <div
+            ref={clipSceneRoot}
+            className="pro-clip-scene"
+            style={{ left: headerWidth, top: 36 }}
+            aria-hidden="true"
+          />
+          <div
+            className="pro-scene-clip"
+            style={{ left: headerWidth, top: 36 }}
+            aria-hidden="true"
           >
-            <canvas
-              data-renderer="main"
-              key={canvasEpoch}
-              ref={canvas}
-              aria-label="Timeline waveform canvas"
-              onPointerDown={down}
-              onPointerMove={move}
-              onPointerUp={up}
-              onPointerCancel={up}
-              onContextMenu={context}
-            />
-            {dropHint && (
-              <div
-                className="pro-drop-ghost"
-                style={{
-                  left: Math.max(headerWidth, dropHint.x),
-                  top: Math.max(36, dropHint.y),
-                }}
-              >
-                Import at {dropHint.time.toFixed(2)} s{" "}
-                {dropHint.lane ? "" : "· New tracks"}
-              </div>
-            )}
-            <canvas
-              className="pro-overlay"
-              ref={overlayCanvas}
-              aria-hidden="true"
-            />
-            {videos.length > 0 && (
-              <VideoStrip
-                videos={videos}
-                headerWidth={headerWidth}
-                zoom={zoom}
-                x={view.x}
-                y={view.y}
-                width={view.w}
-              />
-            )}
+            <canvas ref={sceneCanvas} key={canvasEpoch} />
+          </div>
+          <canvas ref={rulerCanvas} className="pro-ruler" aria-hidden="true" />
+          <canvas
+            data-renderer="main"
+            key={canvasEpoch}
+            ref={canvas}
+            aria-label="Timeline waveform canvas"
+            onPointerDown={down}
+            onPointerMove={move}
+            onPointerUp={up}
+            onPointerCancel={up}
+            onContextMenu={context}
+          />
+          {dropHint && (
             <div
-              className="pro-playhead-handle"
-              role="slider"
-              tabIndex={0}
-              aria-label="Playhead"
-              aria-valuemin={0}
-              aria-valuemax={a.duration}
-              aria-valuenow={position}
-              style={{ left: headerWidth + position * zoom - view.x }}
-              onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture(e.pointerId);
-                seek(position);
+              className="pro-drop-ghost"
+              style={{
+                left: Math.max(headerWidth, dropHint.x),
+                top: Math.max(36, dropHint.y),
               }}
-              onPointerMove={(e) => {
-                if (e.buttons) seek(coordinates(e).time);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  seek(position + (e.key === "ArrowRight" ? 0.1 : -0.1));
-                }
-              }}
+            >
+              Import at {dropHint.time.toFixed(2)} s{" "}
+              {dropHint.lane ? "" : "· New tracks"}
+            </div>
+          )}
+          <canvas
+            className="pro-overlay"
+            ref={overlayCanvas}
+            aria-hidden="true"
+          />
+          {videos.length > 0 && (
+            <VideoStrip
+              videos={videos}
+              headerWidth={headerWidth}
+              zoom={zoom}
+              x={liveView.current.x}
+              y={liveView.current.y}
+              width={view.w}
             />
-            <div className="pro-headers">
+          )}
+          <div
+            className="pro-playhead-handle"
+            ref={playheadHandle}
+            role="slider"
+            tabIndex={0}
+            aria-label="Playhead"
+            aria-valuemin={0}
+            aria-valuemax={a.duration}
+            aria-valuenow={position}
+            style={{
+              left: headerWidth + position * zoom,
+              transform: `translateX(${-liveView.current.x}px)`,
+            }}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              seek(position);
+            }}
+            onPointerMove={(e) => {
+              if (e.buttons) seek(coordinates(e).time);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                e.preventDefault();
+                e.stopPropagation();
+                seek(position + (e.key === "ArrowRight" ? 0.1 : -0.1));
+              }
+            }}
+          />
+          <div className="pro-headers">
+            <div
+              className="pro-header-positions"
+              ref={headerPositions}
+              style={{
+                transform: `translate3d(0, ${-liveView.current.y}px, 0)`,
+              }}
+            >
               {rows
                 .filter(
-                  (l) => l.y + l.height > view.y + 36 && l.y < view.y + view.h,
+                  (l) =>
+                    l.y + l.height > view.y - view.h &&
+                    l.y < view.y + view.h * 3,
                 )
                 .map((l) => (
                   <div
@@ -2298,7 +2508,7 @@ export default function DawTimeline({
                     data-track={l.id}
                     onClick={() => setFxTrack(l.id)}
                     style={{
-                      top: l.y - view.y,
+                      top: l.y,
                       height: l.height,
                       borderColor: l.color,
                     }}
@@ -2317,7 +2527,9 @@ export default function DawTimeline({
                       aria-label={`Track name ${l.id}`}
                       value={l.name}
                       onChange={(e) =>
-                        updateLane(l.id, { name: e.target.value.slice(0, 60) })
+                        updateLane(l.id, {
+                          name: e.target.value.slice(0, 60),
+                        })
                       }
                     />
                     <div className="pro-track-row">
@@ -2463,57 +2675,57 @@ export default function DawTimeline({
                   </div>
                 ))}
             </div>
-            {menu && (
-              <ContextMenu
-                x={menu.x}
-                y={menu.y}
-                items={menuItems()}
-                onClose={closeMenu}
-              />
-            )}
-            {fullPage && (
-              <div
-                className="daw-header-width"
-                role="separator"
-                aria-label="Track header width"
-                aria-orientation="vertical"
-                tabIndex={0}
-                style={{ left: headerWidth - 3 }}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                    e.preventDefault();
-                    setHeaderWidth((w) =>
+          </div>
+          {menu && (
+            <ContextMenu
+              x={menu.x}
+              y={menu.y}
+              items={menuItems()}
+              onClose={closeMenu}
+            />
+          )}
+          {fullPage && (
+            <div
+              className="daw-header-width"
+              role="separator"
+              aria-label="Track header width"
+              aria-orientation="vertical"
+              tabIndex={0}
+              style={{ left: headerWidth - 3 }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                  e.preventDefault();
+                  setHeaderWidth((w) =>
+                    Math.max(
+                      160,
+                      Math.min(340, w + (e.key === "ArrowLeft" ? -10 : 10)),
+                    ),
+                  );
+                }
+              }}
+              onPointerDown={(e) =>
+                e.currentTarget.setPointerCapture(e.pointerId)
+              }
+              onPointerMove={(e) => {
+                if (e.currentTarget.hasPointerCapture(e.pointerId))
+                  setHeaderWidth(
+                    Math.round(
                       Math.max(
                         160,
-                        Math.min(340, w + (e.key === "ArrowLeft" ? -10 : 10)),
-                      ),
-                    );
-                  }
-                }}
-                onPointerDown={(e) =>
-                  e.currentTarget.setPointerCapture(e.pointerId)
-                }
-                onPointerMove={(e) => {
-                  if (e.currentTarget.hasPointerCapture(e.pointerId))
-                    setHeaderWidth(
-                      Math.round(
-                        Math.max(
-                          160,
-                          Math.min(
-                            340,
-                            e.clientX -
-                              scroller.current!.getBoundingClientRect().left,
-                          ),
+                        Math.min(
+                          340,
+                          e.clientX -
+                            scroller.current!.getBoundingClientRect().left,
                         ),
                       ),
-                    );
-                }}
-                onPointerUp={(e) =>
-                  e.currentTarget.releasePointerCapture(e.pointerId)
-                }
-              />
-            )}
-          </div>
+                    ),
+                  );
+              }}
+              onPointerUp={(e) =>
+                e.currentTarget.releasePointerCapture(e.pointerId)
+              }
+            />
+          )}
         </div>
       </div>
       {!fullPage && (

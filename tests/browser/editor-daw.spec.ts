@@ -227,6 +227,7 @@ test("offline Web Audio and Python agree for EQ, space, echo and warmth across p
         v[i] = 0.2 * Math.sin((i / rate) * (c ? 660 : 440) * 2 * Math.PI);
     }
     src.buffer = b;
+    await lib.prepareEffectContext(ctx);
     const fx = lib.createEffectChain(ctx, slots, 120);
     src.connect(fx.input);
     fx.output.connect(ctx.destination);
@@ -254,6 +255,10 @@ test("offline Web Audio and Python agree for EQ, space, echo and warmth across p
     },
   );
   expect(py.status, py.stderr).toBe(0);
+  console.log(
+    "EDITOR_DSP_PARITY",
+    JSON.stringify({ maxDifference: Number(py.stdout) }),
+  );
   expect(Number(py.stdout)).toBeLessThan(0.005);
 });
 test("16 tracks × 50 clips keep the desk scroll and zoom frame budget", async ({

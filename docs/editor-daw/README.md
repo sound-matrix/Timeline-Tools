@@ -14,7 +14,7 @@ Playback and local exports use the same Web Audio graph, in this order: region g
 
 - EQ: five RBJ peaking biquads; scipy `lfilter` implements the cloud version. Browser frequency controls clamp below Nyquist.
 - Space: deterministic sparse stereo room impulse, convolver normalization disabled before loading the buffer. Small/Room/Hall presets vary decay and wet mix. This is a synthetic room, not a measured acoustic model.
-- Echo: beat-synced first delay, feedback and wet mix. The Python feedback path includes Web Audio's 128-sample render quantum. Fractional-sample delays are rounded in Python; render rate differences can shift echoes by a sample.
+- Echo: beat-synced first delay, feedback and wet mix. A shared AudioWorklet uses the same stateful sample recurrence as Python: the first echo is delayed by D rounded samples, and feedback repeats every D + 128 samples. This avoids native feedback-cycle timing differences between Firefox, Chromium and WebKit in both playback and offline export.
 - Warmth: normalized tanh shaping with wet mix. Quiet is a simple amplitude gate. Silk is a static high-shelf sibilance reduction, not a dynamic multiband de-esser.
 - Squeeze uses native Web Audio compression during playback/local export. Python uses a linked stereo soft-knee detector with attack/release smoothing; this is an approximation of the browser's implementation-defined detector, so dynamics are not bit-identical. Ceiling adds hard clipping at its threshold after compression; master gain follows the insert chain.
 - Local export and bounced-clip reads warm up each bounded offline window with up to 60 seconds of preceding audio. This avoids ordinary block-boundary resets without allocating a multi-hour mix buffer. Feedback tails longer than that window are approximated. Cloud export preserves full effect state across blocks and is preferable for very long feedback tails. Export ranges remain explicit; tails outside the chosen range are cropped.
@@ -25,6 +25,8 @@ Playback and local exports use the same Web Audio graph, in this order: region g
 Apply **`supabase/migrations/20261025041003_editor_project_rename.sql`** before using inline project rename. It grants only `UPDATE(name)` with active-owner `USING` and `WITH CHECK` policies. Arrangement edits still use the existing revision-locked RPC. Effects, section blocks, reverse flags, track colours and heights use existing JSON; no effect tables or data rewrite are required. Old arrangements receive additive structural defaults when parsed.
 
 Redeploy the existing Modal worker after merge using the repository's normal deployment process. Changes are in `editor_export.py`, `studio_audio.py`, `studio_export.py`, `editor_dsp.py`, `effect_contract.py` and the pinned `scipy==1.17.0` dependency in `workers/requirements.txt`. No live database changes or Modal redeployment were performed for this PR.
+
+The audio-only full-page timeline retains small clip images in a 32 MB raster cache, shared across repeated clips and eight zoom levels per octave. A bounded image pool mounts visible clip tiles; exact scroll/zoom positions use transforms. Headers update through a coarse virtual window, the ruler and playhead are separate, and the existing canvas worker remains available for video/overlay timelines.
 
 ## Validation
 

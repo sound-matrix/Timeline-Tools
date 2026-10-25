@@ -131,6 +131,17 @@ export type EffectGraph = {
   reductions: Map<string, DynamicsCompressorNode>;
   dispose: () => void;
 };
+const preparedContexts = new WeakMap<BaseAudioContext, Promise<void>>();
+/** Register once per live/offline context before constructing insert graphs. */
+export function prepareEffectContext(ctx: BaseAudioContext): Promise<void> {
+  let ready = preparedContexts.get(ctx);
+  if (!ready) {
+    ready = ctx.audioWorklet.addModule("/daw/delay-processor.js");
+    preparedContexts.set(ctx, ready);
+    ready.catch(() => preparedContexts.delete(ctx));
+  }
+  return ready;
+}
 /** Identical topology for live playback and OfflineAudioContext exports. */
 export function createEffectChain(
   ctx: BaseAudioContext,
@@ -227,11 +238,23 @@ export function createEffectChain(
       start.connect(dry).connect(sum);
       wet.connect(sum);
       if (slot.type === "delay") {
-        const n = ctx.createDelay(12),
-          feedback = gain(p.feedback);
-        n.delayTime.value = (60 / tempo) * p.beats;
+        // Native feedback cycles differ by a render quantum between engines.
+        // Keep the same sample recurrence as the stateful Python export chain.
+        const n = new AudioWorkletNode(ctx, "timeline-echo", {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [2],
+          channelCount: 2,
+          channelCountMode: "explicit",
+          processorOptions: {
+            delayFrames: Math.max(
+              1,
+              Math.round((60 / tempo) * p.beats * ctx.sampleRate),
+            ),
+            feedback: p.feedback,
+          },
+        });
         start.connect(n).connect(wet);
-        n.connect(feedback).connect(n);
         nodes.push(n);
       } else {
         const n = ctx.createConvolver(),
@@ -264,6 +287,14 @@ export function createEffectChain(
     analyser,
     compressors,
     reductions,
-    dispose: () => nodes.forEach((n) => n.disconnect()),
+    dispose: () =>
+      nodes.forEach((n) => {
+        if (
+          typeof AudioWorkletNode !== "undefined" &&
+          n instanceof AudioWorkletNode
+        )
+          n.port.postMessage("dispose");
+        n.disconnect();
+      }),
   };
 }

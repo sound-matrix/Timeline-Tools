@@ -1,4 +1,8 @@
-import { createEffectChain, type EffectGraph } from "./effects.ts";
+import {
+  createEffectChain,
+  prepareEffectContext,
+  type EffectGraph,
+} from "./effects.ts";
 import type { Arrangement } from "../arrangement";
 import { pcmWindow } from "../studio-preview";
 import {
@@ -89,6 +93,7 @@ export class DawPlayback {
             renderStart + i / input.sampleRate,
           );
       gain.gain.setValueCurveAtTime(values, 0, input.duration);
+      await prepareEffectContext(offline);
       const fx = createEffectChain(
         offline,
         derived.inserts ?? [],
@@ -345,7 +350,8 @@ export class DawPlayback {
     }
     const epoch = this.epoch,
       ctx = (this.context ??= new AudioContext({ sampleRate: a.sample_rate }));
-    await ctx.resume();
+    await Promise.all([ctx.resume(), prepareEffectContext(ctx)]);
+    if (epoch !== this.epoch) return;
     this.derived = a.derived_clips;
     this.sourceUrls = urls;
     this.urlMap = urls;
