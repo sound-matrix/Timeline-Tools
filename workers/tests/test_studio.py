@@ -188,7 +188,7 @@ class AsrCompatibility(unittest.TestCase):
   self.assertEqual(failed.args[1]['p_code'],'processing')
   self.assertNotIn('worker_prepare',[c.args[0] for c in db.rpc.call_args_list])
   self.assertNotIn('worker_complete',[c.args[0] for c in db.rpc.call_args_list])
-  log.assert_called_once_with(f'job {ID} step=studio_prepare TypeError')
+  log.assert_called_once_with(f'{ID} step=studio_prepare TypeError')
 
  def test_prepare_step_codes_distinguish_media_and_gate_crashes(self):
   from workers.timeline_tools_worker import handle_job
@@ -204,7 +204,7 @@ class AsrCompatibility(unittest.TestCase):
    failed=next(c for c in db.rpc.call_args_list if c.args[0]=='worker_fail')
    self.assertEqual(failed.args[1]['p_code'],code,step)
    self.assertNotIn('worker_prepare',[c.args[0] for c in db.rpc.call_args_list])
-   log.assert_called_once_with(f'job {ID} step={step} {type(exception).__name__}')
+   log.assert_called_once_with(f'{ID} step={step} {type(exception).__name__}')
 
 class AutoTranscript(unittest.TestCase):
  def test_transcribe_arrangement_uses_order_and_speakers_without_matching(self):

@@ -7,12 +7,10 @@ export async function uploadFile(
 ) {
   const db = browserClient();
   if (file.size <= 6 * 1024 * 1024) {
-    const { error } = await db.storage
-      .from("uploads")
-      .upload(path, file, {
-        upsert: false,
-        contentType: file.type || "application/octet-stream",
-      });
+    const { error } = await db.storage.from("uploads").upload(path, file, {
+      upsert: false,
+      contentType: file.type || "application/octet-stream",
+    });
     if (error) throw error;
     onProgress(100);
     return;
@@ -29,7 +27,11 @@ export async function uploadFile(
     const upload = new Upload(file, {
       endpoint: endpoint.toString(),
       chunkSize: 6 * 1024 * 1024,
-      retryDelays: [0, 1000, 3000, 5000],
+      retryDelays: [1000, 2000, 4000],
+      onShouldRetry: (error) => {
+        const status = error.originalResponse?.getStatus() ?? 0;
+        return status === 0 || status >= 500;
+      },
       uploadDataDuringCreation: true,
       storeFingerprintForResuming: false,
       headers: {

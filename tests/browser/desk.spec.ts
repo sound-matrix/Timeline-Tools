@@ -147,13 +147,13 @@ test("upload-first cleanup desk, independent choices, live wave and download on 
   await expect(live.getByRole("status")).toHaveText("Processing", {
     timeout: 20000,
   });
-  await expect(live.locator(".wave-processing")).toBeVisible();
-  await expect(live.locator(".wave-clean")).toHaveCSS(
+  await expect(live.locator(".tube-processing")).toBeVisible();
+  await expect(live.locator(".tube-flow-0")).toHaveCSS(
     "animation-name",
-    "reveal-clean",
+    "tube-flow",
   );
   await live.getByRole("button", { name: "Pause live motion" }).click();
-  await expect(live.locator(".wave-clean")).toHaveCSS(
+  await expect(live.locator(".tube-flow-0")).toHaveCSS(
     "animation-play-state",
     "paused",
   );
@@ -172,7 +172,10 @@ test("upload-first cleanup desk, independent choices, live wave and download on 
   await expect(
     live.getByRole("link", { name: "Download WAV" }),
   ).toHaveAttribute("href", `/api/jobs/${id}/download?index=0`);
-  await expect(live.locator(".wave-clean")).toHaveCSS("animation-name", "none");
+  await expect(live.locator(".tube-flow-0")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
   await expect(page).toHaveURL(/cleanup/);
   expect(errors).toEqual([]);
 });
@@ -221,7 +224,7 @@ for (const route of ["dashboard", "master", "subs"])
     await expect(live.getByRole("status")).toHaveText("Processing", {
       timeout: 20000,
     });
-    await expect(live.locator(".wave-clean")).toHaveCSS(
+    await expect(live.locator(".tube-flow-0")).toHaveCSS(
       "animation-name",
       "none",
     );
@@ -319,3 +322,77 @@ test("polling interruptions preserve the job and recover to done; invalid replac
   await page.clock.runFor(6000);
   expect(polls).toBe(terminalPolls);
 });
+
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  test(`glass tube states ${viewport.width}`, async ({
+    page,
+    request,
+  }, info) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/cleanup");
+    await upload(page);
+    const queued = page.waitForResponse(
+      (r) => r.url().endsWith("/api/jobs") && r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Start Processing" }).click();
+    const { id } = await (await queued).json();
+    const panel = page.getByRole("region", { name: "Live processing" });
+    await complete(request, id, "processing");
+    await expect(panel.getByRole("status")).toHaveText("Processing");
+    await expect(panel.locator(".glass-tube")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    await panel.screenshot({
+      path: info.outputPath(`processing-${viewport.width}.png`),
+    });
+    await panel.getByRole("button", { name: "Pause live motion" }).click();
+    await expect(panel.locator(".glass-tube")).toHaveCSS(
+      "animation-play-state",
+      "paused",
+    );
+    await expect(panel.locator(".tube-flow-0")).toHaveCSS(
+      "animation-play-state",
+      "paused",
+    );
+    await complete(request, id, "failed");
+    await expect(panel.getByRole("status")).toHaveText("Failed");
+    await expect(panel.locator(".glass-tube")).toHaveCSS(
+      "color",
+      "rgb(251, 113, 133)",
+    );
+    await expect(panel.locator(".tube-flow-0")).toHaveCSS(
+      "animation-name",
+      "none",
+    );
+    await panel.screenshot({
+      path: info.outputPath(`failed-${viewport.width}.png`),
+    });
+    const nextJob = page.waitForResponse(
+      (r) => r.url().endsWith("/api/jobs") && r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Start Processing" }).click();
+    const next = await (await nextJob).json();
+    await complete(request, next.id, "done");
+    await expect(panel.getByRole("status")).toHaveText("Done");
+    await expect(panel.locator(".glass-tube")).toHaveCSS(
+      "color",
+      "rgb(52, 211, 153)",
+    );
+    await expect(panel.locator(".tube-flow-0")).toHaveCSS(
+      "animation-name",
+      "none",
+    );
+    await panel.screenshot({
+      path: info.outputPath(`done-${viewport.width}.png`),
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  });
+}

@@ -333,7 +333,11 @@ export default function AudioStudio({
               <ClipPreview file={previewFile} />
               {message && <p role="alert">{message}</p>}
               {errors.settings && <p role="alert">{errors.settings}</p>}
-              <button className="btn studio-submit" disabled={locked}>
+              <button
+                className="btn studio-submit"
+                disabled={false}
+                aria-busy={locked}
+              >
                 Submit
               </button>
               <p className="muted">
