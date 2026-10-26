@@ -1,3 +1,5 @@
+import { theme } from "../../public/theme.js";
+const rgb = (hex: string) => `rgb(${[1,3,5].map(i => parseInt(hex.slice(i,i+2),16)).join(", ")})`;
 import {
   test,
   expect,
@@ -362,7 +364,7 @@ for (const viewport of [
     await expect(panel.getByRole("status")).toHaveText("Failed");
     await expect(panel.locator(".glass-tube")).toHaveCSS(
       "color",
-      "rgb(251, 113, 133)",
+      rgb(theme.danger),
     );
     await expect(panel.locator(".tube-flow-0")).toHaveCSS(
       "animation-name",
@@ -380,7 +382,7 @@ for (const viewport of [
     await expect(panel.getByRole("status")).toHaveText("Done");
     await expect(panel.locator(".glass-tube")).toHaveCSS(
       "color",
-      "rgb(52, 211, 153)",
+      rgb(theme.success),
     );
     await expect(panel.locator(".tube-flow-0")).toHaveCSS(
       "animation-name",

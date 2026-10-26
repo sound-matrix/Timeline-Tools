@@ -1,4 +1,6 @@
 "use client";
+import { theme, trackColor } from "@/public/theme.js";
+
 import {
   useCallback,
   useEffect,
@@ -690,7 +692,7 @@ export default function DawTimeline({
     if (resized) ctx.clearRect(0, 0, view.w, view.h);
     else if (old.x !== null) ctx.clearRect(Math.floor(old.x) - 1, 0, 4, view.h);
     if (x !== null) {
-      ctx.fillStyle = "#F472B6";
+      ctx.fillStyle = theme["focus"];
       ctx.fillRect(x, 0, 2, view.h);
     }
     headPaint.current = { width: c.width, height: c.height, dpr, x };
@@ -714,9 +716,11 @@ export default function DawTimeline({
             peak = Math.max(peak, Math.abs(v));
           }
           clipIndicator.current ||= peak >= 1;
-          ctx.fillStyle = clipIndicator.current ? "#F87171" : "#6EE7B7";
+          ctx.fillStyle = clipIndicator.current
+            ? theme["danger"]
+            : theme["success"];
           ctx.fillRect(0, ch * 10, Math.min(1, peak) * c.width, 4);
-          ctx.fillStyle = "#818CF8";
+          ctx.fillStyle = theme["primary"];
           ctx.fillRect(
             0,
             ch * 10 + 4,
@@ -815,7 +819,7 @@ export default function DawTimeline({
           id: uid(),
           time,
           name: `Marker ${a.markers.length + 1}`,
-          color: "#FCD34D",
+          color: theme["focus"],
         },
       ],
     });
@@ -2152,8 +2156,8 @@ export default function DawTimeline({
                 left: headerWidth + s.start * zoom,
                 transform: `translateX(${-liveView.current.x}px)`,
                 width: Math.max(35, (s.end - s.start) * zoom),
-                background: s.color + "66",
-                borderColor: s.color,
+                background: trackColor(s.color),
+                borderColor: trackColor(s.color),
               }}
               onDragStart={(e) =>
                 e.dataTransfer.setData("application/x-section", s.id)
@@ -2510,7 +2514,7 @@ export default function DawTimeline({
                     style={{
                       top: l.y,
                       height: l.height,
-                      borderColor: l.color,
+                      borderColor: trackColor(l.color),
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault();
@@ -2743,7 +2747,7 @@ export default function DawTimeline({
                     {
                       id: uid(),
                       name: `Track ${a.lanes.length + 1}`,
-                      color: "#818CF8",
+                      color: theme["primary"],
                       gain_db: 0,
                       pan: 0,
                       mute: false,

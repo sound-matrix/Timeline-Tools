@@ -1,4 +1,5 @@
 "use client";
+import { trackColors } from "@/public/theme.js";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   transcriptSchema,
@@ -446,7 +447,7 @@ export default function PodcastEditor({ jobId }: { jobId: string }) {
       lanes: speakers.map((s, i) => ({
         id: s.id,
         name: edits.speaker_names[s.id] ?? s.name,
-        color: ["#818CF8", "#A78BFA", "#67E8F9"][i % 3],
+        color: trackColors[i % 3],
         gain_db: 0,
         mute: false,
         solo: false,

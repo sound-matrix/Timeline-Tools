@@ -26,11 +26,11 @@ function GlassTube({ status }: { status: ProcessingState["status"] }) {
       <svg viewBox="0 0 640 120" preserveAspectRatio="none" focusable="false">
         <defs>
           <linearGradient id={`${id}-glass`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="white" stopOpacity=".28" />
-            <stop offset=".22" stopColor="white" stopOpacity=".025" />
-            <stop offset=".55" stopColor="white" stopOpacity=".01" />
-            <stop offset=".83" stopColor="white" stopOpacity=".13" />
-            <stop offset="1" stopColor="white" stopOpacity=".04" />
+            <stop offset="0" stopColor="var(--glass-highlight)" stopOpacity=".28" />
+            <stop offset=".22" stopColor="var(--glass-highlight)" stopOpacity=".025" />
+            <stop offset=".55" stopColor="var(--glass-highlight)" stopOpacity=".01" />
+            <stop offset=".83" stopColor="var(--glass-highlight)" stopOpacity=".13" />
+            <stop offset="1" stopColor="var(--glass-highlight)" stopOpacity=".04" />
           </linearGradient>
           <linearGradient id={`${id}-liquid`} x1="0" y1="0" x2="0" y2="1">
             <stop stopColor="currentColor" stopOpacity=".8" />
@@ -75,20 +75,20 @@ function GlassTube({ status }: { status: ProcessingState["status"] }) {
           <path
             className="tube-sheen"
             d="M90 15 L150 15 L210 105 L150 105Z"
-            fill="white"
+            fill="var(--glass-highlight)"
             opacity=".09"
           />
           <path
             d="M50 27 Q320 19 590 27"
             fill="none"
-            stroke="white"
+            stroke="var(--glass-highlight)"
             strokeOpacity=".75"
             strokeWidth="2"
           />
           <path
             d="M52 91 Q320 100 588 91"
             fill="none"
-            stroke="white"
+            stroke="var(--glass-highlight)"
             strokeOpacity=".2"
             strokeWidth="5"
           />
@@ -109,7 +109,7 @@ function GlassTube({ status }: { status: ProcessingState["status"] }) {
           rx="24"
           ry="43"
           fill={`url(#${id}-glass)`}
-          stroke="white"
+          stroke="var(--glass-highlight)"
           strokeOpacity=".3"
         />
         <ellipse
@@ -118,13 +118,13 @@ function GlassTube({ status }: { status: ProcessingState["status"] }) {
           rx="24"
           ry="43"
           fill={`url(#${id}-glass)`}
-          stroke="white"
+          stroke="var(--glass-highlight)"
           strokeOpacity=".3"
         />
         <path
           d="M35 23 C12 32 12 82 35 97 M605 23 C628 32 628 82 605 97"
           fill="none"
-          stroke="white"
+          stroke="var(--glass-highlight)"
           strokeOpacity=".65"
         />
       </svg>

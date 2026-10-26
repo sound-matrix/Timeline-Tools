@@ -11,7 +11,7 @@ test("Atelier portal, reduced motion, canvas fallback and narrow landing", async
   await page.evaluate(() => document.fonts.ready);
   await expect(page.locator("body")).toHaveCSS(
     "background-color",
-    "rgb(15, 18, 32)",
+    "rgb(178, 186, 187)",
   );
   const portal = page.locator(".portal canvas");
   await expect(portal).toBeVisible();
@@ -66,7 +66,7 @@ test("Atelier auth, shell, mobile menu and admin surfaces", async ({
     await page.goto(path);
     await expect(page.locator("body")).toHaveCSS(
       "background-color",
-      "rgb(15, 18, 32)",
+      "rgb(178, 186, 187)",
     );
   }
   await page.goto("/signin");
@@ -98,6 +98,6 @@ test("Atelier auth, shell, mobile menu and admin surfaces", async ({
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await expect(page.locator(".card").first()).toHaveCSS(
     "background-color",
-    "rgb(26, 33, 54)",
+    "rgb(201, 208, 209)",
   );
 });

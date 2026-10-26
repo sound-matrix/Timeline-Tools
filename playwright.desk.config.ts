@@ -10,6 +10,7 @@ export default defineConfig({
     "subtitles.spec.ts",
     "audio-studio.spec.ts",
     "atelier.spec.ts",
+    "silver-theme.spec.ts",
     "podcast.spec.ts",
     "editor.spec.ts",
     "editor-daw.spec.ts",

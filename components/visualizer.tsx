@@ -1,4 +1,6 @@
 "use client";
+import { theme } from "@/public/theme.js";
+
 import { useEffect, useRef, useState } from "react";
 
 /** Illustrative signal activity; never presented as measured audio levels. */
@@ -41,7 +43,7 @@ export default function Visualizer({
       for (let i = 0; i < 160; i++) {
         const angle = (i / 160) * Math.PI * 2;
         const energy = 5 + 16 * Math.pow(Math.sin(i * 0.17 + phase), 2);
-        ctx.strokeStyle = i % 2 ? "#818CF8" : "#A78BFA";
+        ctx.strokeStyle = i % 2 ? theme["primary"] : theme["accent-text"];
         ctx.globalAlpha = 0.35 + 0.5 * Math.abs(Math.sin(i * 0.1));
         ctx.beginPath();
         ctx.moveTo(
@@ -55,7 +57,7 @@ export default function Visualizer({
         ctx.stroke();
         if (!compact) {
           const orbit = radius + 30 + (i % 23) * 3;
-          ctx.fillStyle = "#A78BFA";
+          ctx.fillStyle = theme["accent-text"];
           ctx.fillRect(
             width / 2 + Math.cos(angle + phase * 0.08) * orbit,
             height / 2 + Math.sin(angle + phase * 0.08) * orbit,

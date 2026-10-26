@@ -311,7 +311,8 @@ createServer(async (req, res) => {
     return send(subtitleEdits[url.searchParams.get("job_id")?.slice(3)] ?? null);
   }
   if (url.pathname === "/rest/v1/profiles") return send(profile);
-  if (url.pathname === "/rest/v1/plans") return send(plan);
+  if (url.pathname === "/rest/v1/plans") return send(url.searchParams.has("active") ? [plan] : plan);
+  if (url.pathname === "/rest/v1/topup_packs") return send([]);
   if (url.pathname === "/rest/v1/jobs") {
     if (req.method === "POST") {
       const id = crypto.randomUUID();

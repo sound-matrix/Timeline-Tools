@@ -1,9 +1,9 @@
 .pro-daw {
-  background: #0f1220;
-  border: 1px solid #303952;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 14px;
   overflow: hidden;
-  color: #e0e7ff;
+  color: var(--text);
   outline-offset: 3px;
   min-width: 0;
 }
@@ -13,14 +13,14 @@
   gap: 8px;
   flex-wrap: wrap;
   padding: 10px;
-  border-bottom: 1px solid #303952;
+  border-bottom: 1px solid var(--border);
 }
 .pro-toolbar label {
   display: flex;
   align-items: center;
   gap: 5px;
   font-size: 11px;
-  color: #abb3ce;
+  color: var(--text-muted);
 }
 .pro-toolbar input[type="number"] {
   width: 74px;
@@ -51,7 +51,7 @@
   overflow: auto;
   overscroll-behavior: contain;
   position: relative;
-  scrollbar-color: #4a567a #161b2e;
+  scrollbar-color: var(--border-strong) var(--surface);
 }
 .pro-scroll-space {
   position: relative;
@@ -83,7 +83,7 @@
   position: absolute;
   left: 0;
   width: 180px;
-  background: #161b2e;
+  background: var(--surface);
   border-left: 3px solid;
   padding: 6px;
   pointer-events: auto;
@@ -115,14 +115,14 @@
 }
 .pro-track-row button {
   padding: 1px 9px;
-  border: 1px solid #394462;
-  color: #abb3ce;
-  background: #222a42;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  background: transparent;
   cursor: pointer;
 }
 .pro-track-row button[aria-pressed="true"] {
-  color: #fff;
-  background: #6366f1;
+  color: var(--text);
+  background: var(--accent);
 }
 .pro-track-row input {
   width: 24px;
@@ -136,7 +136,7 @@
   right: 0;
   height: 6px;
   cursor: ns-resize;
-  border-bottom: 1px solid #3b4666;
+  border-bottom: 1px solid var(--border-strong);
 }
 .pro-context {
   position: absolute;
@@ -144,9 +144,9 @@
   min-width: 215px;
   max-height: 300px;
   overflow: auto;
-  background: #222a42;
-  box-shadow: 0 10px 35px #0009;
-  border: 1px solid #6366f1;
+  background: var(--surface-2);
+  box-shadow: 0 10px 35px var(--shadow-strong);
+  border: 1px solid var(--primary);
   border-radius: 8px;
   padding: 4px;
 }
@@ -157,13 +157,14 @@
   padding: 7px 10px;
   border: 0;
   background: transparent;
-  color: #e0e7ff;
+  color: var(--text);
   cursor: pointer;
   font-size: 12px;
 }
 .pro-context button:hover,
 .pro-context button:focus {
-  background: #3b4666;
+  background: var(--accent-wash);
+  color: var(--primary);
 }
 .pro-region-list {
   display: flex;
@@ -175,12 +176,12 @@
 }
 .pro-region-list button {
   padding: 6px;
-  border: 1px solid #3b4666;
-  background: #222a42;
-  color: #e0e7ff;
+  border: 1px solid var(--primary);
+  background: transparent;
+  color: var(--primary);
 }
 .pro-region-list button[aria-pressed="true"] {
-  border-color: #a5b4fc;
+  border-color: var(--focus);
 }
 .pro-daw details > summary {
   padding: 8px 12px;
@@ -188,17 +189,18 @@
   cursor: pointer;
 }
 .pro-meter {
-  border: 1px solid #3b4666;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
 }
 .pro-daw output {
   font: 12px ui-monospace;
-  color: #f9a8d4;
+  color: var(--accent-text);
   min-width: 100px;
 }
 .pro-daw p[role="alert"] {
   padding: 8px 12px;
-  color: #fcd34d;
+  color: var(--warning-text);
 }
 .pro-daw .card {
   margin: 12px;
@@ -214,7 +216,7 @@
   max-width: 100%;
   width: 480px;
   height: 270px;
-  background: #0f1220;
+  background: var(--bg);
   position: relative;
 }
 .pro-video-preview video {
@@ -227,7 +229,7 @@
   right: 20px;
   bottom: 20px;
   z-index: 30;
-  box-shadow: 0 8px 40px #000a;
+  box-shadow: 0 8px 40px var(--shadow-strong);
 }
 .pro-thumbnails {
   pointer-events: none;
@@ -237,7 +239,7 @@
   height: 72px;
   overflow: hidden;
   top: 36px;
-  background: #161b2e;
+  background: var(--surface);
 }
 .pro-thumbnails img {
   position: absolute;
@@ -257,7 +259,7 @@
   touch-action: none;
 }
 .pro-playhead-handle:focus {
-  outline: 2px solid #f472b6;
+  outline: 2px solid var(--accent-text);
 }
 
 .pro-viewport > canvas.pro-overlay {
@@ -301,14 +303,14 @@
   overflow: hidden;
   pointer-events: none;
   contain: strict;
-  background: #0f1220;
+  background: var(--bg);
 }
 .pro-scene-row {
   position: absolute;
   left: 0;
   top: 0;
   width: 100%;
-  background: #161b2e;
+  background: var(--surface);
 }
 .pro-scene-tile {
   transform-origin: 0 0;
