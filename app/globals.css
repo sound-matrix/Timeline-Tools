@@ -1857,47 +1857,89 @@ button:disabled {
   flex-shrink: 0;
   min-height: 44px;
 }
-.live-wave {
+.glass-tube {
+  color: #818cf8;
   margin: 12px 0 20px;
-  padding: 12px 0;
-  background: var(--panel);
-  border-radius: 12px;
-  overflow: hidden;
+  border-radius: 60px;
+  background: radial-gradient(ellipse, currentColor -200%, transparent 70%);
+  transition:
+    color 400ms ease,
+    filter 400ms ease;
+  backdrop-filter: blur(2px);
+  box-shadow:
+    inset 0 10px 20px #0002,
+    inset 0 -10px 16px #0003;
+  animation: tube-palette 12s ease-in-out infinite;
 }
-.live-wave svg {
+.glass-tube svg {
   display: block;
   width: 100%;
   height: 130px;
+  overflow: hidden;
 }
-.wave-noisy {
-  fill: var(--scope-a);
+.tube-flow {
+  animation: tube-flow 7s linear infinite;
 }
-.wave-clean {
-  fill: var(--scope-a);
-  clip-path: inset(0 100% 0 0);
+.tube-flow-1 {
+  animation-duration: 11s;
+  opacity: 0.5;
 }
-.wave-processing .wave-clean {
-  animation: reveal-clean 35s ease-out forwards;
+.tube-flow-2 {
+  animation-duration: 16s;
+  opacity: 0.3;
 }
-.wave-processing .wave-noisy {
-  animation: noisy-settle 35s ease-out forwards;
+.tube-liquid {
+  transform-origin: center 75%;
+  transition: transform 400ms ease;
 }
-.wave-queued svg,
-.wave-uploading svg,
-.wave-starting svg {
-  animation: waiting-wave 2s ease-in-out infinite alternate;
+.tube-sheen {
+  animation: tube-sheen 9s ease-in-out infinite alternate;
 }
-.wave-done .wave-noisy {
-  opacity: 0;
+.tube-done {
+  color: #34d399;
+  animation: none;
 }
-.wave-done .wave-clean {
-  clip-path: none;
+.tube-failed {
+  color: #fb7185;
+  animation: none;
 }
-.wave-failed .wave-noisy {
-  fill: var(--muted);
+.tube-done .tube-liquid {
+  transform: scaleY(0.25);
 }
-.live-paused .live-wave * {
+.tube-done .tube-flow,
+.tube-failed .tube-flow,
+.tube-done .tube-sheen,
+.tube-failed .tube-sheen {
+  animation: none;
+}
+.live-paused .glass-tube,
+.live-paused .glass-tube * {
   animation-play-state: paused !important;
+}
+@keyframes tube-flow {
+  from {
+    transform: translateX(-640px);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes tube-sheen {
+  to {
+    transform: translateX(340px);
+  }
+}
+@keyframes tube-palette {
+  0%,
+  100% {
+    color: #818cf8;
+  }
+  33% {
+    color: #a78bfa;
+  }
+  66% {
+    color: #2dd4bf;
+  }
 }
 .processing-description {
   color: var(--text);
@@ -1916,30 +1958,6 @@ button:disabled {
   min-height: 44px;
   padding: 12px 18px;
 }
-@keyframes reveal-clean {
-  from {
-    clip-path: inset(0 100% 0 0);
-  }
-  to {
-    clip-path: inset(0 10% 0 0);
-  }
-}
-@keyframes noisy-settle {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0.15;
-  }
-}
-@keyframes waiting-wave {
-  from {
-    opacity: 0.35;
-  }
-  to {
-    opacity: 0.85;
-  }
-}
 @media (max-width: 600px) {
   .cleanup-desk .desk-section {
     padding: 18px;
@@ -1952,7 +1970,7 @@ button:disabled {
     width: 100%;
     text-align: center;
   }
-  .live-wave svg {
+  .glass-tube svg {
     height: 100px;
   }
 }
@@ -1960,12 +1978,11 @@ button:disabled {
   .live-motion-toggle {
     display: none;
   }
-  .live-wave * {
+  .glass-tube,
+  .glass-tube * {
     animation: none !important;
   }
-  .wave-processing .wave-noisy {
-    opacity: 0.65;
-  }
+
 }
 
 .processing-desk button {
@@ -2501,16 +2518,9 @@ h3,
 .plan-card.featured {
   border-color: var(--accent);
 }
-.live-wave,
 .studio-lanes,
 .studio-file-slot {
   background: var(--canvas);
-}
-.wave-noisy {
-  fill: var(--scope-b);
-}
-.wave-clean {
-  fill: var(--scope-a);
 }
 .studio-clip {
   color: var(--on-accent);

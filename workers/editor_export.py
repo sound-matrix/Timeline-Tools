@@ -85,11 +85,10 @@ def render_editor(stems,arrangement,folder,settings,overlay=None,source_ids=None
 
 def handle_editor_job(db,job,worker_id,url,key):
     import tempfile
-    import httpx
-    from urllib.parse import quote
     from workers.timeline_tools_worker import transfer_output
     from workers.audio import duration,ffmpeg
     uploaded=[];committed=False;completion_attempted=False
+    step='editor_export'
     try:
         owner=str(uuid.UUID(job['user_id']));project=str(uuid.UUID(job['editor_project_id']))
         a,assets=validate_editor_snapshot(job['arrangement_snapshot'],owner,project)
@@ -119,22 +118,25 @@ def handle_editor_job(db,job,worker_id,url,key):
                         row=db.table('podcast_media').select('audio_path').eq('project_id',source_job).eq('user_id',owner).eq('media_index',int(c['id'][1:])).single().execute().data;path=row['audio_path']
                     if path not in original_job['output_paths'] or not path.startswith(f'{owner}/{source_job}/') or '..' in path:raise ValueError('Invalid source path')
                 target=folder/f'input-{i}{Path(path).suffix}'
-                with httpx.stream('GET',f'{url}/storage/v1/object/authenticated/{bucket}/{quote(path,safe="/")}',headers={'Authorization':f'Bearer {key}','apikey':key},timeout=300) as response:
-                    response.raise_for_status()
-                    with target.open('wb') as f:
-                        for block in response.iter_bytes(1048576):f.write(block)
+                from workers.storage_transfer import download
+                step='stem_transfer'
+                download(url, key, bucket, path, target)
+                step='editor_export'
                 if abs(duration(target)-c['duration'])>.05:raise ValueError('Asset duration changed')
                 stems[c['id']]=target
             if not db.rpc('worker_prepare',{'p_job_id':job['id'],'p_worker_id':worker_id,'p_duration':last-first}).execute().data:return
             source_ids={c['id'] for c in (snapshot.get('source_arrangement') or {}).get('clips',[])}
             paths=render_editor(stems,a,folder,s,snapshot.get('source_overlay'),source_ids)
+            step='output_transfer'
             for f in paths:
                 path=f"{owner}/{job['id']}/{f.name}";transfer_output(url,key,path,f);uploaded.append(path)
+            step='worker_complete'
             completion_attempted=True
             committed=bool(db.rpc('worker_complete',{'p_job_id':job['id'],'p_worker_id':worker_id,'p_outputs':uploaded}).execute().data)
     except Exception as error:
-        print(f"job {job['id']} step=editor_export {type(error).__name__}")
-        try:db.rpc('worker_fail',{'p_job_id':job['id'],'p_worker_id':worker_id,'p_code':'processing'}).execute()
+        from workers.storage_transfer import log_failure
+        log_failure(job['id'], step, error)
+        try:db.rpc('worker_fail',{'p_job_id':job['id'],'p_worker_id':worker_id,'p_code':'storage' if step in ('stem_transfer','output_transfer') else 'processing'}).execute()
         except Exception:pass
     finally:
         if not committed and not completion_attempted and uploaded:

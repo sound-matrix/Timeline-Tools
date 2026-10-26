@@ -1,5 +1,11 @@
 "use client";
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useId,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { useRouter } from "next/navigation";
 import { jobStatusSchema, type ProcessingState } from "@/lib/job-status";
 import type { JobType } from "@/lib/settings";
@@ -13,40 +19,114 @@ const labels = {
   failed: "Failed",
 };
 
-function LiveWave({ status }: { status: ProcessingState["status"] }) {
+function GlassTube({ status }: { status: ProcessingState["status"] }) {
+  const id = useId().replace(/:/g, "");
   return (
-    <div className={`live-wave wave-${status}`} aria-hidden="true">
-      <svg viewBox="0 0 640 120" preserveAspectRatio="none">
-        <g className="wave-noisy">
-          {Array.from({ length: 80 }, (_, i) => {
-            const height = 18 + ((i * 37 + i * i * 13) % 91);
-            return (
-              <rect
-                key={i}
-                x={i * 8 + 1}
-                y={(120 - height) / 2}
-                width="4"
-                height={height}
-                rx="2"
-              />
-            );
-          })}
+    <div className={`glass-tube tube-${status}`} aria-hidden="true">
+      <svg viewBox="0 0 640 120" preserveAspectRatio="none" focusable="false">
+        <defs>
+          <linearGradient id={`${id}-glass`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="white" stopOpacity=".28" />
+            <stop offset=".22" stopColor="white" stopOpacity=".025" />
+            <stop offset=".55" stopColor="white" stopOpacity=".01" />
+            <stop offset=".83" stopColor="white" stopOpacity=".13" />
+            <stop offset="1" stopColor="white" stopOpacity=".04" />
+          </linearGradient>
+          <linearGradient id={`${id}-liquid`} x1="0" y1="0" x2="0" y2="1">
+            <stop stopColor="currentColor" stopOpacity=".8" />
+            <stop offset="1" stopColor="currentColor" stopOpacity=".08" />
+          </linearGradient>
+          <clipPath id={`${id}-clip`}>
+            <rect x="12" y="16" width="616" height="88" rx="44" />
+          </clipPath>
+        </defs>
+        <g clipPath={`url(#${id}-clip)`}>
+          <rect
+            className="tube-tint"
+            x="12"
+            y="16"
+            width="616"
+            height="88"
+            rx="44"
+            fill="currentColor"
+            opacity=".09"
+          />
+          <g className="tube-liquid" fill={`url(#${id}-liquid)`}>
+            {[0, 1, 2].map((layer) => (
+              <g key={layer} className={`tube-flow tube-flow-${layer}`}>
+                {[-640, 0, 640].map((x) => (
+                  <path
+                    key={x}
+                    transform={`translate(${x} ${layer * 7})`}
+                    d={`M0 60 Q80 ${[26, 40, 50][layer]} 160 60 T320 60 T480 60 T640 60 V120 H0Z`}
+                  />
+                ))}
+              </g>
+            ))}
+          </g>
+          <rect
+            x="12"
+            y="16"
+            width="616"
+            height="88"
+            rx="44"
+            fill={`url(#${id}-glass)`}
+          />
+          <path
+            className="tube-sheen"
+            d="M90 15 L150 15 L210 105 L150 105Z"
+            fill="white"
+            opacity=".09"
+          />
+          <path
+            d="M50 27 Q320 19 590 27"
+            fill="none"
+            stroke="white"
+            strokeOpacity=".75"
+            strokeWidth="2"
+          />
+          <path
+            d="M52 91 Q320 100 588 91"
+            fill="none"
+            stroke="white"
+            strokeOpacity=".2"
+            strokeWidth="5"
+          />
         </g>
-        <g className="wave-clean">
-          {Array.from({ length: 80 }, (_, i) => {
-            const height = 10 + 42 * Math.pow(Math.sin(i / 9), 2);
-            return (
-              <rect
-                key={i}
-                x={i * 8 + 1}
-                y={(120 - height) / 2}
-                width="4"
-                height={height}
-                rx="2"
-              />
-            );
-          })}
-        </g>
+        <rect
+          x="12"
+          y="16"
+          width="616"
+          height="88"
+          rx="44"
+          fill="none"
+          stroke="currentColor"
+          strokeOpacity=".5"
+        />
+        <ellipse
+          cx="38"
+          cy="60"
+          rx="24"
+          ry="43"
+          fill={`url(#${id}-glass)`}
+          stroke="white"
+          strokeOpacity=".3"
+        />
+        <ellipse
+          cx="602"
+          cy="60"
+          rx="24"
+          ry="43"
+          fill={`url(#${id}-glass)`}
+          stroke="white"
+          strokeOpacity=".3"
+        />
+        <path
+          d="M35 23 C12 32 12 82 35 97 M605 23 C628 32 628 82 605 97"
+          fill="none"
+          stroke="white"
+          strokeOpacity=".65"
+        />
       </svg>
     </div>
   );
@@ -180,7 +260,7 @@ export default function ProcessingStatus({
           </button>
         )}
       </div>
-      <LiveWave key={id ?? state.fileName} status={state.status} />
+      <GlassTube key={id ?? state.fileName} status={state.status} />
       <p className="processing-description">
         {working
           ? activity

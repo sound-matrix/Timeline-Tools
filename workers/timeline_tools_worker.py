@@ -3,7 +3,6 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
-from urllib.parse import quote
 
 import modal
 
@@ -28,29 +27,15 @@ models = modal.Volume.from_name('timeline-tools-asr-models', create_if_missing=T
 secrets = modal.Secret.from_name('timeline-tools-supabase', required_keys=['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'])
 
 
+from workers.storage_transfer import download, upload, log_failure as log_transfer_failure
+
+
 def transfer_input(url, key, input_path, target):
-    import httpx
-    # Stream large uploads to disk; never load the entire input into memory.
-    with httpx.stream('GET', f'{url}/storage/v1/object/authenticated/uploads/{quote(input_path, safe="/")}',
-            headers={'Authorization': f'Bearer {key}', 'apikey': key}, timeout=300) as response:
-        response.raise_for_status()
-        with target.open('wb') as file:
-            for chunk in response.iter_bytes(1024 * 1024):
-                file.write(chunk)
+    download(url, key, 'uploads', input_path, target)
 
 
 def transfer_output(url, key, output_path, source):
-    import httpx
-    mime = {'.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.json': 'application/json', '.mp4':'video/mp4', '.srt': 'application/x-subrip', '.vtt': 'text/vtt'}[source.suffix]
-    def chunks():
-        with source.open('rb') as file:
-            while data := file.read(1024 * 1024):
-                yield data
-    with httpx.Client(timeout=300) as client:
-        response = client.post(f'{url}/storage/v1/object/outputs/{quote(output_path, safe="/")}',
-            headers={'Authorization': f'Bearer {key}', 'apikey': key, 'Content-Type': mime,
-                     'Content-Length': str(source.stat().st_size), 'x-upsert': 'false'}, content=chunks())
-        response.raise_for_status()
+    upload(url, key, output_path, source)
 
 
 def handle_job(db, job, worker_id, url, key):
@@ -75,7 +60,7 @@ def handle_job(db, job, worker_id, url, key):
            'invalid_settings' if name == 'studio_unpack' else 'processing')
     def log_failure(error, failed_step=None):
         # Never log exception messages/tracebacks: they may contain URLs or keys.
-        print(f'job {job_id} step={failed_step or step} {type(error).__name__}')
+        log_transfer_failure(job_id, failed_step or step, error)
     try:
         from workers.defaults import with_defaults
         job = {**job, 'settings': with_defaults(job['type'], job['settings'])}
@@ -205,12 +190,8 @@ def handle_job(db, job, worker_id, url, key):
                         log_failure(error,'output_cleanup')  # Private orphans remain for operator.
 
 
-def transfer_stem(url,key,path,target):
-    import httpx
-    with httpx.stream('GET',f'{url}/storage/v1/object/authenticated/outputs/{quote(path,safe="/")}',headers={'Authorization':f'Bearer {key}','apikey':key},timeout=300) as response:
-        response.raise_for_status()
-        with target.open('wb') as f:
-            for chunk in response.iter_bytes(1024*1024): f.write(chunk)
+def transfer_stem(url, key, path, target):
+    download(url, key, 'outputs', path, target)
 
 @app.function(image=gpu_image, volumes={'/models':models}, gpu='T4', cpu=2, memory=8192,timeout=3600,max_containers=2)
 def studio_asr(url,key,input_path,language):

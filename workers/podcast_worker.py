@@ -37,11 +37,12 @@ def handle_podcast_job(db, job, worker_id, url, key):
         code = (
             "invalid_media"
             if name in ("podcast_probe", "podcast_decode")
-            else "processing"
+            else "storage" if name.endswith("_transfer") else "processing"
         )
 
     def log(error):
-        print(f"podcast step={step} {type(error).__name__}")
+        from workers.storage_transfer import log_failure
+        log_failure(job['id'], step, error)
 
     try:
         expected = str(uuid.UUID(job["user_id"]))
