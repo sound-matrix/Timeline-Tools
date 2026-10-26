@@ -1,3 +1,4 @@
+import { theme } from "@/public/theme.js";
 export function mountWave(canvas: HTMLCanvasElement, mode: string) {
   const context = canvas.getContext("2d");
   if (!context) return () => {};
@@ -27,7 +28,7 @@ export function mountWave(canvas: HTMLCanvasElement, mode: string) {
     context!.clearRect(0, 0, width, height);
     for (let layer = 0; layer < 4; layer++) {
       context!.beginPath();
-      context!.strokeStyle = ["#4f46e5", "#8b5cf6", "#a5b4fc", "#c7d2fe"][
+      context!.strokeStyle = [theme["primary"], theme["accent-text"], theme["track-teal"], theme["track-violet"]][
         layer
       ];
       context!.lineWidth = layer === 0 ? 2.5 : 1.2;

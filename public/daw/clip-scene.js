@@ -1,3 +1,4 @@
+import { theme, trackColor } from "../theme.js";
 import { IntervalIndex, TileCache, TimelineRenderer } from "./render-core.js";
 
 // Small, retained clip textures keep software Safari from uploading a full
@@ -167,8 +168,8 @@ export class ClipScene {
       .querySelectorAll(".pro-scene-range, .pro-scene-marker")
       .forEach((el) => el.remove());
     for (const [span, color] of [
-      [state.range, "#818cf833"],
-      [a.loop.enabled ? [a.loop.start, a.loop.end] : null, "#fcd34d12"],
+      [state.range, theme["selection-wash"]],
+      [a.loop.enabled ? [a.loop.start, a.loop.end] : null, theme["loop-wash"]],
     ]) {
       if (!span) continue;
       const left = Math.max(0, span[0] * zoom - view.x),
@@ -190,7 +191,7 @@ export class ClipScene {
       el.className = "pro-scene-marker";
       Object.assign(el.style, {
         transform: `translateX(${x}px)`,
-        background: m.color,
+        background: trackColor(m.color),
       });
       root.append(el);
     }

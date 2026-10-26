@@ -1,4 +1,6 @@
 "use client";
+import { theme, trackColor } from "@/public/theme.js";
+
 import { useEffect, useRef } from "react";
 import type { Arrangement, PluginSlot } from "@/lib/arrangement";
 import {
@@ -112,7 +114,7 @@ function Graph({
     const draw = () => {
       const graph = getGraph();
       ctx.clearRect(0, 0, 270, 90);
-      ctx.strokeStyle = "#303952";
+      ctx.strokeStyle = theme["border-strong"];
       ctx.lineWidth = 1;
       for (let x = 0; x < 270; x += 30) {
         ctx.beginPath();
@@ -122,13 +124,13 @@ function Graph({
       }
       if (graph) {
         graph.analyser.getByteFrequencyData(data);
-        ctx.fillStyle = "#818cf840";
+        ctx.fillStyle = theme["selection-wash"];
         for (let i = 0; i < 128; i++)
           ctx.fillRect((i * 270) / 128, 90 - data[i] / 3, 2, data[i] / 3);
       }
       if (meter.current)
         meter.current.textContent = `GR ${(graph?.reductions.get(slot.id)?.reduction ?? 0).toFixed(1)} dB`;
-      ctx.strokeStyle = slot.enabled ? "#a78bfa" : "#5f6b88";
+      ctx.strokeStyle = slot.enabled ? theme["primary"] : theme["text-muted"];
       ctx.lineWidth = 2;
       ctx.beginPath();
       const p = slot.parameters;
@@ -167,7 +169,7 @@ function Graph({
       ctx.stroke();
       if (slot.type === "eq")
         for (let b = 0; b < 5; b++) {
-          ctx.fillStyle = "#fbbf24";
+          ctx.fillStyle = theme["warning-text"];
           ctx.beginPath();
           ctx.arc(
             (Math.log(p[`f${b}`] / 20) / Math.log(1000)) * 270,
@@ -441,7 +443,7 @@ export function Mixer({
             ...a.master,
             id: "master",
             name: "Master",
-            color: "#a78bfa",
+            color: theme["primary"],
             pan: 0,
             mute: false,
             solo: false,
@@ -450,7 +452,7 @@ export function Mixer({
           <div
             key={l.id}
             className="fx-channel"
-            style={{ borderTopColor: l.color }}
+            style={{ borderTopColor: trackColor(l.color) }}
           >
             <b>{l.name}</b>
             <Meter getGraph={() => getGraph(l.id)} />

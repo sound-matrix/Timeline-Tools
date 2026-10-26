@@ -1,3 +1,4 @@
+import { trackColors } from "../../public/theme.js";
 import { arrangementSchema, type Arrangement } from "../arrangement.ts";
 import {
   duration,
@@ -16,14 +17,7 @@ export const AUDIO_EXTENSIONS = [
   "aif",
   "ogg",
 ];
-export const COLORS = [
-  "#818CF8",
-  "#A78BFA",
-  "#34D399",
-  "#FBBF24",
-  "#F472B6",
-  "#38BDF8",
-];
+export const COLORS = trackColors;
 export type Placement = {
   time: number;
   lane?: string;
